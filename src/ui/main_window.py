@@ -338,19 +338,19 @@ class MainWindow(QMainWindow):
             banner.setStyleSheet("background:#7a2e2e;color:white;padding:8px;border-radius:8px;")
             main.addWidget(banner)
 
-        vsplit = QSplitter(Qt.Vertical)
-        main.addWidget(vsplit, 1)
-        hsplit = QSplitter(Qt.Horizontal)
-        vsplit.addWidget(hsplit)
-        hsplit.addWidget(self._left_panel())
-        hsplit.addWidget(self._center_panel())
-        hsplit.addWidget(self._right_panel())
-        hsplit.setSizes([340, 620, 380])
+        # NOTE: QSplitter caused a segfault (access violation) on some Windows
+        # systems when adding the center panel. Replaced with plain layouts.
+        # Panels are fixed-proportion instead of user-resizable.
+        panels = QHBoxLayout()
+        panels.setSpacing(10)
+        panels.addWidget(self._left_panel(), 34)
+        panels.addWidget(self._center_panel(), 62)
+        panels.addWidget(self._right_panel(), 38)
+        main.addLayout(panels, 3)
 
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.sceneSelected.connect(self._on_scene_selected)
-        vsplit.addWidget(self.timeline_widget)
-        vsplit.setSizes([700, 250])
+        main.addWidget(self.timeline_widget, 1)
 
     def _about(self):
         QMessageBox.about(
