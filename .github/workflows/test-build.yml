@@ -21,18 +21,18 @@ jobs:
         python -m pip install --upgrade pip
         pip install PySide6 pyinstaller
         
-    - name: Build minimal test
+    - name: Build diagnostic test
       run: |
-        pyinstaller --noconfirm --clean --distpath "dist-test" "build/windows/startup_test.spec"
+        pyinstaller --noconfirm --clean --distpath "dist-test" "build/windows/diag_test.spec"
         
     - name: Create test ZIP
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path "Output"
-        Compress-Archive -Path "dist-test/UOneTest/*" -DestinationPath "Output/UOneTest.zip" -Force
+        Compress-Archive -Path "dist-test/UOneDiag/*" -DestinationPath "Output/UOneDiag.zip" -Force
         
     - name: Upload test ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: UOneTest
-        path: Output/UOneTest.zip
+        name: UOneDiag
+        path: Output/UOneDiag.zip
