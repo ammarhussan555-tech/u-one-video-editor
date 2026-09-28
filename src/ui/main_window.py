@@ -83,16 +83,25 @@ class CaptionEditWorker(QThread):
         try:
             from src.caption_editor import load_edit_session, reburn_captions
             from src.ffmpeg_util import find_ffmpeg
+            from src.ffmpeg_engine import FFmpegEngine
             data = load_edit_session(self.session_path)
             template = self.template
             size = self.font_size
             out = data["output_video"]
-            self.log.emit(f"Applying caption style: {template}, size {size}...")
+            # Hardware encoder for 3-5x faster burn-in when available.
+            hw_enc = None
+            try:
+                hw_enc = FFmpegEngine(
+                    find_ffmpeg()).detect_hw_encoder("h264")
+            except Exception:  # noqa: BLE001
+                pass
+            self.log.emit(f"Applying caption style: {template}, size {size}..."
+                          + (" (hardware accelerated)" if hw_enc else ""))
             reburn_captions(
                 data["clean_video"], data["sentence_timings"],
                 data.get("word_timings"), template, size, out,
                 fmt=data.get("fmt", "16:9"), res=data.get("res", "1080p"),
-                ffmpeg_path=find_ffmpeg(),
+                ffmpeg_path=find_ffmpeg(), hw_enc=hw_enc,
                 log_cb=lambda m: self.log.emit(m))
             # Remember the new style in the session.
             data["template"] = template
@@ -731,6 +740,9 @@ class MainWindow(QMainWindow):
         for key, label in caption_template_labels():
             self.edit_template_cb.addItem(label, key)
         self.edit_template_cb.setEnabled(False)
+        # CapCut-style: template select karte hi preview mein nazar aaye.
+        self.edit_template_cb.currentIndexChanged.connect(
+            lambda _i: self._refresh_caption_style())
         cap_form.addRow("Template:", self.edit_template_cb)
         size_row = QHBoxLayout()
         self.edit_size_slider = QSlider(Qt.Horizontal)
@@ -740,6 +752,9 @@ class MainWindow(QMainWindow):
         self.edit_size_lbl = QLabel("48")
         self.edit_size_slider.valueChanged.connect(
             lambda v: self.edit_size_lbl.setText(str(v)))
+        # CapCut-style: size drag karte hi preview mein bara/chhota ho.
+        self.edit_size_slider.valueChanged.connect(
+            lambda _v: self._refresh_caption_style())
         size_row.addWidget(self.edit_size_slider, 1)
         size_row.addWidget(self.edit_size_lbl)
         cap_form.addRow("Size:", size_row)
@@ -747,11 +762,13 @@ class MainWindow(QMainWindow):
         self.edit_apply_btn = QPushButton("Apply Caption Changes")
         self.edit_apply_btn.setEnabled(False)
         self.edit_apply_btn.setToolTip(
-            "Re-burn captions with the new template/size. "
-            "Much faster than re-rendering.")
+            "Preview mein jo style nazar aa raha hai, usay video mein "
+            "permanently burn karo.")
         self.edit_apply_btn.clicked.connect(self._apply_caption_edits)
         lay.addWidget(self.edit_apply_btn)
         self._edit_session = ""  # path to caption_edit.json
+        self._cap_sentences = []
+        self._cap_words = []
 
         log_head = QLabel("Log")
         log_head.setObjectName("sectionHead")
@@ -797,6 +814,8 @@ class MainWindow(QMainWindow):
             # Click on the video -> open the caption editor for the
             # caption shown at that moment.
             self.video_widget.installEventFilter(self)
+            # Instant caption preview overlay (CapCut-style live styling).
+            self._ensure_caption_overlay()
             return True
         except Exception as e:
             self._log(f"Preview player unavailable: {e}")
@@ -806,6 +825,102 @@ class MainWindow(QMainWindow):
         # Show why the preview failed so it can be diagnosed.
         self._log(f"Preview player error: {error_string}")
         self.time_lbl.setText(f"Preview error: {error_string[:60]}")
+
+    # -- instant caption preview overlay (CapCut-style) --
+    @staticmethod
+    def _ass_to_css(ass_color: str) -> str:
+        """Convert ASS color &HAABBGGRR to CSS #RRGGBB."""
+        h = (ass_color or "").strip()
+        if h.startswith("&H"):
+            h = h[2:]
+        if len(h) == 8:
+            return f"#{h[6:8]}{h[4:6]}{h[2:4]}"
+        return "#FFFFFF"
+
+    def _caption_overlay_style(self) -> str:
+        """Build QLabel QSS from the selected template + size (instant)."""
+        from src.text_captions import CAPTION_TEMPLATES
+        key = self.edit_template_cb.currentData()
+        tmpl = CAPTION_TEMPLATES.get(key) or {}
+        size = self.edit_size_slider.value()
+        primary = self._ass_to_css(tmpl.get("primary", "&H00FFFFFF"))
+        bg = ""
+        if tmpl.get("box"):
+            back = self._ass_to_css(tmpl.get("back_c", "&HC8000000"))
+            bg = (f"background-color: {back}; padding: 6px 14px; "
+                  f"border-radius: 8px;")
+        bold = "bold" if tmpl.get("bold") == -1 else "normal"
+        italic = "italic" if tmpl.get("italic") else "normal"
+        font = tmpl.get("font", "Arial")
+        px = max(12, int(size * float(tmpl.get("size_scale", 1.0))))
+        return (f"QLabel {{ color: {primary}; font-family: '{font}'; "
+                f"font-size: {px}px; font-weight: {bold}; "
+                f"font-style: {italic}; {bg} }}")
+
+    def _ensure_caption_overlay(self):
+        """Create the caption overlay label on the video widget."""
+        if getattr(self, "caption_overlay", None) is not None:
+            return
+        if self.video_widget is None:
+            return
+        from PySide6.QtWidgets import QLabel
+        ov = QLabel(self.video_widget)
+        ov.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
+        ov.setWordWrap(True)
+        ov.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks -> video
+        ov.setContentsMargins(20, 0, 20, 24)
+        ov.setStyleSheet(self._caption_overlay_style())
+        ov.setGeometry(self.video_widget.rect())
+        ov.show()
+        self.caption_overlay = ov
+
+    def _refresh_caption_style(self):
+        """Instant style update when template/size changes (no re-encode)."""
+        ov = getattr(self, "caption_overlay", None)
+        if ov is not None:
+            ov.setStyleSheet(self._caption_overlay_style())
+            # Refresh text immediately so the user sees the change.
+            if self.player is not None:
+                self._update_caption_text(self.player.position())
+
+    def _update_caption_text(self, pos_ms: int):
+        """Show the caption visible at pos_ms on the overlay (karaoke)."""
+        ov = getattr(self, "caption_overlay", None)
+        if ov is None:
+            return
+        timings = getattr(self, "_cap_sentences", None) or []
+        if not timings:
+            ov.setText("")
+            return
+        pos_sec = pos_ms / 1000.0
+        cur = None
+        for s in timings:
+            if s["start"] <= pos_sec <= s["end"]:
+                cur = s
+                break
+        if cur is None:
+            ov.setText("")
+            return
+        # Karaoke: highlight the word being spoken right now.
+        html = cur["text"]
+        words = getattr(self, "_cap_words", None) or []
+        cur_word = None
+        for w in words:
+            if w["start"] <= pos_sec <= w["end"]:
+                cur_word = w["word"]
+                break
+        if cur_word:
+            from src.text_captions import CAPTION_TEMPLATES
+            tmpl = CAPTION_TEMPLATES.get(
+                self.edit_template_cb.currentData()) or {}
+            hl = self._ass_to_css(tmpl.get("secondary", "&H0000D7FF"))
+            # Highlight first occurrence of the current word.
+            import re as _re
+            html = _re.sub(
+                _re.escape(cur_word),
+                f'<span style="color:{hl};">{cur_word}</span>',
+                cur["text"], count=1)
+        ov.setText(f"<div style='text-align:center;'>{html}</div>")
 
     # -- preview playback controls --
     @staticmethod
@@ -818,20 +933,27 @@ class MainWindow(QMainWindow):
             return
         if self.player.playbackState() == self.player.PlayingState:
             self.player.pause()
-        else:
-            # If the video ended, restart from the beginning so the
-            # play button always works (even after the first autoplay).
+            return
+        # Not playing: (re)start. If the video ended, seek to the start
+        # first so the button always works — even after stop or autoplay.
+        try:
             dur = self.player.duration()
-            if dur > 0 and self.player.position() >= dur - 300:
+            pos = self.player.position()
+            if dur > 0 and pos >= dur - 300:
                 self.player.setPosition(0)
-            self.player.play()
+        except Exception:  # noqa: BLE001
+            pass
+        self.player.play()
 
     def _stop_play(self):
         if not self._ensure_player():
             return
-        self.player.stop()
-        # Reset to the start so the next play begins from 0.
+        # Use pause()+seek(0) instead of stop(): on some Qt multimedia
+        # backends stop() tears down the pipeline and play() won't
+        # restart it reliably. Pause keeps the pipeline alive.
+        self.player.pause()
         self.player.setPosition(0)
+        self.play_btn.setText("▶")
 
     def _on_media_status(self, status):
         # 7 = EndOfMedia. Reset to start so replay works with one tap.
@@ -847,6 +969,10 @@ class MainWindow(QMainWindow):
             if event.type() == QEvent.MouseButtonPress:
                 self._on_video_clicked()
                 return True
+            if event.type() == QEvent.Resize:
+                ov = getattr(self, "caption_overlay", None)
+                if ov is not None:
+                    ov.setGeometry(self.video_widget.rect())
         return super().eventFilter(obj, event)
 
     def _on_video_clicked(self):
@@ -970,6 +1096,8 @@ class MainWindow(QMainWindow):
         self.seek_slider.blockSignals(False)
         self.time_lbl.setText(
             f"{self._fmt_ms(pos)} / {self._fmt_ms(self.player.duration())}")
+        # Live caption overlay follows playback (CapCut-style preview).
+        self._update_caption_text(pos)
 
     def _on_duration(self, dur: int):
         self.seek_slider.setRange(0, dur)
@@ -1017,6 +1145,21 @@ class MainWindow(QMainWindow):
         mute_sfx_btn.clicked.connect(self._mute_scene_sfx)
         btns3.addWidget(mute_sfx_btn)
         sl.addLayout(btns3)
+        # CapCut-style structural editing: delete / reorder scenes.
+        btns4 = QHBoxLayout()
+        up_btn = QPushButton("⬆️ Up")
+        up_btn.setToolTip("Move this scene earlier")
+        up_btn.clicked.connect(lambda: self._move_scene(-1))
+        btns4.addWidget(up_btn)
+        down_btn = QPushButton("⬇️ Down")
+        down_btn.setToolTip("Move this scene later")
+        down_btn.clicked.connect(lambda: self._move_scene(1))
+        btns4.addWidget(down_btn)
+        del_btn = QPushButton("🗑️ Delete")
+        del_btn.setToolTip("Delete this scene")
+        del_btn.clicked.connect(self._delete_scene)
+        btns4.addWidget(del_btn)
+        sl.addLayout(btns4)
         self.lock_chk = QCheckBox("🔒 Lock scene (AI will not modify)")
         self.lock_chk.stateChanged.connect(self._toggle_lock)
         sl.addWidget(self.lock_chk)
@@ -1187,8 +1330,12 @@ class MainWindow(QMainWindow):
                 self.edit_template_cb.setEnabled(True)
                 self.edit_size_slider.setEnabled(True)
                 self.edit_apply_btn.setEnabled(True)
-                self._log("Caption editor ready: change template/size "
-                          "and press Apply.")
+                # Cache timings for the live caption overlay.
+                self._cap_sentences = data.get("sentence_timings", [])
+                self._cap_words = data.get("word_timings", [])
+                self._refresh_caption_style()
+                self._log("Caption editor ready: template/size abhi preview "
+                          "mein nazar aayega — Apply dabao to burn it in.")
             else:
                 self._edit_session = ""
         except Exception as e:  # noqa: BLE001 - editor is optional
@@ -1296,6 +1443,8 @@ class MainWindow(QMainWindow):
 
     def _cancel(self):
         self.cancel_event.set()
+        self.cancel_btn.setEnabled(False)
+        self.stage_lbl.setText("Cancelling...")
         self._log("Cancelling... (stopping FFmpeg)")
 
     # ---------------- scenes ----------------
@@ -1430,6 +1579,88 @@ class MainWindow(QMainWindow):
                 removed += 1
         self.timeline_widget.update()
         self._log(f"Scene {sid+1}: removed {removed} SFX clip(s). Re-render to apply.")
+
+    # -- CapCut-style structural scene editing (via script) --
+    def _scene_sentence_range(self, sid):
+        """Return (first, last) sentence ordinals for a scene, or None."""
+        if not self.pipeline or not getattr(self.pipeline, "analysis", None):
+            return None
+        sc = next((s for s in self.pipeline.scenes if s.id == sid), None)
+        if not sc:
+            return None
+        return (sc.first_sentence, sc.last_sentence)
+
+    def _rebuild_script_from_sentences(self, sentences):
+        """Update the script editor + project from a sentence list."""
+        new_script = " ".join(s for s in sentences if s.strip())
+        self.script_edit.setPlainText(new_script)
+        self.project.script = new_script
+        self.project.snapshot()
+        # Re-detect scenes so the UI reflects the new structure.
+        try:
+            from src.scene_detector import detect_scenes
+            from src.script_analysis import analyze_script
+            self.pipeline.analysis = analyze_script(new_script)
+            sent_texts = [s.text for s in self.pipeline.analysis.sentences]
+            self.pipeline.scenes = detect_scenes(
+                sent_texts, self.cb_visual.currentText())
+            self._refresh_scenes()
+            self.timeline_widget.update()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Could not refresh scenes: {e}")
+
+    def _delete_scene(self):
+        sid = self._current_scene_id()
+        if sid is None or not self.pipeline:
+            return
+        if len(self.pipeline.scenes) <= 1:
+            QMessageBox.warning(self, "Delete Scene",
+                                "Cannot delete the only scene.")
+            return
+        rng = self._scene_sentence_range(sid)
+        if not rng:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Delete Scene")
+        box.setText(f"Delete scene {sid+1}? Click CREATE VIDEO to rebuild.")
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        if box.exec() != QMessageBox.Yes:
+            return
+        sents = [s.text for s in self.pipeline.analysis.sentences]
+        f, l = rng
+        new_sents = sents[:f] + sents[l + 1:]
+        self._rebuild_script_from_sentences(new_sents)
+        self._log(f"Scene {sid+1} deleted. Click CREATE VIDEO to rebuild "
+                  f"(unchanged scenes reuse cache).")
+
+    def _move_scene(self, delta):
+        """Move the selected scene earlier (delta=-1) or later (delta=+1)."""
+        sid = self._current_scene_id()
+        if sid is None or not self.pipeline:
+            return
+        scenes = self.pipeline.scenes
+        idx = next((i for i, s in enumerate(scenes) if s.id == sid), None)
+        if idx is None:
+            return
+        j = idx + delta
+        if j < 0 or j >= len(scenes):
+            return
+        sents = [s.text for s in self.pipeline.analysis.sentences]
+        a, b = scenes[idx], scenes[j]
+        # Swap the two scenes' sentence blocks.
+        fa, la = a.first_sentence, a.last_sentence
+        fb, lb = b.first_sentence, b.last_sentence
+        if idx < j:
+            # a before b: [..][a][b][..] -> [..][b][a][..]
+            new_sents = (sents[:fa] + sents[fb:lb + 1] +
+                         sents[fa:la + 1] + sents[lb + 1:])
+        else:
+            # b before a: [..][b][a][..] -> [..][a][b][..]
+            new_sents = (sents[:fb] + sents[fa:la + 1] +
+                         sents[fb:lb + 1] + sents[la + 1:])
+        self._rebuild_script_from_sentences(new_sents)
+        self._log(f"Scene {sid+1} moved. Click CREATE VIDEO to rebuild.")
 
     def _refresh_sources(self):
         if not self.pipeline:
