@@ -29,6 +29,25 @@ class TargetSpec:
     acodec: str = "aac"
     sample_rate: int = 48000
     channels: int = 2
+    hw_bitrate: str = ""  # set when vcodec is a hw encoder (e.g. "10M")
+
+
+def hw_target_spec(width: int, height: int, fps: float,
+                   engine=None) -> TargetSpec:
+    """Build a TargetSpec using the hardware encoder when available.
+
+    Falls back to libx264 veryfast. HW encoding is 3-5x faster with
+    the same visual quality.
+    """
+    spec = TargetSpec(width=width, height=height, fps=fps)
+    try:
+        hw_enc = (engine.detect_hw_encoder("h264") if engine else None)
+    except Exception:  # noqa: BLE001
+        hw_enc = None
+    if hw_enc:
+        spec.vcodec = hw_enc
+        spec.hw_bitrate = "10M"
+    return spec
 
 
 def mismatch_reasons(info: "media_probe.MediaInfo",
@@ -83,8 +102,13 @@ def normalize_segment(path: str, spec: TargetSpec, out_path: str,
 
     vf = (f"scale={spec.width}:{spec.height}:force_original_aspect_ratio=increase,"
           f"crop={spec.width}:{spec.height},setsar=1,fps={spec.fps}")
+    if spec.hw_bitrate:
+        v_args = ["-c:v", spec.vcodec, "-b:v", spec.hw_bitrate]
+    else:
+        v_args = ["-c:v", spec.vcodec, "-preset", spec.preset,
+                  "-crf", str(spec.crf)]
     args = ["-i", path, "-map", "0:v:0", "-vf", vf,
-            "-c:v", spec.vcodec, "-preset", spec.preset, "-crf", str(spec.crf),
+            *v_args,
             "-pix_fmt", spec.pix_fmt]
     if expect_audio and info.has_audio:
         args += ["-map", "0:a:0?", "-c:a", spec.acodec,
