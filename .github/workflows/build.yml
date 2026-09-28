@@ -40,6 +40,17 @@ jobs:
         pyinstaller --noconfirm --clean --distpath "dist" --workpath "build/pyinstaller-work" "build/windows/u_one.spec"
         dir "dist"
         
+    - name: Build DEBUG version (with console for error diagnosis)
+      run: |
+        pyinstaller --noconfirm --clean --distpath "dist-debug" --workpath "build/pyinstaller-work-debug" "build/windows/u_one_debug.spec"
+        dir "dist-debug"
+        
+    - name: Create debug ZIP
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "Output"
+        Compress-Archive -Path "dist-debug/U One/*" -DestinationPath "Output/U_One_Debug.zip" -Force
+        
     - name: Verify Qt plugins (critical for GUI startup)
       shell: pwsh
       run: |
@@ -88,3 +99,9 @@ jobs:
       with:
         name: U_One_Portable
         path: Output/U_One_Portable.zip
+        
+    - name: Upload debug ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: U_One_Debug
+        path: Output/U_One_Debug.zip
