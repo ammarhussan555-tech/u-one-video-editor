@@ -17,6 +17,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import List, Set
 
@@ -82,10 +83,24 @@ class TempManager:
 
     # -- crash-safety: purge stale tmp dirs from previous runs --
     @staticmethod
-    def purge_stale(base_dir: str, subdir: str = "_tmp") -> None:
+    def purge_stale(base_dir: str, subdir: str = "_tmp",
+                    max_age_hours: float = 2.0) -> None:
+        """Remove per-run temp dirs older than max_age_hours.
+
+        Each render run gets its own unique subdir (see RenderEngine), so
+        this only cleans up leftovers from crashed/killed runs — never the
+        temp files of a render that is still running.
+        """
         root = Path(base_dir) / subdir
-        if root.is_dir():
-            shutil.rmtree(root, ignore_errors=True)
+        if not root.is_dir():
+            return
+        cutoff = time.time() - max_age_hours * 3600
+        for child in root.iterdir():
+            try:
+                if child.is_dir() and child.stat().st_mtime < cutoff:
+                    shutil.rmtree(child, ignore_errors=True)
+            except OSError:
+                pass
 
 
 def ensure_free_space(path: str, needed_mb: float) -> None:
