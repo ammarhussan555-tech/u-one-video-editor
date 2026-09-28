@@ -429,12 +429,22 @@ class MainWindow(QMainWindow):
         self.cb_codec = QComboBox()
         self.cb_codec.addItems(["h264", "h265"])
         form.addRow("Codec:", self.cb_codec)
-        self.cb_text = QComboBox()
-        self.cb_text.addItems(["auto", "off"])
-        form.addRow("Text overlays:", self.cb_text)
+        self.chk_text_overlays = QCheckBox("Show main text in video")
+        self.chk_text_overlays.setChecked(True)
+        self.chk_text_overlays.setToolTip(
+            "Uncheck to skip the big title text overlays for this video.")
+        form.addRow(self.chk_text_overlays)
         self.chk_captions = QCheckBox("Captions")
         self.chk_captions.setChecked(True)
         form.addRow(self.chk_captions)
+        # Caption template selector (CapCut viral/trending styles)
+        from src.text_captions import caption_template_labels
+        self.cb_caption_template = QComboBox()
+        for key, label in caption_template_labels():
+            self.cb_caption_template.addItem(label, key)
+        self.cb_caption_template.setToolTip(
+            "Pick a caption style like CapCut's viral templates.")
+        form.addRow("Caption style:", self.cb_caption_template)
         mrow = QHBoxLayout()
         self.music_lbl = QLabel("(optional)")
         mb = QPushButton("Music folder...")
@@ -770,9 +780,10 @@ class MainWindow(QMainWindow):
             "output_resolution": self.cb_res.currentText(),
             "output_fps": int(self.cb_fps.currentText()),
             "output_codec": self.cb_codec.currentText(),
-            "text_overlays": self.cb_text.currentText(),
+            "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
             "captions_enabled": self.chk_captions.isChecked(),
             "caption_highlight": True, "caption_font_size": 48,
+            "caption_template": self.cb_caption_template.currentData(),
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
             "voice_name": self.voice_combo.currentText(),
