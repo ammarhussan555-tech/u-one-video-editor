@@ -1,0 +1,52 @@
+name: Build U One Windows Installer
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Download FFmpeg
+      run: |
+        Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+        Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg-dl"
+        $ffmpegDir = Get-ChildItem -Path "ffmpeg-dl" -Directory | Select-Object -First 1
+        New-Item -ItemType Directory -Force -Path "build/windows/ffmpeg"
+        Copy-Item "$($ffmpegDir.FullName)/bin/ffmpeg.exe" -Destination "build/windows/ffmpeg/"
+        Copy-Item "$($ffmpegDir.FullName)/bin/ffprobe.exe" -Destination "build/windows/ffmpeg/"
+        
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --noconfirm --clean --distpath "dist" --workpath "build/pyinstaller-work" "build/windows/u_one.spec"
+        
+    - name: Install NSIS
+      run: |
+        choco install nsis -y
+        
+    - name: Build installer with NSIS
+      run: |
+        & "C:\Program Files (x86)\NSIS\makensis.exe" installer/u_one.nsi
+        
+    - name: Upload installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: U_One_Setup
+        path: Output/U_One_Setup.exe
