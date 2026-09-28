@@ -67,6 +67,44 @@ class PipelineWorker(QThread):
             self.error.emit(msg)
 
 
+class CaptionEditWorker(QThread):
+    """Re-burn captions in the background (fast single ffmpeg pass)."""
+    log = Signal(str)
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, session_path, template, font_size):
+        super().__init__()
+        self.session_path = session_path
+        self.template = template
+        self.font_size = font_size
+
+    def run(self):
+        try:
+            from src.caption_editor import load_edit_session, reburn_captions
+            from src.ffmpeg_util import find_ffmpeg
+            data = load_edit_session(self.session_path)
+            template = self.template
+            size = self.font_size
+            out = data["output_video"]
+            self.log.emit(f"Applying caption style: {template}, size {size}...")
+            reburn_captions(
+                data["clean_video"], data["sentence_timings"],
+                data.get("word_timings"), template, size, out,
+                fmt=data.get("fmt", "16:9"), res=data.get("res", "1080p"),
+                ffmpeg_path=find_ffmpeg(),
+                log_cb=lambda m: self.log.emit(m))
+            # Remember the new style in the session.
+            data["template"] = template
+            data["font_size"] = size
+            import json
+            with open(self.session_path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            self.finished.emit(out)
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -560,6 +598,40 @@ class MainWindow(QMainWindow):
         rrow.addWidget(self.final_btn)
         lay.addLayout(rrow)
 
+        # ---- Post-render caption editor ----
+        # Enabled after a successful render: change template/size without
+        # re-rendering the whole video (only captions are re-burned).
+        cap_head = QLabel("Edit Captions (after render)")
+        cap_head.setObjectName("sectionHead")
+        lay.addWidget(cap_head)
+        cap_form = QFormLayout()
+        from src.text_captions import caption_template_labels
+        self.edit_template_cb = QComboBox()
+        for key, label in caption_template_labels():
+            self.edit_template_cb.addItem(label, key)
+        self.edit_template_cb.setEnabled(False)
+        cap_form.addRow("Template:", self.edit_template_cb)
+        size_row = QHBoxLayout()
+        self.edit_size_slider = QSlider(Qt.Horizontal)
+        self.edit_size_slider.setRange(24, 96)
+        self.edit_size_slider.setValue(48)
+        self.edit_size_slider.setEnabled(False)
+        self.edit_size_lbl = QLabel("48")
+        self.edit_size_slider.valueChanged.connect(
+            lambda v: self.edit_size_lbl.setText(str(v)))
+        size_row.addWidget(self.edit_size_slider, 1)
+        size_row.addWidget(self.edit_size_lbl)
+        cap_form.addRow("Size:", size_row)
+        lay.addLayout(cap_form)
+        self.edit_apply_btn = QPushButton("Apply Caption Changes")
+        self.edit_apply_btn.setEnabled(False)
+        self.edit_apply_btn.setToolTip(
+            "Re-burn captions with the new template/size. "
+            "Much faster than re-rendering.")
+        self.edit_apply_btn.clicked.connect(self._apply_caption_edits)
+        lay.addWidget(self.edit_apply_btn)
+        self._edit_session = ""  # path to caption_edit.json
+
         log_head = QLabel("Log")
         log_head.setObjectName("sectionHead")
         lay.addWidget(log_head)
@@ -823,6 +895,28 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(False)
         self.stage_lbl.setText("Done.")
         self._log(f"Saved: {out}")
+        # Enable post-render caption editing if a session was saved.
+        try:
+            session = getattr(self.pipeline, "edit_session_path", "") or ""
+            if session and os.path.isfile(session):
+                from src.caption_editor import load_edit_session
+                data = load_edit_session(session)
+                self._edit_session = session
+                # Sync the editor controls with the render's caption style.
+                idx = self.edit_template_cb.findData(data.get("template"))
+                if idx >= 0:
+                    self.edit_template_cb.setCurrentIndex(idx)
+                self.edit_size_slider.setValue(int(data.get("font_size", 48)))
+                self.edit_template_cb.setEnabled(True)
+                self.edit_size_slider.setEnabled(True)
+                self.edit_apply_btn.setEnabled(True)
+                self._log("Caption editor ready: change template/size "
+                          "and press Apply.")
+            else:
+                self._edit_session = ""
+        except Exception as e:  # noqa: BLE001 - editor is optional
+            self._log(f"Caption editor unavailable: {e}")
+            self._edit_session = ""
         # Also place a copy in the user's Videos folder with a safe unique name.
         try:
             dest_dir = app_paths.default_output_dir()
@@ -855,6 +949,39 @@ class MainWindow(QMainWindow):
         if self.project.warnings:
             QMessageBox.warning(self, "Quality check",
                                 "\n".join(self.project.warnings[:10]))
+
+    def _apply_caption_edits(self):
+        """Re-burn captions with the chosen template/size (fast, no re-render)."""
+        if not self._edit_session or not os.path.isfile(self._edit_session):
+            QMessageBox.warning(self, "Edit Captions",
+                                "Render a video first, then edit its captions.")
+            return
+        template = self.edit_template_cb.currentData()
+        size = self.edit_size_slider.value()
+        self.edit_apply_btn.setEnabled(False)
+        self.stage_lbl.setText("Updating captions...")
+        self._cap_worker = CaptionEditWorker(self._edit_session, template, size)
+        self._cap_worker.log.connect(self._log)
+        self._cap_worker.finished.connect(self._on_caption_edit_done)
+        self._cap_worker.error.connect(self._on_caption_edit_error)
+        self._cap_worker.start()
+
+    def _on_caption_edit_done(self, out):
+        self.edit_apply_btn.setEnabled(True)
+        self.stage_lbl.setText("Done.")
+        self._log(f"Captions updated: {out}")
+        QMessageBox.information(self, "Edit Captions",
+                                "Caption style updated!")
+        # Refresh the preview player with the updated video.
+        if os.path.isfile(out) and self._ensure_player():
+            self.player.setSource(QUrl.fromLocalFile(out))
+            self.player.play()
+
+    def _on_caption_edit_error(self, msg):
+        self.edit_apply_btn.setEnabled(True)
+        self.stage_lbl.setText("Done.")
+        QMessageBox.warning(self, "Edit Captions",
+                            f"Could not update captions:\n{msg}")
 
     def _on_error(self, msg):
         self.create_btn.setEnabled(True)
