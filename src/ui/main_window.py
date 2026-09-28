@@ -519,6 +519,50 @@ class MainWindow(QMainWindow):
         ctl.addWidget(self.time_lbl)
         lay.addLayout(ctl)
 
+        self.create_btn = QPushButton("CREATE VIDEO")
+        self.create_btn.setObjectName("primaryBtn")
+        self.create_btn.setMinimumHeight(56)
+        self.create_btn.clicked.connect(self._create_video)
+        lay.addWidget(self.create_btn)
+
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, len(STAGES))
+        self.stage_lbl = QLabel("Ready.")
+        self.stage_lbl.setObjectName("stageLabel")
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("dangerBtn")
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.setEnabled(False)
+        prow.addWidget(self.progress, 2)
+        prow.addWidget(self.stage_lbl, 3)
+        prow.addWidget(self.cancel_btn)
+        lay.addLayout(prow)
+
+        rrow = QHBoxLayout()
+        rrow.setSpacing(8)
+        self.preview_btn = QPushButton("Quick Preview")
+        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
+        self.final_btn = QPushButton("Final Render (MP4)")
+        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
+        rrow.addWidget(self.preview_btn)
+        rrow.addWidget(self.final_btn)
+        lay.addLayout(rrow)
+
+        log_head = QLabel("Log")
+        log_head.setObjectName("sectionHead")
+        lay.addWidget(log_head)
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumHeight(150)
+        lay.addWidget(self.log_edit, 1)
+        if not self.ffmpeg_ok:
+            self.create_btn.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            self.final_btn.setEnabled(False)
+        return w
+
     def _ensure_player(self):
         """Create the QMediaPlayer (and video widget) on first use.
 
@@ -555,50 +599,6 @@ class MainWindow(QMainWindow):
         # Show why the preview failed so it can be diagnosed.
         self._log(f"Preview player error: {error_string}")
         self.time_lbl.setText(f"Preview error: {error_string[:60]}")
-
-        self.create_btn = QPushButton("🎬  CREATE VIDEO")
-        self.create_btn.setObjectName("primaryBtn")
-        self.create_btn.setMinimumHeight(56)
-        self.create_btn.clicked.connect(self._create_video)
-        lay.addWidget(self.create_btn)
-
-        prow = QHBoxLayout()
-        prow.setSpacing(8)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, len(STAGES))
-        self.stage_lbl = QLabel("Ready.")
-        self.stage_lbl.setObjectName("stageLabel")
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setObjectName("dangerBtn")
-        self.cancel_btn.clicked.connect(self._cancel)
-        self.cancel_btn.setEnabled(False)
-        prow.addWidget(self.progress, 2)
-        prow.addWidget(self.stage_lbl, 3)
-        prow.addWidget(self.cancel_btn)
-        lay.addLayout(prow)
-
-        rrow = QHBoxLayout()
-        rrow.setSpacing(8)
-        self.preview_btn = QPushButton("▶ Quick Preview")
-        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
-        self.final_btn = QPushButton("⬇ Final Render (MP4)")
-        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
-        rrow.addWidget(self.preview_btn)
-        rrow.addWidget(self.final_btn)
-        lay.addLayout(rrow)
-
-        log_head = QLabel("Log")
-        log_head.setObjectName("sectionHead")
-        lay.addWidget(log_head)
-        self.log_edit = QTextEdit()
-        self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumHeight(150)
-        lay.addWidget(self.log_edit, 1)
-        if not self.ffmpeg_ok:
-            self.create_btn.setEnabled(False)
-            self.preview_btn.setEnabled(False)
-            self.final_btn.setEnabled(False)
-        return w
 
     # -- preview playback controls --
     @staticmethod
