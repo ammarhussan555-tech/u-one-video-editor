@@ -121,6 +121,7 @@ class RenderEngine:
         self.out_w = 0
         self.out_h = 0
         self._final_path = ""
+        self._edit_session_path = ""
 
     # -- helpers --
     def _check(self):
@@ -177,6 +178,11 @@ class RenderEngine:
         elapsed = time.time() - started
         self._msg(f"Done in {elapsed:.0f}s")
         return self._final_path
+
+    @property
+    def edit_session_path(self) -> str:
+        """Path to caption_edit.json saved after a successful render."""
+        return self._edit_session_path
 
     def _run_stages(self, preview: bool, done: set, state: dict):
         S = self.settings
@@ -346,6 +352,27 @@ class RenderEngine:
         self._final_path = out
         self._msg(f"Exported: {out}")
         self._msg(f"Copy in Videos folder: {delivered}")
+        # Save the caption edit session so templates/size can be changed
+        # after the render without re-rendering the whole video.
+        try:
+            from .caption_editor import save_edit_session
+            session_path = os.path.join(self.work_dir, "caption_edit.json")
+            save_edit_session(
+                session_path,
+                clean_video=result.clean_video_path,
+                sentence_timings=self.sentence_timings,
+                word_timings=self.word_timings,
+                fmt=S.get("output_format", "16:9"),
+                res=S.get("output_resolution", "1080p"),
+                fps=S.fps,
+                template=S.get("caption_template", "tiktok_classic"),
+                font_size=S.get("caption_font_size", 48),
+                output_video=out)
+            self._edit_session_path = session_path
+            self._msg("Caption edit session saved.")
+        except Exception as e:  # noqa: BLE001 - never fail a good render
+            self._msg(f"Note: could not save caption edit session ({e}).")
+            self._edit_session_path = ""
         ProjectManager.clear_render_state(self.work_dir)
         self._persist()
         self.rlog.finish(True, out)
