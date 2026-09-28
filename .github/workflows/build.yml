@@ -1,7 +1,7 @@
 name: Build U One Windows Installer
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
   push:
     branches: [ main ]
 
@@ -25,6 +25,7 @@ jobs:
         pip install pyinstaller
         
     - name: Download FFmpeg
+      shell: pwsh
       run: |
         Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
         Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg-dl"
@@ -32,21 +33,40 @@ jobs:
         New-Item -ItemType Directory -Force -Path "build/windows/ffmpeg"
         Copy-Item "$($ffmpegDir.FullName)/bin/ffmpeg.exe" -Destination "build/windows/ffmpeg/"
         Copy-Item "$($ffmpegDir.FullName)/bin/ffprobe.exe" -Destination "build/windows/ffmpeg/"
+        Get-ChildItem "build/windows/ffmpeg/"
         
     - name: Build with PyInstaller
       run: |
         pyinstaller --noconfirm --clean --distpath "dist" --workpath "build/pyinstaller-work" "build/windows/u_one.spec"
+        dir "dist"
+        
+    - name: Create portable ZIP (backup)
+      shell: pwsh
+      run: |
+        Compress-Archive -Path "dist/U One/*" -DestinationPath "Output/U_One_Portable.zip" -Force
         
     - name: Install NSIS
+      shell: pwsh
       run: |
-        choco install nsis -y
+        choco install nsis -y --no-progress
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+        & "C:\Program Files (x86)\NSIS\makensis.exe" -VERSION
         
     - name: Build installer with NSIS
+      shell: pwsh
       run: |
-        & "C:\Program Files (x86)\NSIS\makensis.exe" installer/u_one.nsi
+        cd installer
+        & "C:\Program Files (x86)\NSIS\makensis.exe" u_one.nsi
+        dir ..\Output\
         
     - name: Upload installer
       uses: actions/upload-artifact@v4
       with:
         name: U_One_Setup
         path: Output/U_One_Setup.exe
+        
+    - name: Upload portable ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: U_One_Portable
+        path: Output/U_One_Portable.zip
