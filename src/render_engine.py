@@ -163,8 +163,11 @@ class RenderEngine:
         TempManager.purge_stale(self.work_dir)
         state = ProjectManager.load_render_state(self.work_dir) if resume else {}
         done = set(state.get("stages_done", []))
+        # Unique temp subdir per run: two renders can never delete or
+        # reuse each other's temp files (e.g. concat_list_0001.txt).
+        run_token = uuid.uuid4().hex[:12]
         try:
-            with TempManager(self.work_dir) as tmp:
+            with TempManager(self.work_dir, subdir=f"_tmp/run_{run_token}") as tmp:
                 self._tmp = tmp
                 self._run_stages(preview, done, state)
         except RenderCancelled:
@@ -607,6 +610,8 @@ class RenderEngine:
             shutil.copy2(seg_paths[0], out_path)
             return
         lst = self._tmp.temp_path("concat_list", ".txt")
+        # Defensive: make sure the temp dir still exists (never assume).
+        os.makedirs(os.path.dirname(lst), exist_ok=True)
         with open(lst, "w", encoding="utf-8") as f:
             for p in seg_paths:
                 f.write(f"file '{_concat_list_escape(str(Path(p).resolve()))}'\n")
