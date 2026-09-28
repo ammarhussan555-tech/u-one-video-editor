@@ -177,7 +177,8 @@ class Pipeline:
                 build_ass(self.sentence_timings, self.word_timings, ass,
                           font_size=S.get("caption_font_size", 48),
                           highlight=S.get("caption_highlight", True),
-                          overlays=overlays, play_res=(w, h))
+                          overlays=overlays, play_res=(w, h),
+                          template=S.get("caption_template"))
                 tl.add("captions", 0, tl.duration(), kind="caption",
                        label="Captions", payload={"srt": srt, "ass": ass})
 
