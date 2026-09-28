@@ -167,10 +167,16 @@ class ExportEngine:
         def attempt_burn(vf_chain: str, tag: str, src: str,
                          dest: str) -> None:
             # Caption burn-in from the clean video: re-encode video only,
-            # copy audio (fast).
+            # copy audio (fast). Uses the hardware encoder when available
+            # (3-5x faster than libx264, same visual quality).
+            if use_hw and hw_enc:
+                v_args = ["-c:v", hw_enc, "-b:v", _HW_BITRATE.get(res, "10M")]
+            else:
+                v_args = ["-c:v", "libx264", "-preset", "veryfast",
+                          "-crf", "20"]
             args = ["-i", src,
                     "-vf", vf_chain,
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    *v_args,
                     "-pix_fmt", "yuv420p",
                     "-c:a", "copy",
                     "-movflags", "+faststart", "-shortest", dest]
@@ -226,6 +232,14 @@ class ExportEngine:
             burn_chain = _burn_captions_filter(str(ass))
             ok = try_call(attempt_burn, burn_chain, "burn", clean_path,
                           out_path)
+            # Fallback: hardware encoder failed on burn -> retry on CPU.
+            if not ok and use_hw:
+                self._msg("Hardware burn-in failed; retrying on CPU.")
+                _use_hw = use_hw
+                use_hw = False
+                ok = try_call(attempt_burn, burn_chain, "burn_cpu",
+                              clean_path, out_path)
+                use_hw = _use_hw
             # Fallback: ASS path hostile -> sanitized copy, retry burn-in.
             if not ok:
                 try:
