@@ -51,6 +51,7 @@ class ExportResult:
     height: int
     used_hwaccel: bool
     captions_burned: bool
+    clean_video_path: str = ""  # video+audio WITHOUT burned captions (for post-render caption editing)
 
 
 def _burn_captions_filter(ass_path: str) -> str:
@@ -137,12 +138,10 @@ class ExportEngine:
         if preview:
             w, h = (640, 360) if fmt == "16:9" else \
                    (360, 640) if fmt == "9:16" else (480, 480)
-        chain = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
-                 f"crop={w}:{h},setsar=1,fps={fps}")
+        base_chain = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                      f"crop={w}:{h},setsar=1,fps={fps}")
         ass = Path(ass_path) if ass_path else None
         captions = bool(ass and ass.is_file())
-        if captions:
-            chain += "," + _burn_captions_filter(str(ass))
 
         hw_enc = self.engine.detect_hw_encoder(
             "hevc" if codec == "h265" else "h264") if prefer_hw else None
@@ -150,34 +149,44 @@ class ExportEngine:
         if use_hw:
             self._msg(f"Hardware encoder available: {hw_enc}; "
                       f"CPU fallback ready.")
-        vargs = self._video_args(codec, res, preview, use_hw, hw_enc)
 
-        def attempt(vf_chain: str, tag: str, hw: bool,
-                    enc: Optional[str]) -> None:
+        def attempt_clean(tag: str, hw: bool,
+                          enc: Optional[str], dest: str) -> None:
             # NOTE: -filter_script:v is NOT supported by the bundled FFmpeg
             # 9.0.2 (essentials build). Pass the filter chain directly via
-            # -vf as a single argv element. The chain is already escaped
-            # for filter-level special chars (escape_filter_path).
+            # -vf as a single argv element.
             args = ["-i", video_noaudio, "-i", mixed_audio,
-                    "-vf", vf_chain,
+                    "-vf", base_chain,
                     "-map", "0:v:0", "-map", "1:a:0",
                     *self._video_args(codec, res, preview, hw, enc),
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                    "-movflags", "+faststart", "-shortest", out_path]
+                    "-movflags", "+faststart", "-shortest", dest]
             self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
-                            inputs=[video_noaudio, mixed_audio], output=out_path)
+                            inputs=[video_noaudio, mixed_audio], output=dest)
 
-        def try_attempt(vf_chain: str, tag: str, hw: bool,
-                        enc: Optional[str]) -> bool:
+        def attempt_burn(vf_chain: str, tag: str, src: str,
+                         dest: str) -> None:
+            # Caption burn-in from the clean video: re-encode video only,
+            # copy audio (fast).
+            args = ["-i", src,
+                    "-vf", vf_chain,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "copy",
+                    "-movflags", "+faststart", "-shortest", dest]
+            self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
+                            inputs=[src], output=dest)
+
+        def try_call(fn, *a, **k) -> bool:
             """One render attempt. Returns True on success; logs failures."""
             try:
-                attempt(vf_chain, tag, hw, enc)
+                fn(*a, **k)
                 return True
             except RenderCancelled:
                 raise
             except FFmpegError as e:
-                self._msg(f"Render attempt '{tag}' failed "
-                          f"(exit {e.exit_code}); see log.")
+                self._msg(f"Render attempt failed (exit {e.exit_code}); "
+                          f"see log.")
                 if self.log:
                     self.log.ffmpeg_error(e)
                 self._last_error = e
@@ -186,35 +195,18 @@ class ExportEngine:
         self._last_error: Optional[FFmpegError] = None
         captions_burned = captions
         used_hw = use_hw
+        clean_path = os.path.join(work_dir, "clean_nocap.mp4")
 
-        ok = try_attempt(chain, "captions" if captions else "plain",
-                         use_hw, hw_enc)
-        # Fallback A: hardware encoder failed -> CPU retry (same chain).
+        # ---- Pass 1: clean render (video + audio, NO burned captions). ----
+        # The clean copy is kept so captions can be re-styled after the
+        # render without re-rendering the whole video.
+        self._msg("Final render pass 1/2: clean video (no captions)...")
+        ok = try_call(attempt_clean, "clean", use_hw, hw_enc, clean_path)
         if not ok and use_hw:
             self._msg(f"Hardware encoder {hw_enc} failed; "
                       f"falling back to CPU.")
-            ok = try_attempt(chain, "cpu_retry", False, None)
+            ok = try_call(attempt_clean, "clean_cpu", False, None, clean_path)
             used_hw = False
-        # Fallback B: ASS path hostile -> sanitized copy, retry burn-in.
-        if not ok and captions:
-            try:
-                safe_ass = safe_temp_path(work_dir, "captions", ".ass")
-                shutil.copy(str(ass), safe_ass)
-                chain_b = (chain.split(",subtitles=")[0] + "," +
-                           _burn_captions_filter(safe_ass))
-                ok = try_attempt(chain_b, "safe_ass", False, None)
-                used_hw = False
-            except OSError as e:
-                self._msg(f"Could not stage sanitized captions: {e}")
-        # Fallback C: render without captions rather than failing.
-        if not ok:
-            chain_c = chain.split(",subtitles=")[0]
-            ok = try_attempt(chain_c, "no_captions", False, None)
-            used_hw = False
-            if ok:
-                captions_burned = False
-                self._msg("Rendered without burned-in captions "
-                          "(caption burn-in failed).")
         if not ok:
             last = self._last_error
             raise UOneError(
@@ -227,6 +219,32 @@ class ExportEngine:
                 recovery_hint="check the render log; re-run scene "
                               "generation if an input was bad",
                 stderr_tail=last.stderr_tail if last else "")
+
+        # ---- Pass 2: burn captions onto the clean video. ----
+        if captions:
+            self._msg("Final render pass 2/2: burning captions...")
+            burn_chain = _burn_captions_filter(str(ass))
+            ok = try_call(attempt_burn, burn_chain, "burn", clean_path,
+                          out_path)
+            # Fallback: ASS path hostile -> sanitized copy, retry burn-in.
+            if not ok:
+                try:
+                    safe_ass = safe_temp_path(work_dir, "captions", ".ass")
+                    shutil.copy(str(ass), safe_ass)
+                    ok = try_call(attempt_burn,
+                                  _burn_captions_filter(safe_ass),
+                                  "burn_safe", clean_path, out_path)
+                except OSError as e:
+                    self._msg(f"Could not stage sanitized captions: {e}")
+            # Fallback: deliver the clean video rather than failing.
+            if not ok:
+                shutil.copy2(clean_path, out_path)
+                captions_burned = False
+                self._msg("Rendered without burned-in captions "
+                          "(caption burn-in failed).")
+        else:
+            shutil.copy2(clean_path, out_path)
+            captions_burned = False
 
         problems = self.validate_final_mp4(out_path, expect_w=w, expect_h=h,
                                            expect_fps=fps, expect_audio=True)
@@ -242,7 +260,8 @@ class ExportEngine:
                             width=v.width if v else w,
                             height=v.height if v else h,
                             used_hwaccel=used_hw,
-                            captions_burned=captions_burned)
+                            captions_burned=captions_burned,
+                            clean_video_path=clean_path)
 
     # -- stage 3: final MP4 validation (§12 checklist) --
     def validate_final_mp4(self, path: str, expect_w: int = 0,
