@@ -536,6 +536,10 @@ class MainWindow(QMainWindow):
         preview_head = QLabel("Preview")
         preview_head.setObjectName("sectionHead")
         lay.addWidget(preview_head)
+        self.video_hint = QLabel(
+            "Tip: video par click karo — caption edit ho jayega")
+        self.video_hint.setObjectName("statusLabel")
+        lay.addWidget(self.video_hint)
         # Lazy video widget: QVideoWidget() pulls in Qt Multimedia which can hang
         # on some systems during backend init. Use a placeholder until preview
         # is actually needed.
@@ -550,14 +554,19 @@ class MainWindow(QMainWindow):
         self.player = None
         self.audio_out = None
 
-        # Playback controls: play/pause + seek bar + time label
+        # Playback controls: play/pause + stop + seek bar + time label
         ctl = QHBoxLayout()
         ctl.setSpacing(8)
         self.play_btn = QPushButton("▶")
         self.play_btn.setMaximumWidth(48)
-        self.play_btn.setToolTip("Play / Pause")
+        self.play_btn.setToolTip("Play / Pause (jitni marzi bar dabao)")
         self.play_btn.clicked.connect(self._toggle_play)
         ctl.addWidget(self.play_btn)
+        self.stop_btn = QPushButton("⏹")
+        self.stop_btn.setMaximumWidth(48)
+        self.stop_btn.setToolTip("Stop (shuru se)")
+        self.stop_btn.clicked.connect(self._stop_play)
+        ctl.addWidget(self.stop_btn)
         self.seek_slider = QSlider(Qt.Horizontal)
         self.seek_slider.setRange(0, 0)
         self.seek_slider.sliderMoved.connect(self._seek)
@@ -671,7 +680,11 @@ class MainWindow(QMainWindow):
             self.player.positionChanged.connect(self._on_position)
             self.player.durationChanged.connect(self._on_duration)
             self.player.playbackStateChanged.connect(self._on_play_state)
+            self.player.mediaStatusChanged.connect(self._on_media_status)
             self.player.errorOccurred.connect(self._on_player_error)
+            # Click on the video -> open the caption editor for the
+            # caption shown at that moment.
+            self.video_widget.installEventFilter(self)
             return True
         except Exception as e:
             self._log(f"Preview player unavailable: {e}")
@@ -694,7 +707,145 @@ class MainWindow(QMainWindow):
         if self.player.playbackState() == self.player.PlayingState:
             self.player.pause()
         else:
+            # If the video ended, restart from the beginning so the
+            # play button always works (even after the first autoplay).
+            dur = self.player.duration()
+            if dur > 0 and self.player.position() >= dur - 300:
+                self.player.setPosition(0)
             self.player.play()
+
+    def _stop_play(self):
+        if not self._ensure_player():
+            return
+        self.player.stop()
+        # Reset to the start so the next play begins from 0.
+        self.player.setPosition(0)
+
+    def _on_media_status(self, status):
+        # 7 = EndOfMedia. Reset to start so replay works with one tap.
+        if int(status) == 7 and self.player is not None:
+            self.player.setPosition(0)
+            self.play_btn.setText("▶")
+
+    def eventFilter(self, obj, event):
+        # Click on the video -> pause and open the caption editor
+        # for the caption visible at that moment.
+        if obj is self.video_widget:
+            from PySide6.QtCore import QEvent
+            if event.type() == QEvent.MouseButtonPress:
+                self._on_video_clicked()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_video_clicked(self):
+        """Video clicked: pause and offer to edit the visible caption."""
+        if not self._edit_session or not os.path.isfile(self._edit_session):
+            return  # nothing to edit yet — render a video first
+        if self.player is not None:
+            self.player.pause()
+        try:
+            from src.caption_editor import load_edit_session
+            data = load_edit_session(self._edit_session)
+            pos_sec = (self.player.position() / 1000.0) if self.player else 0.0
+            # Find the caption visible right now.
+            current = None
+            for i, s in enumerate(data.get("sentence_timings", [])):
+                if s["start"] <= pos_sec <= s["end"]:
+                    current = i
+                    break
+            self._open_caption_text_editor(data, select_index=current)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Could not open caption editor: {e}")
+
+    def _open_caption_text_editor(self, data, select_index=None):
+        """Dialog: edit each caption's text + change template/size."""
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                       QListWidget, QTextEdit, QLabel,
+                                       QDialogButtonBox, QComboBox, QSlider)
+        from PySide6.QtCore import Qt
+        from src.text_captions import caption_template_labels
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit Captions")
+        dlg.resize(560, 480)
+        lay = QVBoxLayout(dlg)
+
+        lay.addWidget(QLabel("Click a caption to edit its text:"))
+        self._cap_list = QListWidget()
+        timings = data.get("sentence_timings", [])
+        for i, s in enumerate(timings):
+            t0 = int(s["start"] // 60), int(s["start"] % 60)
+            self._cap_list.addItem(
+                f"{t0[0]:02d}:{t0[1]:02d}  {s['text'][:70]}")
+        if select_index is not None and 0 <= select_index < len(timings):
+            self._cap_list.setCurrentRow(select_index)
+        lay.addWidget(self._cap_list, 1)
+
+        lay.addWidget(QLabel("Caption text:"))
+        self._cap_text_edit = QTextEdit()
+        self._cap_text_edit.setMaximumHeight(80)
+        lay.addWidget(self._cap_text_edit)
+
+        def _fill_text(row):
+            if 0 <= row < len(timings):
+                self._cap_text_edit.setPlainText(timings[row]["text"])
+        self._cap_list.currentRowChanged.connect(_fill_text)
+        if self._cap_list.currentRow() >= 0:
+            _fill_text(self._cap_list.currentRow())
+
+        def _save_text():
+            row = self._cap_list.currentRow()
+            if 0 <= row < len(timings):
+                new_text = self._cap_text_edit.toPlainText().strip()
+                if new_text:
+                    timings[row]["text"] = new_text
+                    t0 = int(timings[row]["start"] // 60), int(
+                        timings[row]["start"] % 60)
+                    self._cap_list.item(row).setText(
+                        f"{t0[0]:02d}:{t0[1]:02d}  {new_text[:70]}")
+        self._cap_text_edit.textChanged.connect(_save_text)
+
+        # Template + size in the same dialog.
+        trow = QHBoxLayout()
+        trow.addWidget(QLabel("Template:"))
+        tmpl_cb = QComboBox()
+        for key, label in caption_template_labels():
+            tmpl_cb.addItem(label, key)
+        idx = tmpl_cb.findData(data.get("template"))
+        if idx >= 0:
+            tmpl_cb.setCurrentIndex(idx)
+        trow.addWidget(tmpl_cb, 1)
+        lay.addLayout(trow)
+
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Size:"))
+        size_sl = QSlider(Qt.Horizontal)
+        size_sl.setRange(24, 96)
+        size_sl.setValue(int(data.get("font_size", 48)))
+        size_lbl = QLabel(str(size_sl.value()))
+        size_sl.valueChanged.connect(lambda v: size_lbl.setText(str(v)))
+        srow.addWidget(size_sl, 1)
+        srow.addWidget(size_lbl)
+        lay.addLayout(srow)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        if dlg.exec() == QDialog.Accepted:
+            # Save edited texts back to the session, then re-burn.
+            import json
+            data["sentence_timings"] = timings
+            with open(self._edit_session, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            # Sync the main panel controls too.
+            idx2 = self.edit_template_cb.findData(tmpl_cb.currentData())
+            if idx2 >= 0:
+                self.edit_template_cb.setCurrentIndex(idx2)
+            self.edit_size_slider.setValue(size_sl.value())
+            self._apply_caption_edits()
 
     def _seek(self, pos: int):
         if not self._ensure_player():
