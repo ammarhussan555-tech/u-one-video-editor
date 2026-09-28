@@ -489,10 +489,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(preview_head)
         self.video_widget = QVideoWidget()
         lay.addWidget(self.video_widget, 3)
-        self.player = QMediaPlayer()
-        self.audio_out = QAudioOutput()
-        self.player.setAudioOutput(self.audio_out)
-        self.player.setVideoOutput(self.video_widget)
+        # Lazy player: QMediaPlayer() can hang on some systems during Qt Multimedia
+        # FFmpeg backend init, so create it only when preview is actually needed.
+        self.player = None
+        self.audio_out = None
 
         # Playback controls: play/pause + seek bar + time label
         ctl = QHBoxLayout()
@@ -510,10 +510,30 @@ class MainWindow(QMainWindow):
         self.time_lbl.setObjectName("statusLabel")
         ctl.addWidget(self.time_lbl)
         lay.addLayout(ctl)
-        self.player.positionChanged.connect(self._on_position)
-        self.player.durationChanged.connect(self._on_duration)
-        self.player.playbackStateChanged.connect(self._on_play_state)
-        self.player.errorOccurred.connect(self._on_player_error)
+
+    def _ensure_player(self):
+        """Create the QMediaPlayer on first use (not in __init__).
+
+        Qt Multimedia's FFmpeg backend can hang during startup on some
+        systems, so we defer creation until preview is actually needed.
+        Returns True if the player is ready.
+        """
+        if self.player is not None:
+            return True
+        try:
+            from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            self.player = QMediaPlayer()
+            self.audio_out = QAudioOutput()
+            self.player.setAudioOutput(self.audio_out)
+            self.player.setVideoOutput(self.video_widget)
+            self.player.positionChanged.connect(self._on_position)
+            self.player.durationChanged.connect(self._on_duration)
+            self.player.playbackStateChanged.connect(self._on_play_state)
+            self.player.errorOccurred.connect(self._on_player_error)
+            return True
+        except Exception as e:
+            self._log(f"Preview player unavailable: {e}")
+            return False
 
     def _on_player_error(self, error, error_string):
         # Show why the preview failed so it can be diagnosed.
@@ -571,12 +591,16 @@ class MainWindow(QMainWindow):
         return f"{s // 60:02d}:{s % 60:02d}"
 
     def _toggle_play(self):
+        if not self._ensure_player():
+            return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
         else:
             self.player.play()
 
     def _seek(self, pos: int):
+        if not self._ensure_player():
+            return
         self.player.setPosition(pos)
 
     def _on_position(self, pos: int):
@@ -792,9 +816,12 @@ class MainWindow(QMainWindow):
         self._refresh_sources()
         # Verify the file exists before trying to play it.
         if os.path.isfile(out):
-            self.player.setSource(QUrl.fromLocalFile(out))
-            self.player.play()
-            self._log(f"Playing preview: {out}")
+            if self._ensure_player():
+                self.player.setSource(QUrl.fromLocalFile(out))
+                self.player.play()
+                self._log(f"Playing preview: {out}")
+            else:
+                self._log("Preview unavailable on this system.")
         else:
             self._log(f"WARNING: output file not found: {out}")
             self.time_lbl.setText("Output file not found")
