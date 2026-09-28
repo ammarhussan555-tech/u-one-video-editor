@@ -1,0 +1,38 @@
+app_name: "U One"
+
+# NOTE: API keys are best entered in the app (Settings -> 4. API Settings),
+# where they are stored securely in Windows Credential Manager. The
+# api_keys section below is only a legacy fallback for advanced/CLI use.
+
+# visual_mode: every_sentence | every_2 | every_3 | ai_auto
+visual_mode: "every_sentence"
+# media_preference: video_first | image_first | ai_auto
+media_preference: "ai_auto"
+# repetition_limit: never | max2 | ai
+repetition_limit: "never"
+# mode: full_auto | ai_control | manual
+mode: "full_auto"
+style_preset: "Documentary"
+
+output:
+  format: "16:9"      # 16:9 | 9:16 | 1:1
+  resolution: "1080p" # 1080p | 1440p | 4K
+  fps: 30             # 24 | 30 | 60
+  codec: "h264"       # h264 | h265
+  container: "mp4"
+
+# text_overlays: auto | off | manual
+text_overlays: "auto"
+captions:
+  enabled: true
+  highlight_words: true
+  font_size: 48
+  position: "bottom"  # bottom | top
+
+api_keys:
+  pexels: ""    # or set env var PEXELS_API_KEY
+  pixabay: ""   # or set env var PIXABAY_API_KEY
+
+paths:
+  ffmpeg: "ffmpeg"  # or full path to ffmpeg.exe on Windows
+  music_dir: ""     # optional folder of royalty-free music
