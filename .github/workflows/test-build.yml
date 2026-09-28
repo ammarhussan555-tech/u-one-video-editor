@@ -1,0 +1,38 @@
+name: Startup Test Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install PySide6 only
+      run: |
+        python -m pip install --upgrade pip
+        pip install PySide6 pyinstaller
+        
+    - name: Build minimal test
+      run: |
+        pyinstaller --noconfirm --clean --distpath "dist-test" "build/windows/startup_test.spec"
+        
+    - name: Create test ZIP
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "Output"
+        Compress-Archive -Path "dist-test/UOneTest/*" -DestinationPath "Output/UOneTest.zip" -Force
+        
+    - name: Upload test ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: UOneTest
+        path: Output/UOneTest.zip
