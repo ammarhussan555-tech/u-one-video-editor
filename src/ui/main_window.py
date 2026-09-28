@@ -15,8 +15,9 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSpinBox, QScrollArea, QFrame, QSlider)
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QPixmap
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+# NOTE: QtMultimedia / QtMultimediaWidgets are imported lazily inside
+# _ensure_player() — importing them at startup can hang on some systems
+# during the FFmpeg backend init.
 
 from src.render_engine import RenderEngine, STAGES
 from src.project import Project
@@ -487,8 +488,15 @@ class MainWindow(QMainWindow):
         preview_head = QLabel("Preview")
         preview_head.setObjectName("sectionHead")
         lay.addWidget(preview_head)
-        self.video_widget = QVideoWidget()
-        lay.addWidget(self.video_widget, 3)
+        # Lazy video widget: QVideoWidget() pulls in Qt Multimedia which can hang
+        # on some systems during backend init. Use a placeholder until preview
+        # is actually needed.
+        self.video_widget = None
+        self.video_placeholder = QLabel("Preview will appear here after rendering.")
+        self.video_placeholder.setObjectName("statusLabel")
+        self.video_placeholder.setAlignment(Qt.AlignCenter)
+        self.video_placeholder.setMinimumHeight(200)
+        lay.addWidget(self.video_placeholder, 3)
         # Lazy player: QMediaPlayer() can hang on some systems during Qt Multimedia
         # FFmpeg backend init, so create it only when preview is actually needed.
         self.player = None
@@ -512,7 +520,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(ctl)
 
     def _ensure_player(self):
-        """Create the QMediaPlayer on first use (not in __init__).
+        """Create the QMediaPlayer (and video widget) on first use.
 
         Qt Multimedia's FFmpeg backend can hang during startup on some
         systems, so we defer creation until preview is actually needed.
@@ -522,6 +530,14 @@ class MainWindow(QMainWindow):
             return True
         try:
             from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+            from PySide6.QtMultimediaWidgets import QVideoWidget
+            # Swap the placeholder for a real video widget on first use.
+            if self.video_widget is None:
+                self.video_widget = QVideoWidget()
+                lay = self.video_placeholder.parent().layout()
+                lay.replaceWidget(self.video_placeholder, self.video_widget)
+                self.video_placeholder.deleteLater()
+                self.video_placeholder = None
             self.player = QMediaPlayer()
             self.audio_out = QAudioOutput()
             self.player.setAudioOutput(self.audio_out)
@@ -593,7 +609,7 @@ class MainWindow(QMainWindow):
     def _toggle_play(self):
         if not self._ensure_player():
             return
-        if self.player.playbackState() == QMediaPlayer.PlayingState:
+        if self.player.playbackState() == self.player.PlayingState:
             self.player.pause()
         else:
             self.player.play()
@@ -614,8 +630,8 @@ class MainWindow(QMainWindow):
         self.seek_slider.setRange(0, dur)
 
     def _on_play_state(self, state):
-        self.play_btn.setText(
-            "⏸" if state == QMediaPlayer.PlayingState else "▶")
+        # Compare via int to avoid needing QMediaPlayer import at module level.
+        self.play_btn.setText("⏸" if int(state) == 1 else "▶")  # 1 = PlayingState
 
     def _right_panel(self):
         tabs = QTabWidget()
