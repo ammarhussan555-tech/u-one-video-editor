@@ -24,25 +24,25 @@ jobs:
         
     - name: Build diagnostic test
       run: |
-        pyinstaller --noconfirm --clean --distpath "dist-test" "build/windows/diag2_test.spec"
+        pyinstaller --noconfirm --clean --distpath "dist-test" "build/windows/diag3_test.spec"
         
     - name: Create test ZIP
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path "Output"
-        Compress-Archive -Path "dist-test/UOneDiag2/*" -DestinationPath "Output/UOneDiag2.zip" -Force
+        Compress-Archive -Path "dist-test/UOneDiag3/*" -DestinationPath "Output/UOneDiag3.zip" -Force
         
     - name: Upload test ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: UOneDiag2
-        path: Output/UOneDiag2.zip
+        name: UOneDiag3
+        path: Output/UOneDiag3.zip
         
     - name: Run diagnostic on Windows (offscreen)
       shell: pwsh
       run: |
         $env:QT_QPA_PLATFORM = "offscreen"
-        $proc = Start-Process -FilePath "dist-test/UOneDiag2/UOneDiag2.exe" -PassThru -NoNewWindow -RedirectStandardOutput "diag_out.txt" -RedirectStandardError "diag_err.txt"
+        $proc = Start-Process -FilePath "dist-test/UOneDiag3/UOneDiag3.exe" -PassThru -NoNewWindow -RedirectStandardOutput "diag_out.txt" -RedirectStandardError "diag_err.txt"
         $exited = $proc.WaitForExit(30000)
         if (-not $exited) {
           Write-Host "DIAG RESULT: app hung (did not exit in 30s) - killing"
