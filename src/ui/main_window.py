@@ -1130,6 +1130,13 @@ class MainWindow(QMainWindow):
         if not script:
             QMessageBox.warning(self, "Script", "Paste a script first.")
             return
+        # Guard: never start a second render while one is running.
+        # (Two concurrent renders delete each other's temp files.)
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.warning(
+                self, "U One",
+                "Video abhi ban rahi hai — pehle usay complete ya cancel karo.")
+            return
         settings = self._settings()
         if not settings:
             return
@@ -1145,17 +1152,24 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
         self.create_btn.setEnabled(False)
+        self.preview_btn.setEnabled(False)
+        self.final_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.progress.setValue(0)
         self.worker.start()
+
+    def _render_buttons(self, enabled: bool):
+        self.create_btn.setEnabled(enabled)
+        self.preview_btn.setEnabled(enabled)
+        self.final_btn.setEnabled(enabled)
+        self.cancel_btn.setEnabled(not enabled)
 
     def _on_progress(self, i, stage, msg):
         self.progress.setValue(i + 1)
         self.stage_lbl.setText(f"{stage}... {msg}")
 
     def _on_finished(self, out):
-        self.create_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self._render_buttons(True)
         self.stage_lbl.setText("Done.")
         self._log(f"Saved: {out}")
         # Enable post-render caption editing if a session was saved.
@@ -1247,8 +1261,7 @@ class MainWindow(QMainWindow):
                             f"Could not update captions:\n{msg}")
 
     def _on_error(self, msg):
-        self.create_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self._render_buttons(True)
         self.stage_lbl.setText("Error.")
         # U One never closes on a render failure: save the project, log the
         # technical detail, show the user a simple message.
