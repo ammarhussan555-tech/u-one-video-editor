@@ -34,7 +34,7 @@ from .error_recovery import RenderCancelled, UOneError, ValidationError
 from .export_engine import ExportEngine
 from .ffmpeg_engine import FFmpegEngine
 from .log_system import RenderLogger
-from .media_normalizer import TargetSpec, normalize_all, normalize_segment
+from .media_normalizer import TargetSpec, hw_target_spec, normalize_all, normalize_segment
 from .media_search import Asset, MediaFinder
 from .project_manager import ProjectManager
 from .qc_engine import run_qc
@@ -288,7 +288,8 @@ class RenderEngine:
         if "s7" not in done:
             self._stage(6, "unifying codec/resolution/fps")
             self._check()
-            spec = TargetSpec(width=w, height=h, fps=float(S.fps))
+            spec = hw_target_spec(width=w, height=h, fps=float(S.fps),
+                                  engine=self.engine)
             seg_paths = [r.segment_path for r in self.scene_results]
             self.normalized = normalize_all(seg_paths, spec, self.work_dir,
                                             self.engine)
@@ -674,8 +675,9 @@ class RenderEngine:
         new_res = gen.generate_one(
             SceneSpec(index=res.spec.index, scene_id=scene_id,
                       text=sc.text, duration=dur))
-        tspec = TargetSpec(width=self.out_w, height=self.out_h,
-                           fps=float(self.settings.fps))
+        tspec = hw_target_spec(width=self.out_w, height=self.out_h,
+                               fps=float(self.settings.fps),
+                               engine=self.engine)
         norm = normalize_segment(
             new_res.segment_path, tspec,
             os.path.join(self.seg_dir, f"seg_{res.spec.index:03d}_r.mp4"),
