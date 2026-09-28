@@ -48,11 +48,13 @@ jobs:
           Write-Host "OK: qwindows.dll found"
         } else {
           Write-Host "MISSING: qwindows.dll - copying from PySide6..."
-          $src = python -c "import PySide6, os; print(os.path.join(os.path.dirname(PySide6.__file__), 'plugins'))"
-          Write-Host "PySide6 plugins at: $src"
-          Copy-Item "$src/*" -Destination "dist/U One/_internal/PySide6/plugins/" -Recurse -Force
+          $plugindir = python -c "import PySide6, os; print(os.path.join(os.path.dirname(PySide6.__file__), 'plugins'))"
+          Write-Host "PySide6 plugins at: $plugindir"
+          $dest = "dist/U One/_internal/PySide6/plugins"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Path "$plugindir/*" -Destination $dest -Recurse -Force
         }
-        Get-ChildItem "dist/U One/_internal/PySide6/plugins/platforms/"
+        Get-ChildItem "dist/U One/_internal/PySide6/plugins/platforms/" -ErrorAction SilentlyContinue
         
     - name: Create portable ZIP (backup)
       shell: pwsh
