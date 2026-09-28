@@ -43,7 +43,9 @@ jobs:
     - name: Create portable ZIP (backup)
       shell: pwsh
       run: |
+        New-Item -ItemType Directory -Force -Path "Output"
         Compress-Archive -Path "dist/U One/*" -DestinationPath "Output/U_One_Portable.zip" -Force
+        dir Output/
         
     - name: Install NSIS
       shell: pwsh
