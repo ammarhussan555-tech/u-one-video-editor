@@ -40,6 +40,20 @@ jobs:
         pyinstaller --noconfirm --clean --distpath "dist" --workpath "build/pyinstaller-work" "build/windows/u_one.spec"
         dir "dist"
         
+    - name: Verify Qt plugins (critical for GUI startup)
+      shell: pwsh
+      run: |
+        $qwindows = "dist/U One/_internal/PySide6/plugins/platforms/qwindows.dll"
+        if (Test-Path $qwindows) {
+          Write-Host "OK: qwindows.dll found"
+        } else {
+          Write-Host "MISSING: qwindows.dll - copying from PySide6..."
+          $src = python -c "import PySide6, os; print(os.path.join(os.path.dirname(PySide6.__file__), 'plugins'))"
+          Write-Host "PySide6 plugins at: $src"
+          Copy-Item "$src/*" -Destination "dist/U One/_internal/PySide6/plugins/" -Recurse -Force
+        }
+        Get-ChildItem "dist/U One/_internal/PySide6/plugins/platforms/"
+        
     - name: Create portable ZIP (backup)
       shell: pwsh
       run: |
