@@ -105,6 +105,93 @@ class CaptionEditWorker(QThread):
             self.error.emit(str(e))
 
 
+class PanelDivider(QWidget):
+    """Thin draggable divider between panels (CapCut-style resizing).
+
+    Dragging it calls on_drag(dx_pixels). Implemented manually instead of
+    QSplitter because QSplitter segfaulted on some Windows systems.
+    """
+    def __init__(self, on_drag, parent=None):
+        super().__init__(parent)
+        self.on_drag = on_drag
+        self.setFixedWidth(8)
+        self.setCursor(Qt.SplitHCursor)
+        self.setMouseTracking(True)
+        self._dragging = False
+        self._last_x = 0
+        self.setToolTip("Drag karke panel ka size badlo")
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QColor
+        p = QPainter(self)
+        # Subtle grip dots in the middle.
+        p.setPen(QColor("#3a3f4b"))
+        cx = self.width() // 2
+        for y in range(self.height() // 2 - 20, self.height() // 2 + 21, 8):
+            p.drawPoint(cx, y)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._last_x = event.globalPosition().x()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            x = event.globalPosition().x()
+            dx = int(x - self._last_x)
+            self._last_x = x
+            if dx:
+                self.on_drag(dx)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = False
+        event.accept()
+
+
+class HPanelDivider(QWidget):
+    """Horizontal divider: drag up/down to resize the timeline (CapCut-style)."""
+    def __init__(self, on_drag, parent=None):
+        super().__init__(parent)
+        self.on_drag = on_drag
+        self.setFixedHeight(8)
+        self.setCursor(Qt.SplitVCursor)
+        self.setMouseTracking(True)
+        self._dragging = False
+        self._last_y = 0
+        self.setToolTip("Drag karke timeline ka size badlo")
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QColor
+        p = QPainter(self)
+        p.setPen(QColor("#3a3f4b"))
+        cy = self.height() // 2
+        for x in range(self.width() // 2 - 20, self.width() // 2 + 21, 8):
+            p.drawPoint(x, cy)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._last_y = event.globalPosition().y()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            y = event.globalPosition().y()
+            dy = int(y - self._last_y)
+            self._last_y = y
+            if dy:
+                self.on_drag(dy)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._dragging = False
+        event.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -377,18 +464,43 @@ class MainWindow(QMainWindow):
             main.addWidget(banner)
 
         # NOTE: QSplitter caused a segfault (access violation) on some Windows
-        # systems when adding the center panel. Replaced with plain layouts.
-        # Panels are fixed-proportion instead of user-resizable.
+        # systems when adding the center panel. Using CapCut-style manual
+        # drag dividers instead — side panels are user-resizable, center
+        # takes the remaining space.
         panels = QHBoxLayout()
-        panels.setSpacing(10)
-        panels.addWidget(self._left_panel(), 34)
-        panels.addWidget(self._center_panel(), 62)
-        panels.addWidget(self._right_panel(), 38)
+        panels.setSpacing(0)
+
+        self.left_panel = self._left_panel()
+        self.left_panel.setFixedWidth(300)
+        panels.addWidget(self.left_panel)
+
+        def _drag_left(dx):
+            w = max(200, min(520, self.left_panel.width() + dx))
+            self.left_panel.setFixedWidth(w)
+        panels.addWidget(PanelDivider(_drag_left))
+
+        panels.addWidget(self._center_panel(), 1)
+
+        def _drag_right(dx):
+            w = max(220, min(560, self.right_panel.width() - dx))
+            self.right_panel.setFixedWidth(w)
+        panels.addWidget(PanelDivider(_drag_right))
+
+        self.right_panel = self._right_panel()
+        self.right_panel.setFixedWidth(340)
+        panels.addWidget(self.right_panel)
+
         main.addLayout(panels, 3)
+
+        def _drag_timeline(dy):
+            h = max(120, min(500, self.timeline_widget.height() - dy))
+            self.timeline_widget.setFixedHeight(h)
+        main.addWidget(HPanelDivider(_drag_timeline))
 
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.sceneSelected.connect(self._on_scene_selected)
-        main.addWidget(self.timeline_widget, 1)
+        self.timeline_widget.setFixedHeight(220)
+        main.addWidget(self.timeline_widget)
 
     def _about(self):
         QMessageBox.about(
