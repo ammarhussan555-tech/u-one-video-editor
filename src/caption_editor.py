@@ -77,23 +77,32 @@ def reburn_captions(clean_video: str, sentence_timings: list, word_timings,
               overlays=None, play_res=(w, h), template=template)
 
     vf = f"subtitles='{escape_filter_path(ass_path)}'"
-    if hw_enc:
-        v_args = ["-c:v", hw_enc, "-b:v", "10M"]
-    else:
-        # Fast preset for interactive previewing; quality preset otherwise.
-        preset = "ultrafast" if fast_preview else "veryfast"
-        v_args = ["-c:v", "libx264", "-preset", preset, "-crf", "20"]
     tmp_out = safe_temp_path(work_dir, "recaption_out", ".mp4")
-    args = [ffmpeg_path, "-y", "-i", clean_video,
-            "-vf", vf,
-            *v_args,
-            "-pix_fmt", "yuv420p",
-            "-c:a", "copy",
-            "-movflags", "+faststart", "-shortest", tmp_out]
+
+    def _build_args(v_args):
+        return [ffmpeg_path, "-y", "-i", clean_video,
+                "-vf", vf,
+                *v_args,
+                "-pix_fmt", "yuv420p",
+                "-c:a", "copy",
+                "-movflags", "+faststart", "-shortest", tmp_out]
+
+    # Fast preset for interactive previewing; quality preset otherwise.
+    preset = "ultrafast" if fast_preview else "veryfast"
+    cpu_args = ["-c:v", "libx264", "-preset", preset, "-crf", "20"]
+    args = _build_args(
+        ["-c:v", hw_enc, "-b:v", "10M"] if hw_enc else cpu_args)
     if log_cb:
         log_cb(f"Re-burning captions: template={template}, size={font_size}")
     proc = popen_no_window(args)
     _, err = proc.communicate()
+    if proc.returncode != 0 and hw_enc:
+        # Hardware encoder was listed but failed at runtime (no usable
+        # GPU/driver) — fall back to CPU instead of failing the edit.
+        if log_cb:
+            log_cb("Hardware encoder failed, retrying on CPU...")
+        proc = popen_no_window(_build_args(cpu_args))
+        _, err = proc.communicate()
     if proc.returncode != 0:
         tail = (err or b"").decode("utf-8", errors="replace")[-800:]
         raise RuntimeError(f"Caption re-burn failed: {tail}")
