@@ -13,13 +13,14 @@ COLORS = {
 class TimelineWidget(QWidget):
     sceneSelected = Signal(int)  # scene_id
     clipRightClicked = Signal(str)  # clip_id (for CapCut-style edit menu)
+    clipSelected = Signal(str)  # clip_id (any left-click selection)
 
     def __init__(self):
         super().__init__()
         self.timeline = None
         self.selected_scene = None
+        self.selected_clip_id = None
         self.setMinimumHeight(250)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
 
     def set_timeline(self, tl):
         self.timeline = tl
@@ -79,17 +80,21 @@ class TimelineWidget(QWidget):
         c = self._clip_at(ev.position())
         if c is None:
             return
+        # Track selected clip for the toolbar buttons (CapCut-style: select then act).
+        self.selected_clip_id = c.id
+        self.clipSelected.emit(c.id)
         sid = c.payload.get("scene_id")
         if sid is not None:
             self.selected_scene = sid
             self.sceneSelected.emit(sid)
-            self.update()
-        # Right click -> CapCut-style edit menu for this clip.
-        if ev.button() == Qt.RightButton:
-            self.clipRightClicked.emit(c.id)
+        self.update()
+        # NOTE: right-click menu is handled ONLY by contextMenuEvent below
+        # (handling it here too would open the menu twice per click).
 
     def contextMenuEvent(self, ev):
-        # Also support the platform context-menu key/gesture.
+        # Right-click (or menu key) -> CapCut-style edit menu for this clip.
         c = self._clip_at(ev.pos())
         if c is not None:
+            self.selected_clip_id = c.id
+            self.clipSelected.emit(c.id)
             self.clipRightClicked.emit(c.id)
