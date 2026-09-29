@@ -649,7 +649,52 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(w)
         scroll.setWidgetResizable(True)
-        return scroll
+        # CapCut-style: left panel = tools + script (scrollable) with a
+        # FIXED build section at the bottom (always visible, no scrolling).
+        outer = QWidget()
+        outer_lay = QVBoxLayout(outer)
+        outer_lay.setContentsMargins(0, 0, 0, 0)
+        outer_lay.addWidget(scroll, 1)
+        build = QGroupBox("5. Build Video")
+        blay = QVBoxLayout(build)
+        self.create_btn = QPushButton("🎬 CREATE VIDEO")
+        self.create_btn.setObjectName("primaryBtn")
+        self.create_btn.setMinimumHeight(52)
+        self.create_btn.clicked.connect(self._create_video)
+        blay.addWidget(self.create_btn)
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, len(STAGES))
+        self.stage_lbl = QLabel("Ready.")
+        self.stage_lbl.setObjectName("stageLabel")
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("dangerBtn")
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.setEnabled(False)
+        prow.addWidget(self.progress, 2)
+        prow.addWidget(self.stage_lbl, 3)
+        prow.addWidget(self.cancel_btn)
+        blay.addLayout(prow)
+        rrow = QHBoxLayout()
+        rrow.setSpacing(8)
+        self.preview_btn = QPushButton("Quick Preview")
+        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
+        self.final_btn = QPushButton("Final Render (MP4)")
+        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
+        rrow.addWidget(self.preview_btn)
+        rrow.addWidget(self.final_btn)
+        blay.addLayout(rrow)
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumHeight(90)
+        blay.addWidget(self.log_edit)
+        if not self.ffmpeg_ok:
+            self.create_btn.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            self.final_btn.setEnabled(False)
+        outer_lay.addWidget(build)
+        return outer
 
     def _center_panel(self):
         w = QWidget()
@@ -697,49 +742,9 @@ class MainWindow(QMainWindow):
         self.time_lbl.setObjectName("statusLabel")
         ctl.addWidget(self.time_lbl)
         lay.addLayout(ctl)
-
-        self.create_btn = QPushButton("CREATE VIDEO")
-        self.create_btn.setObjectName("primaryBtn")
-        self.create_btn.setMinimumHeight(56)
-        self.create_btn.clicked.connect(self._create_video)
-        lay.addWidget(self.create_btn)
-
-        prow = QHBoxLayout()
-        prow.setSpacing(8)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, len(STAGES))
-        self.stage_lbl = QLabel("Ready.")
-        self.stage_lbl.setObjectName("stageLabel")
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setObjectName("dangerBtn")
-        self.cancel_btn.clicked.connect(self._cancel)
-        self.cancel_btn.setEnabled(False)
-        prow.addWidget(self.progress, 2)
-        prow.addWidget(self.stage_lbl, 3)
-        prow.addWidget(self.cancel_btn)
-        lay.addLayout(prow)
-
-        rrow = QHBoxLayout()
-        rrow.setSpacing(8)
-        self.preview_btn = QPushButton("Quick Preview")
-        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
-        self.final_btn = QPushButton("Final Render (MP4)")
-        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
-        rrow.addWidget(self.preview_btn)
-        rrow.addWidget(self.final_btn)
-        lay.addLayout(rrow)
-
-        log_head = QLabel("Log")
-        log_head.setObjectName("sectionHead")
-        lay.addWidget(log_head)
-        self.log_edit = QTextEdit()
-        self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumHeight(150)
-        lay.addWidget(self.log_edit, 1)
-        if not self.ffmpeg_ok:
-            self.create_btn.setEnabled(False)
-            self.preview_btn.setEnabled(False)
-            self.final_btn.setEnabled(False)
+        # CapCut-style: center panel is ONLY the preview (large).
+        # Build controls live in the left panel's fixed bottom section.
+        lay.addStretch(1)
         return w
 
     def _ensure_player(self):
@@ -905,9 +910,27 @@ class MainWindow(QMainWindow):
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(200, self._deferred_play)
                 return
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Play seek check failed: {e}")
         self.player.play()
+        # Watchdog: if the backend swallowed play(), retry harder.
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(800, self._play_watchdog)
+
+    def _play_watchdog(self):
+        """If play() didn't take effect, force a hard restart."""
+        try:
+            if self.player is None:
+                return
+            if self.player.playbackState() == self.player.PlayingState:
+                return
+            self._log("Play didn't start — hard restarting preview...")
+            src = self.player.source()
+            self.player.setSource(src)  # reload the pipeline
+            self.player.setPosition(0)
+            self.player.play()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Play restart failed: {e}")
 
     def _deferred_play(self):
         try:
