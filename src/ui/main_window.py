@@ -206,6 +206,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(__display_name__)
         self.resize(1500, 950)
+        self.setMinimumSize(1100, 700)
         self._apply_modern_theme()
         self.project = Project("Untitled")
         self.pipeline = None
@@ -728,48 +729,6 @@ class MainWindow(QMainWindow):
         rrow.addWidget(self.final_btn)
         lay.addLayout(rrow)
 
-        # ---- Post-render caption editor ----
-        # Enabled after a successful render: change template/size without
-        # re-rendering the whole video (only captions are re-burned).
-        cap_head = QLabel("Edit Captions (after render)")
-        cap_head.setObjectName("sectionHead")
-        lay.addWidget(cap_head)
-        cap_form = QFormLayout()
-        from src.text_captions import caption_template_labels
-        self.edit_template_cb = QComboBox()
-        for key, label in caption_template_labels():
-            self.edit_template_cb.addItem(label, key)
-        self.edit_template_cb.setEnabled(False)
-        # CapCut-style: template select karte hi preview mein nazar aaye.
-        self.edit_template_cb.currentIndexChanged.connect(
-            lambda _i: self._refresh_caption_style())
-        cap_form.addRow("Template:", self.edit_template_cb)
-        size_row = QHBoxLayout()
-        self.edit_size_slider = QSlider(Qt.Horizontal)
-        self.edit_size_slider.setRange(24, 96)
-        self.edit_size_slider.setValue(48)
-        self.edit_size_slider.setEnabled(False)
-        self.edit_size_lbl = QLabel("48")
-        self.edit_size_slider.valueChanged.connect(
-            lambda v: self.edit_size_lbl.setText(str(v)))
-        # CapCut-style: size drag karte hi preview mein bara/chhota ho.
-        self.edit_size_slider.valueChanged.connect(
-            lambda _v: self._refresh_caption_style())
-        size_row.addWidget(self.edit_size_slider, 1)
-        size_row.addWidget(self.edit_size_lbl)
-        cap_form.addRow("Size:", size_row)
-        lay.addLayout(cap_form)
-        self.edit_apply_btn = QPushButton("Apply Caption Changes")
-        self.edit_apply_btn.setEnabled(False)
-        self.edit_apply_btn.setToolTip(
-            "Preview mein jo style nazar aa raha hai, usay video mein "
-            "permanently burn karo.")
-        self.edit_apply_btn.clicked.connect(self._apply_caption_edits)
-        lay.addWidget(self.edit_apply_btn)
-        self._edit_session = ""  # path to caption_edit.json
-        self._cap_sentences = []
-        self._cap_words = []
-
         log_head = QLabel("Log")
         log_head.setObjectName("sectionHead")
         lay.addWidget(log_head)
@@ -941,9 +900,22 @@ class MainWindow(QMainWindow):
             pos = self.player.position()
             if dur > 0 and pos >= dur - 300:
                 self.player.setPosition(0)
+                # Backend quirk: seek is async — a play() issued right away
+                # can be swallowed on some systems. Defer it briefly.
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(200, self._deferred_play)
+                return
         except Exception:  # noqa: BLE001
             pass
         self.player.play()
+
+    def _deferred_play(self):
+        try:
+            if (self.player is not None and
+                    self.player.playbackState() != self.player.PlayingState):
+                self.player.play()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _stop_play(self):
         if not self._ensure_player():
@@ -1164,6 +1136,8 @@ class MainWindow(QMainWindow):
         self.lock_chk.stateChanged.connect(self._toggle_lock)
         sl.addWidget(self.lock_chk)
         tabs.addTab(sw, "Scenes")
+        # captions tab (CapCut-style: hamesha visible, right panel mein)
+        tabs.addTab(self._captions_tab(), "Captions")
         # sources tab
         self.sources_table = QTableWidget(0, 3)
         self.sources_table.setHorizontalHeaderLabels(["Scene", "Source", "License"])
@@ -1179,6 +1153,60 @@ class MainWindow(QMainWindow):
         yl.addWidget(self.yt_out, 1)
         tabs.addTab(yw, "YouTube")
         return tabs
+
+    def _captions_tab(self):
+        """CapCut-style caption editor: right panel mein, hamesha visible.
+
+        Template/size select karte hi video preview par foran nazar aata
+        hai (live overlay). 'Apply' dabane par video mein burn hota hai.
+        """
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setSpacing(10)
+        info = QLabel(
+            "Video render hone ke baad template/size badlo.\n"
+            "Preview par foran nazar aayega — Apply se video mein save hoga.")
+        info.setObjectName("statusLabel")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        cap_form = QFormLayout()
+        from src.text_captions import caption_template_labels
+        self.edit_template_cb = QComboBox()
+        for key, label in caption_template_labels():
+            self.edit_template_cb.addItem(label, key)
+        self.edit_template_cb.setEnabled(False)
+        # CapCut-style: template select karte hi preview mein nazar aaye.
+        self.edit_template_cb.currentIndexChanged.connect(
+            lambda _i: self._refresh_caption_style())
+        cap_form.addRow("Template:", self.edit_template_cb)
+        size_row = QHBoxLayout()
+        self.edit_size_slider = QSlider(Qt.Horizontal)
+        self.edit_size_slider.setRange(24, 96)
+        self.edit_size_slider.setValue(48)
+        self.edit_size_slider.setEnabled(False)
+        self.edit_size_lbl = QLabel("48")
+        self.edit_size_slider.valueChanged.connect(
+            lambda v: self.edit_size_lbl.setText(str(v)))
+        # CapCut-style: size drag karte hi preview mein bara/chhota ho.
+        self.edit_size_slider.valueChanged.connect(
+            lambda _v: self._refresh_caption_style())
+        size_row.addWidget(self.edit_size_slider, 1)
+        size_row.addWidget(self.edit_size_lbl)
+        cap_form.addRow("Size:", size_row)
+        lay.addLayout(cap_form)
+        self.edit_apply_btn = QPushButton("Apply Caption Changes")
+        self.edit_apply_btn.setEnabled(False)
+        self.edit_apply_btn.setMinimumHeight(44)
+        self.edit_apply_btn.setToolTip(
+            "Preview mein jo style nazar aa raha hai, usay video mein "
+            "permanently burn karo.")
+        self.edit_apply_btn.clicked.connect(self._apply_caption_edits)
+        lay.addWidget(self.edit_apply_btn)
+        lay.addStretch(1)
+        self._edit_session = ""  # path to caption_edit.json
+        self._cap_sentences = []
+        self._cap_words = []
+        return w
 
     # ---------------- actions ----------------
     def _log(self, m):
