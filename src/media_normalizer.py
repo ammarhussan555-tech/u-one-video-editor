@@ -117,8 +117,27 @@ def normalize_segment(path: str, spec: TargetSpec, out_path: str,
     else:
         args += ["-an"]
     args.append(out_path)
-    eng.run(args, stage="normalize", scene=scene, inputs=[path],
-            output=out_path, timeout=600)
+    try:
+        eng.run(args, stage="normalize", scene=scene, inputs=[path],
+                output=out_path, timeout=600)
+    except Exception:
+        if not spec.hw_bitrate:
+            raise
+        # Hardware encoder was listed but failed at runtime (no usable
+        # GPU/driver) — retry on CPU instead of failing the render.
+        cpu_args = ["-c:v", "libx264", "-preset", spec.preset,
+                    "-crf", str(spec.crf)]
+        args = (["-i", path, "-map", "0:v:0", "-vf", vf, *cpu_args,
+                 "-pix_fmt", spec.pix_fmt])
+        if expect_audio and info.has_audio:
+            args += ["-map", "0:a:0?", "-c:a", spec.acodec,
+                     "-ar", str(spec.sample_rate), "-ac", str(spec.channels),
+                     "-b:a", "128k"]
+        else:
+            args += ["-an"]
+        args.append(out_path)
+        eng.run(args, stage="normalize", scene=scene, inputs=[path],
+                output=out_path, timeout=600)
     return out_path
 
 
