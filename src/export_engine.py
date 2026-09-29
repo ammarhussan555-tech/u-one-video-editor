@@ -61,15 +61,25 @@ def _burn_captions_filter(ass_path: str) -> str:
 class ExportEngine:
     def __init__(self, engine: Optional[FFmpegEngine] = None,
                  render_log=None,
-                 cancel_event: Optional[threading.Event] = None):
+                 cancel_event: Optional[threading.Event] = None,
+                 progress_cb=None):
         self.engine = engine or FFmpegEngine(cancel_event=cancel_event,
                                              log=render_log)
         self.log = render_log
+        self.progress_cb = progress_cb
 
     def _msg(self, text: str) -> None:
         if self.log:
             try:
                 self.log.write(text)
+            except Exception:
+                pass
+
+    def _progress(self, msg: str) -> None:
+        """Report final-render sub-progress (stage 8)."""
+        if self.progress_cb:
+            try:
+                self.progress_cb(8, "Final render", msg)
             except Exception:
                 pass
 
@@ -207,6 +217,7 @@ class ExportEngine:
         # The clean copy is kept so captions can be re-styled after the
         # render without re-rendering the whole video.
         self._msg("Final render pass 1/2: clean video (no captions)...")
+        self._progress("pass 1/2: clean video")
         ok = try_call(attempt_clean, "clean", use_hw, hw_enc, clean_path)
         if not ok and use_hw:
             self._msg(f"Hardware encoder {hw_enc} failed; "
@@ -229,6 +240,7 @@ class ExportEngine:
         # ---- Pass 2: burn captions onto the clean video. ----
         if captions:
             self._msg("Final render pass 2/2: burning captions...")
+            self._progress("pass 2/2: burning captions")
             burn_chain = _burn_captions_filter(str(ass))
             ok = try_call(attempt_burn, burn_chain, "burn", clean_path,
                           out_path)
