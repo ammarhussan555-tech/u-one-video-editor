@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(__display_name__)
         self.resize(1500, 950)
-        self.setMinimumSize(1100, 700)
+        self.setMinimumSize(1280, 720)
         self._apply_modern_theme()
         self.project = Project("Untitled")
         self.pipeline = None
@@ -443,8 +443,10 @@ class MainWindow(QMainWindow):
         main.setSpacing(10)
         main.setContentsMargins(14, 12, 14, 12)
 
-        # Modern header bar with branding
+        # CapCut-style top bar (~48px): branding left, project actions
+        # center, CREATE VIDEO far right (like CapCut's Export button).
         header = QHBoxLayout()
+        header.setSpacing(8)
         brand_col = QVBoxLayout()
         brand_col.setSpacing(0)
         title = QLabel("U One")
@@ -458,11 +460,30 @@ class MainWindow(QMainWindow):
         # menu-ish buttons in header
         for label, fn in [("New", self._new_project), ("Save", self._save_project),
                           ("Open", self._open_project), ("Undo", self._undo),
-                          ("Redo", self._redo), ("About", self._about)]:
+                          ("Redo", self._redo)]:
             b = QPushButton(label)
             b.setMaximumHeight(32)
             b.clicked.connect(fn)
             header.addWidget(b)
+        header.addStretch(1)
+        # Build actions at far right (CapCut puts Export here).
+        self.preview_btn = QPushButton("Quick Preview")
+        self.preview_btn.setMaximumHeight(36)
+        self.preview_btn.setToolTip("Fast low-res preview render")
+        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
+        header.addWidget(self.preview_btn)
+        self.final_btn = QPushButton("Final Render (MP4)")
+        self.final_btn.setMaximumHeight(36)
+        self.final_btn.setToolTip("Full-quality final video")
+        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
+        header.addWidget(self.final_btn)
+        self.create_btn = QPushButton("🎬 CREATE VIDEO")
+        self.create_btn.setObjectName("primaryBtn")
+        self.create_btn.setMinimumHeight(40)
+        self.create_btn.setMinimumWidth(170)
+        self.create_btn.setToolTip("Build the video (like CapCut's Export)")
+        self.create_btn.clicked.connect(self._create_video)
+        header.addWidget(self.create_btn)
         main.addLayout(header)
 
         self.ffmpeg_ok = check_ffmpeg()
@@ -477,40 +498,119 @@ class MainWindow(QMainWindow):
         # systems when adding the center panel. Using CapCut-style manual
         # drag dividers instead — side panels are user-resizable, center
         # takes the remaining space.
+        # CapCut proportions: left ~30% / preview ~45% / inspector ~25%.
         panels = QHBoxLayout()
         panels.setSpacing(0)
 
         self.left_panel = self._left_panel()
-        self.left_panel.setFixedWidth(300)
+        self.left_panel.setFixedWidth(320)
         panels.addWidget(self.left_panel)
 
         def _drag_left(dx):
-            w = max(200, min(520, self.left_panel.width() + dx))
+            w = max(280, min(520, self.left_panel.width() + dx))
             self.left_panel.setFixedWidth(w)
         panels.addWidget(PanelDivider(_drag_left))
 
         panels.addWidget(self._center_panel(), 1)
 
         def _drag_right(dx):
-            w = max(220, min(560, self.right_panel.width() - dx))
+            w = max(260, min(560, self.right_panel.width() - dx))
             self.right_panel.setFixedWidth(w)
         panels.addWidget(PanelDivider(_drag_right))
 
         self.right_panel = self._right_panel()
-        self.right_panel.setFixedWidth(340)
+        self.right_panel.setFixedWidth(300)
         panels.addWidget(self.right_panel)
 
-        main.addLayout(panels, 3)
+        main.addLayout(panels, 55)
 
         def _drag_timeline(dy):
             h = max(120, min(500, self.timeline_widget.height() - dy))
             self.timeline_widget.setFixedHeight(h)
         main.addWidget(HPanelDivider(_drag_timeline))
 
+        # CapCut-style timeline toolbar (full width, above the timeline).
+        main.addWidget(self._timeline_toolbar())
+
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.sceneSelected.connect(self._on_scene_selected)
         self.timeline_widget.setFixedHeight(220)
         main.addWidget(self.timeline_widget)
+
+        # Status bar: render progress + cancel (CapCut shows export
+        # progress in its own bar; ours lives here, always visible).
+        sb = self.statusBar()
+        self.stage_lbl = QLabel("Ready.")
+        self.stage_lbl.setObjectName("stageLabel")
+        sb.addWidget(self.stage_lbl, 1)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, len(STAGES))
+        self.progress.setMaximumWidth(220)
+        self.progress.setMaximumHeight(16)
+        sb.addPermanentWidget(self.progress)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setObjectName("dangerBtn")
+        self.cancel_btn.setMaximumHeight(28)
+        self.cancel_btn.clicked.connect(self._cancel)
+        self.cancel_btn.setEnabled(False)
+        sb.addPermanentWidget(self.cancel_btn)
+        if not self.ffmpeg_ok:
+            self.create_btn.setEnabled(False)
+            self.preview_btn.setEnabled(False)
+            self.final_btn.setEnabled(False)
+
+    def _timeline_toolbar(self):
+        """CapCut-style toolbar strip directly above the timeline."""
+        bar = QWidget()
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(8)
+        lbl = QLabel("Timeline")
+        lbl.setObjectName("sectionHead")
+        lay.addWidget(lbl)
+        # Scene navigation (prev/next) — quick CapCut-like jumping.
+        prev_b = QPushButton("⏮ Prev Scene")
+        prev_b.setMaximumHeight(30)
+        prev_b.clicked.connect(lambda: self._jump_scene(-1))
+        lay.addWidget(prev_b)
+        next_b = QPushButton("Next Scene ⏭")
+        next_b.setMaximumHeight(30)
+        next_b.clicked.connect(lambda: self._jump_scene(1))
+        lay.addWidget(next_b)
+        lay.addStretch(1)
+        zoom_lbl = QLabel("Zoom:")
+        zoom_lbl.setObjectName("statusLabel")
+        lay.addWidget(zoom_lbl)
+        self.timeline_zoom = QSlider(Qt.Horizontal)
+        self.timeline_zoom.setRange(50, 200)
+        self.timeline_zoom.setValue(100)
+        self.timeline_zoom.setMaximumWidth(140)
+        self.timeline_zoom.setMaximumHeight(30)
+        self.timeline_zoom.setToolTip("Timeline zoom")
+        self.timeline_zoom.valueChanged.connect(self._timeline_zoom_changed)
+        lay.addWidget(self.timeline_zoom)
+        return bar
+
+    def _jump_scene(self, direction):
+        """Jump to previous/next scene in the scene list."""
+        try:
+            count = self.scene_list.count()
+            if count == 0:
+                return
+            cur = self.scene_list.currentRow()
+            nxt = (cur + direction) % count
+            self.scene_list.setCurrentRow(nxt)
+            self._on_scene_clicked(self.scene_list.item(nxt))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _timeline_zoom_changed(self, value):
+        """Scale timeline height with the zoom slider (CapCut-like)."""
+        try:
+            h = max(120, min(500, int(220 * value / 100)))
+            self.timeline_widget.setFixedHeight(h)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _about(self):
         QMessageBox.about(
@@ -649,51 +749,19 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(w)
         scroll.setWidgetResizable(True)
-        # CapCut-style: left panel = tools + script (scrollable) with a
-        # FIXED build section at the bottom (always visible, no scrolling).
+        # CapCut-style: left panel = script/tools (scrollable).
+        # Build actions live in the top bar; progress in the status bar.
         outer = QWidget()
         outer_lay = QVBoxLayout(outer)
         outer_lay.setContentsMargins(0, 0, 0, 0)
         outer_lay.addWidget(scroll, 1)
-        build = QGroupBox("5. Build Video")
-        blay = QVBoxLayout(build)
-        self.create_btn = QPushButton("🎬 CREATE VIDEO")
-        self.create_btn.setObjectName("primaryBtn")
-        self.create_btn.setMinimumHeight(52)
-        self.create_btn.clicked.connect(self._create_video)
-        blay.addWidget(self.create_btn)
-        prow = QHBoxLayout()
-        prow.setSpacing(8)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, len(STAGES))
-        self.stage_lbl = QLabel("Ready.")
-        self.stage_lbl.setObjectName("stageLabel")
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setObjectName("dangerBtn")
-        self.cancel_btn.clicked.connect(self._cancel)
-        self.cancel_btn.setEnabled(False)
-        prow.addWidget(self.progress, 2)
-        prow.addWidget(self.stage_lbl, 3)
-        prow.addWidget(self.cancel_btn)
-        blay.addLayout(prow)
-        rrow = QHBoxLayout()
-        rrow.setSpacing(8)
-        self.preview_btn = QPushButton("Quick Preview")
-        self.preview_btn.clicked.connect(lambda: self._create_video(preview=True))
-        self.final_btn = QPushButton("Final Render (MP4)")
-        self.final_btn.clicked.connect(lambda: self._create_video(preview=False))
-        rrow.addWidget(self.preview_btn)
-        rrow.addWidget(self.final_btn)
-        blay.addLayout(rrow)
+        log_head = QLabel("Log")
+        log_head.setObjectName("sectionHead")
+        outer_lay.addWidget(log_head)
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumHeight(90)
-        blay.addWidget(self.log_edit)
-        if not self.ffmpeg_ok:
-            self.create_btn.setEnabled(False)
-            self.preview_btn.setEnabled(False)
-            self.final_btn.setEnabled(False)
-        outer_lay.addWidget(build)
+        self.log_edit.setMaximumHeight(110)
+        outer_lay.addWidget(self.log_edit)
         return outer
 
     def _center_panel(self):
