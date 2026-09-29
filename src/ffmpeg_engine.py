@@ -220,7 +220,13 @@ class FFmpegEngine:
 
     # -- hardware acceleration (opportunistic, never mandatory) --
     def detect_hw_encoder(self, codec: str = "h264") -> Optional[str]:
-        """Return an ffmpeg encoder name, or None for CPU fallback."""
+        """Return a WORKING ffmpeg hw encoder name, or None for CPU.
+
+        Just checking `-encoders` is not enough: the bundled FFmpeg lists
+        h264_nvenc/h264_qsv/h264_amf, but they fail at runtime if the
+        matching GPU/drivers are absent. So we test-encode 10 frames
+        with each candidate and only accept one that produces output.
+        """
         key = codec
         if key in self._hw_cache:
             return self._hw_cache[key]
@@ -232,13 +238,30 @@ class FFmpegEngine:
             prefs = {"h264": ["h264_nvenc", "h264_qsv", "h264_amf"],
                      "hevc": ["hevc_nvenc", "hevc_qsv", "hevc_amf"]}[codec]
             for name in prefs:
-                if re.search(rf"^\s*\S+\s+{re.escape(name)}\b", out, re.M):
+                if not re.search(rf"^\s*\S+\s+{re.escape(name)}\b", out, re.M):
+                    continue
+                if self._test_hw_encoder(name):
                     enc = name
                     break
         except Exception:
             enc = None
         self._hw_cache[key] = enc
         return enc
+
+    def _test_hw_encoder(self, enc_name: str) -> bool:
+        """Encode 10 tiny frames; True only if the encoder really works."""
+        try:
+            # 320x180 testsrc, 10 frames, to null output.
+            cmd = [self.ffmpeg, "-hide_banner", "-nostats", "-loglevel",
+                   "error", "-y",
+                   "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=0.34",
+                   "-frames:v", "10", "-c:v", enc_name,
+                   "-f", "null", "-"]
+            r = run_no_window(cmd, capture_output=True, text=True,
+                              timeout=30)
+            return r.returncode == 0
+        except Exception:
+            return False
 
     # -- execution --
     def run(self, args: Sequence[str], *, stage: str,
