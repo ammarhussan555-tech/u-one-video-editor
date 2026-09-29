@@ -336,7 +336,8 @@ class RenderEngine:
         out = os.path.join(self.work_dir,
                            "preview.mp4" if preview else "final.mp4")
         exporter = ExportEngine(engine=self.engine, render_log=self.rlog,
-                                cancel_event=self.cancel_event)
+                                cancel_event=self.cancel_event,
+                                progress_cb=self.progress_cb)
         result = exporter.render_final(
             concat, self.mixed_path, ass if os.path.isfile(ass) else "",
             out, fmt=fmt, res=res, fps=S.fps,
