@@ -114,6 +114,65 @@ class CaptionEditWorker(QThread):
             self.error.emit(str(e))
 
 
+class TimelineEditWorker(QThread):
+    """Apply a CapCut-style timeline edit (delete/volume) in background."""
+    log = Signal(str)
+    finished = Signal(str, dict)  # (output_path, op_info)
+    error = Signal(str)
+
+    def __init__(self, input_path, operation, params):
+        super().__init__()
+        self.input_path = input_path
+        self.operation = operation  # "delete_range" | "volume_range"
+        self.params = params
+
+    def run(self):
+        try:
+            import os
+            import tempfile
+            from src.timeline_editor import delete_range, volume_range
+            from src.ffmpeg_util import find_ffmpeg
+            from src.ffmpeg_engine import FFmpegEngine
+            inp = self.input_path
+            fd, out = tempfile.mkstemp(suffix=".mp4",
+                                       prefix="uone_tl_")
+            os.close(fd)
+            hw_enc = None
+            try:
+                hw_enc = FFmpegEngine(
+                    find_ffmpeg()).detect_hw_encoder("h264")
+            except Exception:  # noqa: BLE001
+                pass
+            if self.operation == "delete_range":
+                self.log.emit(
+                    f"Deleting {self.params['start']:.1f}s–"
+                    f"{self.params['end']:.1f}s from video..."
+                    + (" (hardware accelerated)" if hw_enc else ""))
+                delete_range(inp, self.params["start"],
+                             self.params["end"], out,
+                             ffmpeg_path=find_ffmpeg(), hw_enc=hw_enc,
+                             log_cb=lambda m: self.log.emit(m))
+            elif self.operation == "volume_range":
+                f = self.params["factor"]
+                what = ("Muting" if f == 0 else
+                        f"Setting volume x{f:.2f}")
+                self.log.emit(
+                    f"{what} "
+                    f"({self.params['start']:.1f}s–{self.params['end']:.1f}s)...")
+                volume_range(inp, self.params["start"],
+                             self.params["end"], f, out,
+                             duration=self.params.get("duration"),
+                             ffmpeg_path=find_ffmpeg(),
+                             log_cb=lambda m: self.log.emit(m))
+            else:
+                raise ValueError(
+                    f"unknown timeline operation: {self.operation}")
+            self.finished.emit(out, {"op": self.operation,
+                                     "params": self.params})
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))
+
+
 class PanelDivider(QWidget):
     """Thin draggable divider between panels (CapCut-style resizing).
 
@@ -534,6 +593,8 @@ class MainWindow(QMainWindow):
 
         self.timeline_widget = TimelineWidget()
         self.timeline_widget.sceneSelected.connect(self._on_scene_selected)
+        self.timeline_widget.clipRightClicked.connect(
+            self._on_timeline_clip_menu)
         self.timeline_widget.setFixedHeight(220)
         main.addWidget(self.timeline_widget)
 
@@ -788,6 +849,7 @@ class MainWindow(QMainWindow):
         # FFmpeg backend init, so create it only when preview is actually needed.
         self.player = None
         self.audio_out = None
+        self._restart_on_play = False
 
         # Playback controls: play/pause + stop + seek bar + time label
         ctl = QHBoxLayout()
@@ -960,69 +1022,148 @@ class MainWindow(QMainWindow):
         s = max(0, int(ms // 1000))
         return f"{s // 60:02d}:{s % 60:02d}"
 
+    def _player_diag(self, tag: str):
+        """Log full player state for diagnosing playback failures."""
+        try:
+            p = self.player
+            if p is None:
+                self._log(f"[play-diag:{tag}] player=None")
+                return
+            self._log(
+                f"[play-diag:{tag}] state={int(p.playbackState())} "
+                f"(0=Stopped 1=Playing 2=Paused) "
+                f"mediaStatus={int(p.mediaStatus())} "
+                f"pos={p.position()}ms dur={p.duration()}ms "
+                f"src={p.source().toString()[:80]} "
+                f"err={p.errorString()[:60] if hasattr(p, 'errorString') else ''}"
+            )
+        except Exception as e:  # noqa: BLE001
+            self._log(f"[play-diag:{tag}] diag failed: {e}")
+
     def _toggle_play(self):
         if not self._ensure_player():
             return
         if self.player.playbackState() == self.player.PlayingState:
             self.player.pause()
             return
-        # Not playing: (re)start. If the video ended, seek to the start
-        # first so the button always works — even after stop or autoplay.
+        # Not playing: (re)start. If the video ended (or stop was
+        # pressed), seek to the start first so the button always works.
+        # The seek is async on the Windows backend, so play() is issued
+        # via a deferred call — never back-to-back with the seek.
+        self._player_diag("play-pressed")
         try:
             dur = self.player.duration()
             pos = self.player.position()
-            if dur > 0 and pos >= dur - 300:
+            if (dur > 0 and pos >= dur - 300) or getattr(
+                    self, "_restart_on_play", False):
+                self._restart_on_play = False
                 self.player.setPosition(0)
-                # Backend quirk: seek is async — a play() issued right away
-                # can be swallowed on some systems. Defer it briefly.
                 from PySide6.QtCore import QTimer
-                QTimer.singleShot(200, self._deferred_play)
+                QTimer.singleShot(250, self._deferred_play)
                 return
         except Exception as e:  # noqa: BLE001
             self._log(f"Play seek check failed: {e}")
         self.player.play()
+        self._player_diag("play-issued")
         # Watchdog: if the backend swallowed play(), retry harder.
         from PySide6.QtCore import QTimer
         QTimer.singleShot(800, self._play_watchdog)
 
     def _play_watchdog(self):
-        """If play() didn't take effect, force a hard restart."""
+        """If play() didn't take effect, force a hard pipeline reset."""
         try:
             if self.player is None:
                 return
             if self.player.playbackState() == self.player.PlayingState:
                 return
-            self._log("Play didn't start — hard restarting preview...")
+            self._player_diag("watchdog-failed")
+            self._log("Play didn't start — resetting media pipeline...")
+            from PySide6.QtCore import QUrl, QTimer
             src = self.player.source()
-            self.player.setSource(src)  # reload the pipeline
+            # Empty source first: forces a full pipeline teardown even
+            # if the backend ignores setSource() with the same URL.
+            self.player.setSource(QUrl())
+            self.player.setSource(src)
             self.player.setPosition(0)
             self.player.play()
+            self._player_diag("watchdog-retry-issued")
+            QTimer.singleShot(2000, self._play_watchdog2)
         except Exception as e:  # noqa: BLE001
             self._log(f"Play restart failed: {e}")
+
+    def _play_watchdog2(self):
+        """Last resort: destroy and recreate the player entirely."""
+        try:
+            if self.player is None:
+                return
+            if self.player.playbackState() == self.player.PlayingState:
+                return
+            self._player_diag("watchdog2-failed")
+            self._log("Play still stuck — recreating player...")
+            self._recreate_player()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Player recreation failed: {e}")
+
+    def _recreate_player(self):
+        """Destroy the QMediaPlayer and build a fresh one on the same
+        video widget. Nuclear fallback for a wedged backend pipeline."""
+        from PySide6.QtCore import QTimer
+        try:
+            src = self.player.source() if self.player is not None else None
+            old = self.player
+            self.player = None
+            self.audio_out = None
+            if old is not None:
+                try:
+                    old.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    old.deleteLater()
+                except Exception:  # noqa: BLE001
+                    pass
+            # Re-run creation (video_widget already exists, so it is reused).
+            if not self._ensure_player():
+                self._log("Player recreation unavailable on this system.")
+                return
+            if src is not None and not src.isEmpty():
+                self.player.setSource(src)
+                self.player.setPosition(0)
+            QTimer.singleShot(300, self._deferred_play)
+            self._log("Player recreated — retrying playback...")
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Player recreation failed: {e}")
 
     def _deferred_play(self):
         try:
             if (self.player is not None and
                     self.player.playbackState() != self.player.PlayingState):
                 self.player.play()
+                self._player_diag("deferred-play-issued")
         except Exception:  # noqa: BLE001
             pass
 
     def _stop_play(self):
         if not self._ensure_player():
             return
-        # Use pause()+seek(0) instead of stop(): on some Qt multimedia
-        # backends stop() tears down the pipeline and play() won't
-        # restart it reliably. Pause keeps the pipeline alive.
+        # Pause only — no synchronous seek. The seek back to 0 happens
+        # lazily on the next play press (see _toggle_play), because
+        # pause()+seek() issued together can wedge the Windows backend
+        # so that a later play() is silently swallowed.
+        self._player_diag("stop-pressed")
         self.player.pause()
-        self.player.setPosition(0)
+        self._restart_on_play = True
         self.play_btn.setText("▶")
+        self._player_diag("stopped")
 
     def _on_media_status(self, status):
-        # 7 = EndOfMedia. Reset to start so replay works with one tap.
-        if int(status) == 7 and self.player is not None:
-            self.player.setPosition(0)
+        # 7 = EndOfMedia. Just update the button — do NOT seek here.
+        # Seeking from inside the status handler can fight with the
+        # play logic's own seek and wedge the backend. _toggle_play
+        # handles the rewind when the user presses play.
+        if int(status) == 7:
             self.play_btn.setText("▶")
+            self._player_diag("end-of-media")
 
     def eventFilter(self, obj, event):
         # Click on the video -> pause and open the caption editor
@@ -1297,6 +1438,9 @@ class MainWindow(QMainWindow):
         self._edit_session = ""  # path to caption_edit.json
         self._cap_sentences = []
         self._cap_words = []
+        # CapCut-style timeline editing state.
+        self._current_video = ""  # latest preview video on disk
+        self._tl_worker = None
         return w
 
     # ---------------- actions ----------------
@@ -1434,6 +1578,7 @@ class MainWindow(QMainWindow):
         self._render_buttons(True)
         self.stage_lbl.setText("Done.")
         self._log(f"Saved: {out}")
+        self._current_video = out  # timeline edits build on this file
         # Enable post-render caption editing if a session was saved.
         try:
             session = getattr(self.pipeline, "edit_session_path", "") or ""
@@ -1519,6 +1664,7 @@ class MainWindow(QMainWindow):
         if os.path.isfile(out) and self._ensure_player():
             self.player.setSource(QUrl.fromLocalFile(out))
             self.player.play()
+            self._current_video = out
 
     def _on_caption_edit_error(self, msg):
         self.edit_apply_btn.setEnabled(True)
@@ -1587,6 +1733,285 @@ class MainWindow(QMainWindow):
         for i in range(self.scene_list.count()):
             if self.scene_list.item(i).data(Qt.UserRole) == scene_id:
                 self.scene_list.setCurrentRow(i)
+
+    # -- CapCut-style timeline editing (right-click a clip) --
+    def _timeline_video(self) -> str:
+        """Current preview video path (render output or last edit)."""
+        if self._current_video and os.path.isfile(self._current_video):
+            return self._current_video
+        return ""
+
+    def _on_timeline_clip_menu(self, clip_id):
+        """Right-click menu on a timeline clip: delete / volume / captions."""
+        tl = getattr(self.project, "timeline", None)
+        if tl is None:
+            return
+        clip = tl.get(clip_id)
+        if clip is None:
+            return
+        if not self._timeline_video():
+            QMessageBox.information(
+                self, "Timeline",
+                "Pehle CREATE VIDEO se video banao, phir timeline edit hogi.")
+            return
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QCursor
+        menu = QMenu(self)
+        track = clip.track
+        if track == "video":
+            act = menu.addAction(
+                f"Delete Scene ({clip.label[:32]})")
+            act.triggered.connect(
+                lambda: self._timeline_delete_scene(clip))
+        elif track in ("voice", "sfx", "music"):
+            name = {"voice": "Voiceover", "sfx": "SFX",
+                    "music": "Music"}[track]
+            up = menu.addAction(f"{name}: Volume Up")
+            up.triggered.connect(
+                lambda: self._timeline_volume(clip, 1.5))
+            down = menu.addAction(f"{name}: Volume Down")
+            down.triggered.connect(
+                lambda: self._timeline_volume(clip, 0.67))
+            mute = menu.addAction(f"{name}: Mute")
+            mute.triggered.connect(
+                lambda: self._timeline_volume(clip, 0.0))
+            if track in ("sfx", "music"):
+                menu.addSeparator()
+                dele = menu.addAction(f"Delete {name} clip")
+                dele.triggered.connect(
+                    lambda: self._timeline_delete_audio_clip(clip))
+        elif track == "captions":
+            act = menu.addAction("Remove Captions from video")
+            act.triggered.connect(self._timeline_remove_captions)
+        elif track == "text":
+            act = menu.addAction("Delete Text")
+            act.triggered.connect(
+                lambda: self._timeline_delete_text(clip))
+        if not menu.isEmpty():
+            menu.exec(QCursor.pos())
+
+    def _timeline_delete_scene(self, clip):
+        """Cut a scene's time range out of the rendered video."""
+        if clip.locked:
+            QMessageBox.information(self, "Timeline",
+                                    "Ye scene locked hai.")
+            return
+        ans = QMessageBox.question(
+            self, "Delete Scene",
+            f"Scene '{clip.label[:40]}' video se delete ho jayega "
+            f"({clip.start:.1f}s – {clip.end:.1f}s). Continue?",
+            QMessageBox.Yes | QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        self._run_timeline_edit(
+            "delete_range",
+            {"start": clip.start, "end": clip.end,
+             "clip_id": clip.id,
+             "scene_id": clip.payload.get("scene_id")})
+
+    def _timeline_volume(self, clip, factor):
+        """Change audio volume for a clip's time range."""
+        dur = None
+        tl = getattr(self.project, "timeline", None)
+        if tl is not None:
+            dur = tl.duration()
+        self._run_timeline_edit(
+            "volume_range",
+            {"start": clip.start, "end": clip.end,
+             "factor": factor, "duration": dur,
+             "clip_id": clip.id, "mute": factor == 0.0})
+
+    def _timeline_delete_audio_clip(self, clip):
+        """Delete an SFX/music clip (mute its range + drop the clip)."""
+        self._run_timeline_edit(
+            "volume_range",
+            {"start": clip.start, "end": clip.end,
+             "factor": 0.0, "duration": None,
+             "clip_id": clip.id, "mute": True,
+             "drop_clip": True})
+
+    def _timeline_delete_text(self, clip):
+        """Delete a text overlay clip from the timeline model.
+
+        Note: text is burned into the rendered pixels, so this only
+        removes it from the timeline/project (applies to re-renders).
+        """
+        tl = getattr(self.project, "timeline", None)
+        if tl is not None:
+            tl.remove(clip.id)
+            self.timeline_widget.set_timeline(tl)
+            self._log(f"Text removed from timeline: {clip.label[:40]}")
+            QMessageBox.information(
+                self, "Timeline",
+                "Text timeline se hata diya. Note: ye text video mein "
+                "burned hai — poori tarah hatane ke liye dobara "
+                "CREATE VIDEO karna hoga.")
+
+    def _timeline_remove_captions(self):
+        """Restore the caption-free clean copy as the current video."""
+        if not self._edit_session or not os.path.isfile(
+                self._edit_session):
+            QMessageBox.warning(
+                self, "Remove Captions",
+                "Caption-free copy nahi mili. Pehle video render karo.")
+            return
+        try:
+            from src.caption_editor import load_edit_session
+            data = load_edit_session(self._edit_session)
+            clean = data.get("clean_video", "")
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Remove Captions",
+                                f"Session parhne mein masla: {e}")
+            return
+        if not clean or not os.path.isfile(clean):
+            QMessageBox.warning(
+                self, "Remove Captions",
+                "Caption-free copy nahi mili (scene delete ke baad "
+                "sync mein honi chahiye thi).")
+            return
+        ans = QMessageBox.question(
+            self, "Remove Captions",
+            "Saari captions video se hata di jayengi. Continue?",
+            QMessageBox.Yes | QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        # Make the clean copy the new current video.
+        import shutil
+        import tempfile
+        fd, out = tempfile.mkstemp(suffix=".mp4", prefix="uone_nocap_")
+        os.close(fd)
+        shutil.copy2(clean, out)
+        self._current_video = out
+        # Drop the captions clip from the timeline.
+        tl = getattr(self.project, "timeline", None)
+        if tl is not None:
+            for c in tl.by_track("captions"):
+                tl.remove(c.id)
+            self.timeline_widget.set_timeline(tl)
+        if self._ensure_player():
+            self.player.setSource(QUrl.fromLocalFile(out))
+            self.player.play()
+        self._log("Captions removed — clean video restored.")
+
+    def _run_timeline_edit(self, operation, params):
+        inp = self._timeline_video()
+        if not inp:
+            return
+        self.stage_lbl.setText("Applying timeline edit...")
+        self._tl_worker = TimelineEditWorker(inp, operation, params)
+        self._tl_worker.log.connect(self._log)
+        self._tl_worker.finished.connect(self._on_timeline_edit_done)
+        self._tl_worker.error.connect(self._on_timeline_edit_error)
+        self._tl_worker.start()
+
+    def _on_timeline_edit_done(self, out, info):
+        self.stage_lbl.setText("Done.")
+        op = info.get("op")
+        params = info.get("params", {})
+        self._current_video = out
+        tl = getattr(self.project, "timeline", None)
+        if op == "delete_range":
+            cut = params["end"] - params["start"]
+            if tl is not None:
+                # Remove the scene's clips.
+                tl.remove(params["clip_id"])
+                sid = params.get("scene_id")
+                for c in list(tl.clips):
+                    if (c.track in ("video", "text")
+                            and c.payload.get("scene_id") == sid):
+                        tl.remove(c.id)
+                # Shift everything after the cut left; shrink clips that
+                # span the cut (e.g. the full-length voiceover).
+                for c in tl.clips:
+                    if c.start >= params["end"] - 0.001:
+                        c.start = round(c.start - cut, 3)
+                        c.end = round(c.end - cut, 3)
+                    elif (c.start < params["end"] - 0.001
+                            and c.end > params["end"] + 0.001):
+                        c.end = round(max(c.start + 0.1,
+                                          c.end - cut), 3)
+                self.timeline_widget.set_timeline(tl)
+            # Keep the caption-free copy in sync (cut the same range).
+            self._timeline_cut_clean_copy(params["start"],
+                                          params["end"])
+            # Shift cached caption timings for the live overlay.
+            self._shift_caption_timings(params["start"],
+                                        params["end"])
+            self._log(f"Scene deleted ({cut:.1f}s removed).")
+        elif op == "volume_range":
+            if params.get("drop_clip") and tl is not None:
+                tl.remove(params["clip_id"])
+                self.timeline_widget.set_timeline(tl)
+            f = params.get("factor", 1.0)
+            what = "muted" if f == 0 else f"volume x{f:.2f}"
+            self._log(f"Audio {what} "
+                      f"({params['start']:.1f}s–{params['end']:.1f}s).")
+        # Refresh preview with the edited video.
+        if os.path.isfile(out) and self._ensure_player():
+            self.player.setSource(QUrl.fromLocalFile(out))
+            self.player.play()
+        QMessageBox.information(self, "Timeline",
+                                "Timeline edit apply ho gaya!")
+
+    def _on_timeline_edit_error(self, msg):
+        self.stage_lbl.setText("Done.")
+        QMessageBox.warning(self, "Timeline",
+                            f"Edit fail ho gaya:\n{msg}")
+
+    def _timeline_cut_clean_copy(self, start, end):
+        """Cut the same range from the caption-free copy (keeps it in
+        sync so Remove Captions still works after scene deletions)."""
+        if not self._edit_session or not os.path.isfile(
+                self._edit_session):
+            return
+        try:
+            import json
+            from src.caption_editor import load_edit_session
+            from src.timeline_editor import delete_range
+            from src.ffmpeg_util import find_ffmpeg
+            from src.ffmpeg_engine import FFmpegEngine
+            data = load_edit_session(self._edit_session)
+            clean = data.get("clean_video", "")
+            if not clean or not os.path.isfile(clean):
+                return
+            hw_enc = None
+            try:
+                hw_enc = FFmpegEngine(
+                    find_ffmpeg()).detect_hw_encoder("h264")
+            except Exception:  # noqa: BLE001
+                pass
+            new_clean = clean + ".cut.mp4"
+            self._log("Syncing caption-free copy...")
+            delete_range(clean, start, end, new_clean,
+                         ffmpeg_path=find_ffmpeg(), hw_enc=hw_enc,
+                         log_cb=lambda m: self._log(m))
+            data["clean_video"] = new_clean
+            with open(self._edit_session, "w",
+                      encoding="utf-8") as f:
+                json.dump(data, f)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Clean-copy sync failed (captions remove may "
+                      f"not work): {e}")
+
+    def _shift_caption_timings(self, start, end):
+        """Shift cached caption timings after a scene deletion."""
+        cut = end - start
+
+        def _shift(items):
+            out = []
+            for s in items:
+                ss, ee = s["start"], s["end"]
+                if ee <= start + 0.001 or ss >= end - 0.001:
+                    if ss >= end - 0.001:
+                        s = dict(s)
+                        s["start"] = round(ss - cut, 3)
+                        s["end"] = round(ee - cut, 3)
+                    out.append(s)
+                # Overlapping the cut boundary: drop it (safe).
+            return out
+
+        self._cap_sentences = _shift(self._cap_sentences)
+        self._cap_words = _shift(self._cap_words)
 
     def _show_scene(self, scene_id):
         if not self.pipeline:
