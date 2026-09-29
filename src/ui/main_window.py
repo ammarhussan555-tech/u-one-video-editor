@@ -1022,6 +1022,18 @@ class MainWindow(QMainWindow):
         s = max(0, int(ms // 1000))
         return f"{s // 60:02d}:{s % 60:02d}"
 
+    @staticmethod
+    def _enum_val(v) -> int:
+        """Safely convert a Qt enum to int (.value works, int() may not)."""
+        try:
+            return v.value
+        except AttributeError:
+            pass
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return -1
+
     def _player_diag(self, tag: str):
         """Log full player state for diagnosing playback failures."""
         try:
@@ -1029,10 +1041,11 @@ class MainWindow(QMainWindow):
             if p is None:
                 self._log(f"[play-diag:{tag}] player=None")
                 return
+            ev = self._enum_val
             self._log(
-                f"[play-diag:{tag}] state={int(p.playbackState())} "
+                f"[play-diag:{tag}] state={ev(p.playbackState())} "
                 f"(0=Stopped 1=Playing 2=Paused) "
-                f"mediaStatus={int(p.mediaStatus())} "
+                f"mediaStatus={ev(p.mediaStatus())} "
                 f"pos={p.position()}ms dur={p.duration()}ms "
                 f"src={p.source().toString()[:80]} "
                 f"err={p.errorString()[:60] if hasattr(p, 'errorString') else ''}"
@@ -1161,7 +1174,7 @@ class MainWindow(QMainWindow):
         # Seeking from inside the status handler can fight with the
         # play logic's own seek and wedge the backend. _toggle_play
         # handles the rewind when the user presses play.
-        if int(status) == 7:
+        if self._enum_val(status) == 7:
             self.play_btn.setText("▶")
             self._player_diag("end-of-media")
 
@@ -1308,7 +1321,7 @@ class MainWindow(QMainWindow):
 
     def _on_play_state(self, state):
         # Compare via int to avoid needing QMediaPlayer import at module level.
-        self.play_btn.setText("⏸" if int(state) == 1 else "▶")  # 1 = PlayingState
+        self.play_btn.setText("⏸" if self._enum_val(state) == 1 else "▶")  # 1 = PlayingState
 
     def _right_panel(self):
         tabs = QTabWidget()
