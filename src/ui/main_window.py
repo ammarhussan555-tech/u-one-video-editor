@@ -595,6 +595,8 @@ class MainWindow(QMainWindow):
         self.timeline_widget.sceneSelected.connect(self._on_scene_selected)
         self.timeline_widget.clipRightClicked.connect(
             self._on_timeline_clip_menu)
+        self.timeline_widget.clipSelected.connect(
+            self._on_timeline_clip_selected)
         self.timeline_widget.setFixedHeight(220)
         main.addWidget(self.timeline_widget)
 
@@ -638,6 +640,36 @@ class MainWindow(QMainWindow):
         next_b.setMaximumHeight(30)
         next_b.clicked.connect(lambda: self._jump_scene(1))
         lay.addWidget(next_b)
+        # --- Clip editing (CapCut-style): select a clip in the timeline,
+        # then use these buttons. Right-click on a clip also works. ---
+        hint = QLabel("💡 Clip select karo, phir:")
+        hint.setObjectName("statusLabel")
+        lay.addWidget(hint)
+        del_b = QPushButton("🗑 Delete")
+        del_b.setMaximumHeight(30)
+        del_b.setToolTip("Selected clip delete karo (scene / SFX / music / text)")
+        del_b.clicked.connect(self._timeline_delete_selected)
+        lay.addWidget(del_b)
+        vol_up_b = QPushButton("🔊+")
+        vol_up_b.setMaximumHeight(30)
+        vol_up_b.setToolTip("Selected audio clip ki awaz barhao")
+        vol_up_b.clicked.connect(lambda: self._timeline_volume_selected(1.5))
+        lay.addWidget(vol_up_b)
+        vol_dn_b = QPushButton("🔊−")
+        vol_dn_b.setMaximumHeight(30)
+        vol_dn_b.setToolTip("Selected audio clip ki awaz kam karo")
+        vol_dn_b.clicked.connect(lambda: self._timeline_volume_selected(0.67))
+        lay.addWidget(vol_dn_b)
+        mute_b = QPushButton("🔇")
+        mute_b.setMaximumHeight(30)
+        mute_b.setToolTip("Selected audio clip mute karo")
+        mute_b.clicked.connect(lambda: self._timeline_volume_selected(0.0))
+        lay.addWidget(mute_b)
+        cap_b = QPushButton("CC ✕")
+        cap_b.setMaximumHeight(30)
+        cap_b.setToolTip("Captions hatao (clean video wapas lao)")
+        cap_b.clicked.connect(self._timeline_remove_captions)
+        lay.addWidget(cap_b)
         lay.addStretch(1)
         zoom_lbl = QLabel("Zoom:")
         zoom_lbl.setObjectName("statusLabel")
@@ -1159,12 +1191,13 @@ class MainWindow(QMainWindow):
     def _stop_play(self):
         if not self._ensure_player():
             return
-        # Pause only — no synchronous seek. The seek back to 0 happens
-        # lazily on the next play press (see _toggle_play), because
-        # pause()+seek() issued together can wedge the Windows backend
-        # so that a later play() is silently swallowed.
+        # Stop = pause + back to start (shuru se), as the tooltip says.
+        # The seek is a single async call here; the play path does its
+        # own seek(0) + delayed play(), so the old stop->play wedge is
+        # avoided.
         self._player_diag("stop-pressed")
         self.player.pause()
+        self.player.setPosition(0)
         self._restart_on_play = True
         self.play_btn.setText("▶")
         self._player_diag("stopped")
@@ -1842,6 +1875,69 @@ class MainWindow(QMainWindow):
              "factor": 0.0, "duration": None,
              "clip_id": clip.id, "mute": True,
              "drop_clip": True})
+
+    def _on_timeline_clip_selected(self, clip_id):
+        """Show which clip is selected (CapCut-style feedback)."""
+        tl = getattr(self.project, "timeline", None)
+        if tl is None:
+            return
+        clip = tl.get(clip_id)
+        if clip is not None:
+            self._log(f"Timeline: selected '{clip.label[:40]}' ({clip.track})")
+
+    def _timeline_selected_clip(self):
+        """Return the currently selected timeline clip, or None."""
+        tl = getattr(self.project, "timeline", None)
+        if tl is None:
+            return None
+        cid = getattr(self.timeline_widget, "selected_clip_id", None)
+        if not cid:
+            return None
+        return tl.get(cid)
+
+    def _timeline_delete_selected(self):
+        """Delete button: acts on the selected timeline clip."""
+        clip = self._timeline_selected_clip()
+        if clip is None:
+            QMessageBox.information(
+                self, "Timeline",
+                "Pehle timeline mein koi clip select karo (us par click karo), phir Delete dabao.")
+            return
+        track = clip.track
+        if track == "video":
+            self._timeline_delete_scene(clip)
+        elif track in ("sfx", "music"):
+            self._timeline_delete_audio_clip(clip)
+        elif track == "voice":
+            # Voiceover spans the whole video; offer mute instead.
+            ans = QMessageBox.question(
+                self, "Timeline",
+                "Voiceover poori video par hai. Mute kar dun?",
+                QMessageBox.Yes | QMessageBox.No)
+            if ans == QMessageBox.Yes:
+                self._timeline_volume(clip, 0.0)
+        elif track == "text":
+            self._timeline_delete_text(clip)
+        elif track == "captions":
+            self._timeline_remove_captions()
+        else:
+            QMessageBox.information(self, "Timeline",
+                                    f"Is clip par delete nahi hota: {clip.label[:40]}")
+
+    def _timeline_volume_selected(self, factor):
+        """Volume buttons: act on the selected audio timeline clip."""
+        clip = self._timeline_selected_clip()
+        if clip is None:
+            QMessageBox.information(
+                self, "Timeline",
+                "Pehle timeline mein koi audio clip select karo (voice/SFX/music par click karo).")
+            return
+        if clip.track not in ("voice", "sfx", "music"):
+            QMessageBox.information(
+                self, "Timeline",
+                f"Volume sirf audio clips par kaam karta hai. Ye hai: {clip.track} ({clip.label[:30]})")
+            return
+        self._timeline_volume(clip, factor)
 
     def _timeline_delete_text(self, clip):
         """Delete a text overlay clip from the timeline model.
