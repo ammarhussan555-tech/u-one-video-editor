@@ -12,12 +12,14 @@ COLORS = {
 
 class TimelineWidget(QWidget):
     sceneSelected = Signal(int)  # scene_id
+    clipRightClicked = Signal(str)  # clip_id (for CapCut-style edit menu)
 
     def __init__(self):
         super().__init__()
         self.timeline = None
         self.selected_scene = None
         self.setMinimumHeight(250)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
 
     def set_timeline(self, tl):
         self.timeline = tl
@@ -57,9 +59,10 @@ class TimelineWidget(QWidget):
                     p.drawText(r, Qt.AlignRight | Qt.AlignVCenter, "🔒 ")
         p.end()
 
-    def mousePressEvent(self, ev):
+    def _clip_at(self, pos):
+        """Return the Clip under the given widget position, or None."""
         if not self.timeline:
-            return
+            return None
         dur = max(0.01, self.timeline.duration())
         W = self.width()
         row_h = (self.height() - 8) / len(TRACKS)
@@ -68,10 +71,25 @@ class TimelineWidget(QWidget):
             for c in self.timeline.by_track(tr):
                 x = 70 + (c.start / dur) * (W - 80)
                 ww = max(3, (c.end - c.start) / dur * (W - 80))
-                if QRectF(x, y + 2, ww, row_h - 6).contains(ev.position()):
-                    sid = c.payload.get("scene_id")
-                    if sid is not None:
-                        self.selected_scene = sid
-                        self.sceneSelected.emit(sid)
-                        self.update()
-                    return
+                if QRectF(x, y + 2, ww, row_h - 6).contains(pos):
+                    return c
+        return None
+
+    def mousePressEvent(self, ev):
+        c = self._clip_at(ev.position())
+        if c is None:
+            return
+        sid = c.payload.get("scene_id")
+        if sid is not None:
+            self.selected_scene = sid
+            self.sceneSelected.emit(sid)
+            self.update()
+        # Right click -> CapCut-style edit menu for this clip.
+        if ev.button() == Qt.RightButton:
+            self.clipRightClicked.emit(c.id)
+
+    def contextMenuEvent(self, ev):
+        # Also support the platform context-menu key/gesture.
+        c = self._clip_at(ev.pos())
+        if c is not None:
+            self.clipRightClicked.emit(c.id)
