@@ -607,7 +607,8 @@ class MainWindow(QMainWindow):
         self.stage_lbl.setObjectName("stageLabel")
         sb.addWidget(self.stage_lbl, 1)
         self.progress = QProgressBar()
-        self.progress.setRange(0, len(STAGES))
+        self.progress.setRange(0, 100)
+        self.progress.setFormat("%p%")
         self.progress.setMaximumWidth(220)
         self.progress.setMaximumHeight(16)
         sb.addPermanentWidget(self.progress)
@@ -1616,9 +1617,41 @@ class MainWindow(QMainWindow):
         self.final_btn.setEnabled(enabled)
         self.cancel_btn.setEnabled(not enabled)
 
+    # Stage index -> (start %, end %) for the progress bar.
+    # Scene generation and final render get the biggest slices.
+    _STAGE_PCT = [
+        (0, 2),    # 0 Project validation
+        (2, 5),    # 1 Script processing
+        (5, 15),   # 2 Voiceover
+        (15, 60),  # 3 Scene generation (sub-progress: dn/total)
+        (60, 65),  # 4 Scene validation
+        (65, 70),  # 5 Scene recovery
+        (70, 75),  # 6 Media normalization
+        (75, 78),  # 7 Timeline construction
+        (78, 95),  # 8 Final render (sub-progress: pass 1/2, 2/2)
+        (95, 98),  # 9 Final MP4 validation
+        (98, 100), # 10 Export
+    ]
+
     def _on_progress(self, i, stage, msg):
-        self.progress.setValue(i + 1)
-        self.stage_lbl.setText(f"{stage}... {msg}")
+        import re
+        pct0, pct1 = self._STAGE_PCT[min(i, len(self._STAGE_PCT) - 1)]
+        frac = 0.0
+        # Sub-progress like "14/31" (scenes) or "pass 1/2".
+        m = re.search(r"(\d+)\s*/\s*(\d+)", msg or "")
+        if m:
+            try:
+                dn, total = int(m.group(1)), int(m.group(2))
+                if total > 0:
+                    frac = min(1.0, max(0.0, dn / total))
+            except ValueError:
+                pass
+        pct = int(pct0 + frac * (pct1 - pct0))
+        self.progress.setValue(pct)
+        # Big clear label: "45% — Scene 14/31 ban rahi hai..."
+        detail = f" — {msg}" if msg else ""
+        self.stage_lbl.setText(f"{pct}% — {stage}{detail}")
+        self._log(f"[{pct}%] {stage}{detail}")
 
     def _on_finished(self, out):
         self._render_buttons(True)
