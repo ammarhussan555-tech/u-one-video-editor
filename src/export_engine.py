@@ -125,14 +125,21 @@ class ExportEngine:
 
     # -- stage 2: render --
     def _video_args(self, codec: str, res: str, preview: bool,
-                    use_hw: bool, hw_enc: Optional[str]) -> List[str]:
+                    use_hw: bool, hw_enc: Optional[str],
+                    fast_pass: bool = False) -> List[str]:
         if use_hw and hw_enc:
             return ["-c:v", hw_enc, "-b:v",
                     _HW_BITRATE.get(res, "10M")]
         vcodec = _CPU_CODECS.get(codec, "libx264")
         # "veryfast" is ~2-3x faster than "medium" with negligible quality
         # loss at CRF 20. "medium" made renders painfully slow on Windows.
-        preset = "ultrafast" if preview else "veryfast"
+        # fast_pass=True uses "ultrafast" for intermediate passes (the clean
+        # copy gets re-encoded when burning captions, so speed matters
+        # more than compression efficiency there).
+        if preview or fast_pass:
+            preset = "ultrafast"
+        else:
+            preset = "veryfast"
         crf = "30" if preview else "20"
         return ["-c:v", vcodec, "-preset", preset, "-crf", crf]
 
@@ -168,7 +175,8 @@ class ExportEngine:
             args = ["-i", video_noaudio, "-i", mixed_audio,
                     "-vf", base_chain,
                     "-map", "0:v:0", "-map", "1:a:0",
-                    *self._video_args(codec, res, preview, hw, enc),
+                    *self._video_args(codec, res, preview, hw, enc,
+                                      fast_pass=tag.startswith("clean")),
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart", "-shortest", dest]
             self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
