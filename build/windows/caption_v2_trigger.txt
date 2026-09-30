@@ -1,0 +1,2 @@
+# Build trigger for caption templates v2 - 2026-09-30 23:00 PKT
+# 78 CapCut-style templates, 9 bundled OFL fonts
