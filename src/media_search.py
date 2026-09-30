@@ -290,8 +290,79 @@ class GraphicGenerator:
         return self._save(fig, plt, f"card_{scene_id}.png")
 
 
+def _ytdlp_download(webpage_url: str, kind: str) -> Optional[Path]:
+    """Download a YouTube video via the bundled yt-dlp (<=720p single file).
+
+    Used for candidates whose url is "ytdlp:<watch-url>". Returns the cached
+    local path or None. yt-dlp is imported lazily so media_search still
+    imports on systems without it (then every such candidate just fails).
+    """
+    try:
+        import yt_dlp
+    except ImportError:  # noqa: BLE001
+        return None
+    cache_url = "ytdlp:" + (webpage_url or "")
+    cached = asset_cache.lookup(cache_url, kind)
+    if cached:
+        return cached
+    dest = asset_cache.cached_path_for(cache_url, kind, ".mp4")
+    stem = dest.stem + "_dl"
+    try:
+        from .ffmpeg_util import find_ffmpeg
+        ff = find_ffmpeg()
+    except Exception:  # noqa: BLE001
+        ff = None
+    deadline = time.time() + 240  # max 4 min per YouTube download
+
+    def _hook(d):
+        if time.time() > deadline:
+            raise RuntimeError("yt-dlp download timed out")
+
+    try:
+        opts = {
+            "quiet": True, "no_warnings": True, "noprogress": True,
+            # DASH video+audio merged (news uploads are rarely progressive);
+            # prefer H.264 for cheap decoding, merge to mp4
+            "format": ("bv*[height<=720][vcodec^=avc]+ba/"
+                       "bv*[height<=720]+ba/b[height<=720]/b"),
+            "merge_output_format": "mp4",
+            "outtmpl": str(dest.parent / (stem + ".%(ext)s")),
+            "socket_timeout": 20, "retries": 2, "extractor_retries": 2,
+            "progress_hooks": [_hook],
+        }
+        if ff:
+            opts["ffmpeg_location"] = ff
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([webpage_url])
+        got = None
+        for cand in dest.parent.glob(stem + ".*"):
+            if cand.suffix.lower() in (".mp4", ".webm", ".mov", ".mkv") \
+                    and cand.stat().st_size >= _MIN_BYTES:
+                got = cand
+                break
+        if got is None:
+            return None
+        if not media_has_streams(str(got), want_video=True):
+            got.unlink(missing_ok=True)
+            return None
+        got.replace(dest)
+        asset_cache.store(cache_url, kind, dest)
+        return dest
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        try:
+            for leftover in dest.parent.glob(stem + ".*"):
+                if leftover != dest:
+                    leftover.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _safe_download(url: str, kind: str) -> Optional[Path]:
     """Download with full safety checks. Returns cached/final path or None."""
+    if (url or "").startswith("ytdlp:"):
+        return _ytdlp_download(url[len("ytdlp:"):], kind)
     ext = ".mp4" if kind == "video" else ".jpg"
     cached = asset_cache.lookup(url, kind)
     if cached:
@@ -1158,6 +1229,179 @@ class RedditProvider:
             return False, str(e)[:80]
 
 
+class NASAProvider:
+    """NASA Images & Video Library (images-api.nasa.gov). Keyless.
+
+    video: search media_type=video -> per-item collection.json ->
+           direct ~medium.mp4 (fallback ~mobile.mp4).
+    image: search media_type=image -> links[0].href (direct jpg).
+    US public-domain media - space, weather, earth science.
+    first_query_only keeps it to one query variant per scene.
+    """
+    name = "NASA"
+    license = "NASA (US public domain)"
+    first_query_only = True
+
+    def _api(self, query: str, media_type: str, num: int = 6) -> Dict:
+        r = _SESSION.get(
+            "https://images-api.nasa.gov/search",
+            params={"q": query, "media_type": media_type,
+                    "page_size": num},
+            timeout=_CONNECT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def _video_mp4(self, collection_url: str) -> Optional[str]:
+        try:
+            r = _SESSION.get(collection_url, timeout=_CONNECT_TIMEOUT)
+            if r.status_code != 200:
+                return None
+            files = r.json() or []
+            mp4s = [f for f in files
+                    if isinstance(f, str) and f.endswith(".mp4")]
+            for f in mp4s:
+                if "~medium.mp4" in f:
+                    return f
+            for f in mp4s:
+                if "~mobile.mp4" in f:
+                    return f
+            return mp4s[0] if mp4s else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def search(self, query: str, kind: str = "video",
+               per_page: int = 4) -> List[Dict]:
+        try:
+            out: List[Dict] = []
+            if kind == "video":
+                data = self._api(query, "video")
+                items = ((data.get("collection") or {}).get("items")
+                         or [])[:6]
+                jobs = []
+                for it in items:
+                    d0 = ((it.get("data") or [{}])[0]) or {}
+                    href = it.get("href", "") or ""
+                    if href:
+                        jobs.append((href, d0.get("title", "") or ""))
+                with ThreadPoolExecutor(max_workers=4) as ex:
+                    futs = {ex.submit(self._video_mp4, h): (h, t)
+                            for h, t in jobs}
+                    for fut in as_completed(futs):
+                        href, title = futs[fut]
+                        try:
+                            mp4 = fut.result()
+                        except Exception:  # noqa: BLE001
+                            continue
+                        if mp4:
+                            out.append({
+                                "url": mp4,
+                                "page": href.replace("/collection.json", ""),
+                                "w": 0, "h": 0, "dur": 0,
+                                "tags": title,
+                            })
+                        if len(out) >= per_page:
+                            break
+            else:
+                data = self._api(query, "image")
+                items = ((data.get("collection") or {}).get("items") or [])
+                for it in items:
+                    links = it.get("links") or []
+                    href = ((links[0].get("href", "") if links else "")
+                            or "")
+                    d0 = ((it.get("data") or [{}])[0]) or {}
+                    if href and "images-assets.nasa.gov" in href:
+                        out.append({
+                            "url": href,
+                            "page": "",
+                            "w": 0, "h": 0, "dur": 0,
+                            "tags": d0.get("title", "") or "",
+                        })
+                    if len(out) >= per_page:
+                        break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "NASA", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            data = self._api("moon", "image", 1)
+            items = ((data.get("collection") or {}).get("items") or [])
+            if items:
+                return True, "Connected"
+            return False, "No items returned"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
+class YouTubeProvider:
+    """YouTube clips via the bundled yt-dlp. Keyless (no API key).
+
+    video: yt-dlp flat search -> watch URLs; the downloader hook in
+           _safe_download fetches "ytdlp:<watch-url>" via yt-dlp
+           (<=720p single file, cached like every other asset).
+    image: direct i.ytimg.com hqdefault.jpg thumbnails (plain HTTP).
+    This covers official news/sports channels (AP Archive, AFP, BBC,
+    Al Jazeera, FIFA, NBA, NFL, WHO, ...) as well as eyewitness uploads.
+    Note: YouTube sometimes bot-checks datacenter IPs; residential
+    connections normally pass. Failures are silent (no results).
+    first_query_only keeps it to one query variant per scene.
+    """
+    name = "YouTube"
+    license = "YouTube (check per-video license/copyright)"
+    first_query_only = True
+
+    def _search_ids(self, query: str, num: int = 6) -> List[tuple]:
+        try:
+            import yt_dlp
+        except ImportError:  # noqa: BLE001
+            return []
+        try:
+            opts = {"quiet": True, "no_warnings": True,
+                    "skip_download": True, "extract_flat": True,
+                    "socket_timeout": 15, "extractor_retries": 1}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{num}:{query}",
+                                        download=False)
+            out = []
+            for e in ((info or {}).get("entries") or []):
+                vid = e.get("id") or ""
+                if isinstance(vid, str) and len(vid) == 11:
+                    out.append((vid, e.get("title") or ""))
+            return out
+        except Exception:  # noqa: BLE001
+            return []
+
+    def search(self, query: str, kind: str = "video",
+               per_page: int = 4) -> List[Dict]:
+        try:
+            out: List[Dict] = []
+            for vid, title in self._search_ids(query):
+                page = f"https://www.youtube.com/watch?v={vid}"
+                url = ("ytdlp:" + page if kind == "video"
+                       else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg")
+                out.append({"url": url, "page": page,
+                            "w": 0, "h": 0, "dur": 0, "tags": title})
+                if len(out) >= per_page:
+                    break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "YouTube", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            import yt_dlp  # noqa: F401
+        except ImportError:  # noqa: BLE001
+            return False, "yt-dlp not installed"
+        try:
+            if self._search_ids("news", num=1):
+                return True, "Connected"
+            return False, "Search empty (YouTube may block this network)"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
@@ -1173,6 +1417,7 @@ class MediaFinder:
                           SerperProvider(serper_key),
                           XTwitterProvider(serper_key),
                           TelegramProvider(), RedditProvider(),
+                          YouTubeProvider(), NASAProvider(),
                           GoogleProvider(google_key, google_cx),
                           WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
@@ -1294,5 +1539,9 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
         return TelegramProvider().test()
     if which == "reddit":
         return RedditProvider().test()
+    if which == "youtube":
+        return YouTubeProvider().test()
+    if which == "nasa":
+        return NASAProvider().test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
