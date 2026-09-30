@@ -765,6 +765,17 @@ class MainWindow(QMainWindow):
         self.cb_repeat = QComboBox()
         self.cb_repeat.addItems(["never", "max2", "ai"])
         form.addRow("Repeat visuals:", self.cb_repeat)
+        self.chk_safe = QCheckBox("© Safe mode (sirf copyright-safe sources)")
+        self.chk_safe.setToolTip(
+            "ON: sirf Pexels, Pixabay, NASA aur Wikimedia (public domain) "
+            "se clips aayenge. YouTube / Telegram / Reddit / X band.")
+        form.addRow("", self.chk_safe)
+        self.chk_logoclean = QCheckBox("Auto-clean logos (risky clip se logo saaf)")
+        self.chk_logoclean.setChecked(True)
+        self.chk_logoclean.setToolTip(
+            "YouTube / Telegram / Reddit / X clips par static corner logo "
+            "detect karke: jagah saaf ho to crop, warna blur.")
+        form.addRow("", self.chk_logoclean)
         self.cb_style = QComboBox()
         self.cb_style.addItems(["Documentary", "News", "Cinematic", "Fast-paced",
                                 "Storytelling", "Educational", "Science", "History",
@@ -1757,6 +1768,8 @@ class MainWindow(QMainWindow):
             "visual_mode": self.cb_visual.currentText(),
             "media_preference": self.cb_media.currentText(),
             "repetition_limit": self.cb_repeat.currentText(),
+            "safe_mode": self.chk_safe.isChecked(),
+            "auto_clean_logos": self.chk_logoclean.isChecked(),
             "style_preset": self.cb_style.currentText(),
             "output_format": self.cb_fmt.currentText(),
             "output_resolution": self.cb_res.currentText(),
