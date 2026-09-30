@@ -461,6 +461,8 @@ class RenderEngine:
             serper_key=_api_key(S, "serper"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
+            safe_mode=S.get("safe_mode", False),
+            auto_clean_logos=S.get("auto_clean_logos", True),
             project_id=getattr(self.pm.project, "id", "uone"))
         topic = self.analysis.topic
 
@@ -645,6 +647,8 @@ class RenderEngine:
             serper_key=_api_key(S, "serper"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
+            safe_mode=S.get("safe_mode", False),
+            auto_clean_logos=S.get("auto_clean_logos", True),
             project_id=getattr(self.pm.project, "id", "uone"))
 
     def _scene(self, scene_id):
