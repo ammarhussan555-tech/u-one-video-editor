@@ -1135,10 +1135,11 @@ class RedditProvider:
     """Military/eyewitness clips + photos from Reddit (official OAuth API).
 
     Reddit shut down anonymous JSON access (www.reddit.com now returns
-    HTTP 403 for bots). The supported path is Reddit's free OAuth API:
-    the user creates a free "script" app at reddit.com/prefs/apps and
-    pastes its client ID + secret into U One Settings. With credentials
-    the provider uses the app-only (client_credentials) flow against
+    HTTP 403 for bots) AND closed self-service app creation on
+    2025-11-11 (Responsible Builder Policy). New API access requires
+    Reddit's approval via a support ticket; once approved, Reddit issues
+    a client ID + secret. Paste them into U One Settings and the
+    provider uses the app-only (client_credentials) flow against
     oauth.reddit.com; without them it tries the legacy anonymous
     endpoint as a best-effort fallback.
 
@@ -1321,7 +1322,7 @@ class RedditProvider:
             tok = self._get_token()
             if not tok:
                 return False, ("OAuth failed - check Client ID/Secret "
-                               "(script app at reddit.com/prefs/apps)")
+                               "(from your Reddit-approved app)")
             try:
                 r = _SESSION.get(
                     "https://oauth.reddit.com/r/news/new",
@@ -1344,9 +1345,9 @@ class RedditProvider:
             return False, (f"HTTP {r.status_code} - Reddit now needs free "
                            "OAuth keys (see Settings)")
         except Exception:  # noqa: BLE001
-            return False, ("Reddit blocks anonymous access - add free "
-                           "OAuth keys in Settings "
-                           "(script app at reddit.com/prefs/apps)")
+            return False, ("Reddit needs API approval - file a ticket "
+                           "at support.reddithelp.com, then add the issued "
+                           "keys in Settings")
 
 
 class NASAProvider:
@@ -1682,8 +1683,8 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
     if which == "telegram":
         return TelegramProvider().test()
     if which == "reddit":
-        # key is "client_id|client_secret" (free script app at
-        # reddit.com/prefs/apps); empty = legacy anonymous attempt.
+        # key is "client_id|client_secret" (issued after Reddit API
+        # approval); empty = legacy anonymous attempt.
         parts = (key or "").split("|", 1)
         return RedditProvider(parts[0] if len(parts) > 0 else "",
                               parts[1] if len(parts) > 1 else "").test()
