@@ -96,35 +96,55 @@ def render_template_preview(key: str) -> bytes:
     w_quick = "QUICK" if tcase == "upper" else "quick"
     hmode = tmpl.get("highlight_mode", "karaoke")
     size = 34
+    # wordbig: highlight word is larger
+    big_size = int(size * tmpl.get("big_scale", 1.8)) if hmode == "wordbig" else size
     font = _load_font(tmpl["font"], size,
                       bool(tmpl["bold"]), bool(tmpl["italic"]))
-    w1 = d.textlength(w_the + " ", font=font)
+    big_font = _load_font(tmpl["font"], big_size,
+                          bool(tmpl["bold"]), bool(tmpl["italic"]))
+    w1 = d.textlength(w_the + " ", font=big_font if hmode == "wordbig" else font)
     w2 = d.textlength(w_quick, font=font)
     total = w1 + w2
     x = (_CARD_W - total) / 2
     y = (_CARD_H - size) / 2 - 4
+    # pill: rounded black background behind the whole caption
+    if tmpl.get("pill"):
+        pill_c = _ass_to_rgb(tmpl.get("back_c", "&HC8000000"))
+        d.rounded_rectangle([x - 14, y - 10, x + total + 14, y + size + 14],
+                            radius=18, fill=pill_c)
     outline_w = max(1, int(tmpl["outline"]))
+    glow_c = _ass_to_rgb(tmpl.get("glow_color", tmpl["secondary"]))
 
-    def _draw_text(px, text, fill, hl_box=False):
+    def _draw_text(px, text, fill, hl_box=False, use_big=False, use_glow=False):
+        fnt = big_font if use_big else font
+        ty = y - (big_size - size) // 2 if use_big else y
         if tmpl["box"]:
             # opaque box behind text (Hormozi style)
             bx0 = px - 6
-            bx1 = px + d.textlength(text, font=font) + 6
-            d.rectangle([bx0, y - 6, bx1, y + size + 6],
+            bx1 = px + d.textlength(text, font=fnt) + 6
+            d.rectangle([bx0, ty - 6, bx1, ty + size + 6],
                         fill=outline_c)
         if hl_box:
-            # blue highlight box behind the active word
+            # highlight box behind the active word
             box_c = _ass_to_rgb(tmpl.get("box_color", "&H00FF0000"))
             bx0 = px - 4
-            bx1 = px + d.textlength(text, font=font) + 4
-            d.rectangle([bx0, y - 4, bx1, y + size + 4], fill=box_c)
+            bx1 = px + d.textlength(text, font=fnt) + 4
+            d.rectangle([bx0, ty - 4, bx1, ty + size + 4], fill=box_c)
         if tmpl["shadow"]:
-            d.text((px + 2, y + 2), text, font=font, fill=(0, 0, 0))
-        d.text((px, y), text, font=font, fill=fill,
-               stroke_width=outline_w, stroke_fill=outline_c)
+            d.text((px + 2, ty + 2), text, font=fnt, fill=(0, 0, 0))
+        oc = glow_c if use_glow else outline_c
+        ow = outline_w + 2 if use_glow else outline_w
+        d.text((px, ty), text, font=fnt, fill=fill,
+               stroke_width=ow, stroke_fill=oc)
 
     if hmode == "wordbox":
         _draw_text(x, w_the + " ", primary, hl_box=True)
+        _draw_text(x + w1, w_quick, primary)
+    elif hmode == "wordbig":
+        _draw_text(x, w_the + " ", secondary, use_big=True)
+        _draw_text(x + w1, w_quick, primary)
+    elif hmode == "wordglow":
+        _draw_text(x, w_the + " ", secondary, use_glow=True)
         _draw_text(x + w1, w_quick, primary)
     else:
         _draw_text(x, w_the + " ", secondary)
