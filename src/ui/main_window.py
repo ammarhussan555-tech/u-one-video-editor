@@ -831,9 +831,13 @@ class MainWindow(QMainWindow):
         self.pixabay_status = QLabel("Not Connected")
         aform.addRow("Pexels:", self.pexels_status)
         aform.addRow("Pixabay:", self.pixabay_status)
+        self.wikimedia_status = QLabel("Always on (no key needed)")
+        self.wikimedia_status.setStyleSheet("color:#2f9e44;")
+        aform.addRow("Wikimedia (news photos):", self.wikimedia_status)
         api_note = QLabel("Keys are stored securely on this PC and are never shown, "
-                          "logged or saved into projects. Without keys, U One builds "
-                          "every video with its built-in graphics engine.")
+                          "logged or saved into projects. Wikimedia Commons needs no "
+                          "key and is always available as a fallback. Without any keys, "
+                          "U One builds every video with its built-in graphics engine.")
         api_note.setWordWrap(True)
         api_note.setStyleSheet("color:#888;font-size:11px;")
         aform.addRow(api_note)
@@ -1514,9 +1518,10 @@ class MainWindow(QMainWindow):
         self._log("Testing API connections...")
         self.pexels_status.setText("Testing...")
         self.pixabay_status.setText("Testing...")
+        self.wikimedia_status.setText("Testing...")
 
         class _ApiTestWorker(QThread):
-            done = Signal(bool, str, bool, str)
+            done = Signal(bool, str, bool, str, bool, str)
 
             def run(self):  # noqa: D102
                 try:
@@ -1529,19 +1534,28 @@ class MainWindow(QMainWindow):
                         "pixabay", secure_store.get_key("pixabay"))
                 except Exception as e:  # noqa: BLE001
                     ok_pb, msg_pb = False, str(e)[:120]
-                self.done.emit(ok_px, msg_px, ok_pb, msg_pb)
+                try:
+                    ok_wm, msg_wm = test_provider("wikimedia", "")
+                except Exception as e:  # noqa: BLE001
+                    ok_wm, msg_wm = False, str(e)[:120]
+                self.done.emit(ok_px, msg_px, ok_pb, msg_pb, ok_wm, msg_wm)
 
-        def _on_done(ok_px, msg_px, ok_pb, msg_pb):
+        def _on_done(ok_px, msg_px, ok_pb, msg_pb, ok_wm, msg_wm):
             self.pexels_status.setText(
                 "Connected" if ok_px else f"Not Connected - {msg_px}")
             self.pixabay_status.setText(
                 "Connected" if ok_pb else f"Not Connected - {msg_pb}")
+            self.wikimedia_status.setText(
+                "Connected (keyless)" if ok_wm else f"Not Connected - {msg_wm}")
             self.pexels_status.setStyleSheet(
                 "color:#2f9e44;" if ok_px else "color:#c0392b;")
             self.pixabay_status.setStyleSheet(
                 "color:#2f9e44;" if ok_pb else "color:#c0392b;")
+            self.wikimedia_status.setStyleSheet(
+                "color:#2f9e44;" if ok_wm else "color:#c0392b;")
             self._log(f"Pexels: {'Connected' if ok_px else 'Not Connected'} | "
-                      f"Pixabay: {'Connected' if ok_pb else 'Not Connected'}")
+                      f"Pixabay: {'Connected' if ok_pb else 'Not Connected'} | "
+                      f"Wikimedia: {'Connected' if ok_wm else 'Not Connected'}")
             self._api_worker = None
 
         self._api_worker = _ApiTestWorker(self)
@@ -1554,6 +1568,8 @@ class MainWindow(QMainWindow):
         self.pixabay_status.setText("Saved" if has["pixabay"] else "Not Connected")
         self.pexels_status.setStyleSheet("color:#2f9e44;" if has["pexels"] else "color:#888;")
         self.pixabay_status.setStyleSheet("color:#2f9e44;" if has["pixabay"] else "color:#888;")
+        self.wikimedia_status.setText("Always on (no key needed)")
+        self.wikimedia_status.setStyleSheet("color:#2f9e44;")
 
     def _settings(self):
         if self.rb_upload.isChecked() and self.voice_path_lbl.text().startswith("no file"):
