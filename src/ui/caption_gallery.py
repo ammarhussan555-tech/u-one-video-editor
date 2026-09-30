@@ -209,6 +209,28 @@ class _TemplateCard(QWidget):
         name.setStyleSheet("color:#ccc;font-size:11px;")
         name.setWordWrap(True)
         lay.addWidget(name)
+        # animation badge so templates don't all look static
+        try:
+            from ..text_captions import CAPTION_TEMPLATES
+            tmpl = CAPTION_TEMPLATES.get(key, {})
+            anim = tmpl.get("anim", "")
+            hm = tmpl.get("highlight_mode", "")
+            if hm == "typewriter":
+                badge_txt = "⌨ typewriter"
+            elif anim in ("pop", "bounce", "shake"):
+                badge_txt = "▶ " + anim
+            elif anim == "pop_soft":
+                badge_txt = "▶ soft pop"
+            else:
+                badge_txt = ""
+            if badge_txt:
+                badge = QLabel(badge_txt)
+                badge.setAlignment(Qt.AlignCenter)
+                badge.setStyleSheet(
+                    "color:#7fe08a;font-size:10px;font-weight:bold;")
+                lay.addWidget(badge)
+        except Exception:  # noqa: BLE001
+            pass
         self.setCursor(Qt.PointingHandCursor)
         self._refresh_style()
 
