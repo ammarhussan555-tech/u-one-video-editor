@@ -494,7 +494,7 @@ class ArchiveOrgProvider:
         except Exception:  # noqa: BLE001
             return []
         out: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             futs = [ex.submit(self._one, d) for d in docs]
             for fut in as_completed(futs, timeout=90):
                 try:
@@ -521,16 +521,114 @@ class ArchiveOrgProvider:
             return False, str(e)[:80]
 
 
+class GoogleProvider:
+    """Optional provider: Google Custom Search (web images + videos).
+
+    Needs a free API key + Search Engine ID (cx):
+    Google Cloud Console -> Custom Search JSON API (100 free/day).
+    Searches the whole web: latest news photos, any-niche images.
+    Video results are best-effort (direct mp4 links from pagemap).
+    Without keys this provider is silently skipped.
+    """
+    name = "Google"
+    license = "Web search (check per-site license)"
+
+    def __init__(self, api_key: str = "", cx: str = ""):
+        self.api_key = api_key or ""
+        self.cx = cx or ""
+
+    def _api(self, params: Dict) -> Dict:
+        params = dict(params)
+        params.update({"key": self.api_key, "cx": self.cx})
+        r = _SESSION.get("https://www.googleapis.com/customsearch/v1",
+                         params=params, timeout=_CONNECT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
+        if not (self.api_key and self.cx):
+            return []
+        try:
+            if kind == "image":
+                data = self._api({
+                    "q": query, "searchType": "image",
+                    "num": min(per_page * 2, 10), "safe": "active",
+                    "imgSize": "large",
+                })
+                out = []
+                for it in data.get("items", []):
+                    url = it.get("link", "")
+                    if not url:
+                        continue
+                    img = it.get("image", {})
+                    out.append({
+                        "url": url,
+                        "page": it.get("image", {}).get("contextLink", ""),
+                        "w": img.get("width", 0), "h": img.get("height", 0),
+                        "dur": 0, "tags": it.get("title", ""),
+                    })
+                    if len(out) >= per_page:
+                        break
+            else:
+                # video: best-effort direct mp4 links
+                data = self._api({
+                    "q": f"{query} filetype:mp4",
+                    "num": min(per_page * 2, 10), "safe": "active",
+                })
+                out = []
+                for it in data.get("items", []):
+                    url = ""
+                    # pagemap videoobject often has the direct file URL
+                    pm = it.get("pagemap", {})
+                    for vo in pm.get("videoobject", []):
+                        cu = vo.get("contenturl", "")
+                        if cu.lower().endswith(".mp4"):
+                            url = cu
+                            break
+                    if not url:
+                        link = it.get("link", "")
+                        if link.lower().split("?")[0].endswith(".mp4"):
+                            url = link
+                    if not url:
+                        continue
+                    out.append({
+                        "url": url,
+                        "page": it.get("link", ""),
+                        "w": 0, "h": 0, "dur": 0,
+                        "tags": it.get("title", ""),
+                    })
+                    if len(out) >= per_page:
+                        break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "Google", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        if not (self.api_key and self.cx):
+            return False, "No key saved."
+        try:
+            data = self._api({"q": "news", "num": 1})
+            if "items" in data or "searchInformation" in data:
+                return True, "Connected"
+            err = (data.get("error", {}) or {}).get("message", "")
+            return False, err[:80] or "API error"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
 
     def __init__(self, assets_dir: str, pexels_key: str = "",
-                 pixabay_key: str = "", preference: str = "ai_auto",
+                 pixabay_key: str = "", google_key: str = "",
+                 google_cx: str = "", preference: str = "ai_auto",
                  repetition: str = "never", project_id: str = "app"):
         self.assets_dir = assets_dir
         os.makedirs(assets_dir, exist_ok=True)
         self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
+                          GoogleProvider(google_key, google_cx),
                           WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
         self.repetition = repetition
@@ -548,7 +646,7 @@ class MediaFinder:
     def _search_all(self, query: str, kind: str) -> List[Dict]:
         """Search all providers concurrently for one (query, kind)."""
         results: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             futs = {ex.submit(p.search, query, kind): p.name
                     for p in self.providers}
             for fut in as_completed(futs, timeout=45):
@@ -630,5 +728,10 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
         return WikimediaProvider().test()
     if which == "archive_org":
         return ArchiveOrgProvider().test()
+    if which == "google":
+        # key is "api_key|cx"
+        parts = (key or "").split("|", 1)
+        return GoogleProvider(parts[0] if len(parts) > 0 else "",
+                              parts[1] if len(parts) > 1 else "").test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
