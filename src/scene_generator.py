@@ -66,7 +66,7 @@ class SceneGenerator:
         self.log = render_log
         self.cancel_event = cancel_event or threading.Event()
         cpu = os.cpu_count() or 4
-        self.max_workers = max_workers or max(1, min(4, cpu))
+        self.max_workers = max_workers or max(1, min(8, cpu * 2))
         self.cache = cache
         self._fallback_card: Optional[str] = None
         self._lock = threading.Lock()
