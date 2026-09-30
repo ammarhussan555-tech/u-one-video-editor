@@ -3,24 +3,31 @@
 Detects overlays by measuring temporal behaviour across frames sampled
 through the clip:
 
-- STATIC corner overlays (news bugs, burned-in @tags), opaque or
-  semi-transparent: low temporal variance + persistent edges (the temporal
-  minimum of per-frame edge maps - a static logo has an edge at its
-  boundary in every frame, moving content does not).
-- MOVING watermarks (bouncing logos): candidate graphics are extracted
-  from the middle sample frame and located in every other sample frame
-  with normalized cross-correlation. A graphic that reappears at clearly
-  different positions is a moving watermark; it is blurred along its path,
-  one blur box per time segment.
+- STATIC overlays (news bugs, burned-in @tags, centered watermarks),
+  opaque or semi-transparent: low temporal variance + persistent edges
+  (the temporal minimum of per-frame edge maps - a static logo has an
+  edge at its boundary in every frame, moving content does not).
+  Checked in corners AND the center (stricter gates in the center).
+- MOVING watermarks (bouncing logos, incl. centered): candidate graphics
+  are extracted from the middle sample frame and located in every other
+  sample frame with normalized cross-correlation. A graphic that
+  reappears at clearly
+  different positions is a moving watermark; its full motion range is
+  blurred for the whole clip (time-segmented tracking can't reliably
+  follow fast motion with sparse samples).
+
+- TILED watermarks (stock-photo grids): the same graphic at 3+ positions
+  in one frame is blurred at every tile for the whole clip.
 
 Then:
 
 - CROPS the edge band when a static logo sits in a top/bottom edge strip
   whose surroundings are plain enough that cropping won't hurt the clip,
-- BLURS the logo region otherwise (static: whole clip; moving: per
-  time segment via enable='between(t,a,b)').
+- BLURS the logo region otherwise (static: logo box; moving: motion
+  range; tiled: every tile).
 
-Honest limits: center watermarks, full-frame translucent watermarks and
+Honest limits: full-frame translucent washes and watermarks whose
+appearance constantly morphs are not reliably handled.
 watermarks that constantly change appearance are NOT handled. Never
 raises: returns the original path when nothing is found or anything
 fails.
@@ -186,22 +193,29 @@ def _detect(frames: List["object"]) -> tuple:
         "tl": (0, 0, cw, ch), "tr": (sw - cw, 0, sw, ch),
         "bl": (0, sh - ch, cw, sh), "br": (sw - cw, sh - ch, sw, sh),
     }
+    # Center region for centered watermarks (stricter gates - the center
+    # is busier than corners, so we demand stronger evidence).
+    cx0, cy0 = sw // 4, sh // 4
+    regions = list(corners.items()) + [("center", (cx0, cy0, sw - cx0, sh - cy0))]
     found = []
-    for name, (x0, y0, x1, y1) in corners.items():
-        # background variance level of this corner (robust median)
+    for name, (x0, y0, x1, y1) in regions:
+        is_center = (name == "center")
+        # background variance level of this region (robust median)
         bg_var = float(np.median(tvar[y0:y1, x0:x1])) + 1e-6
         # static enough: hard-static (opaque logo) or calmer than the
-        # corner's surroundings (translucent logo over moving bg)
+        # region's surroundings (translucent logo over moving bg)
         calm = (tvar < _STATIC_STD) | (tvar < _TRANS_REL * bg_var)
         bound = (tvar < _TRANS_STD) & (emin > _MIN_EDGE_PX) & calm
         region = bound[y0:y1, x0:x1]
-        if int(region.sum()) < _BLOB_MIN_PX:
+        min_px = _BLOB_MIN_PX * 2 if is_center else _BLOB_MIN_PX
+        if int(region.sum()) < min_px:
             continue
         dens = _box_density(region, 21)
-        for _ in range(2):  # up to two logos per corner
+        peak_min = _DENS_PEAK_MIN * 1.5 if is_center else _DENS_PEAK_MIN
+        for _ in range(2):  # up to two logos per region
             flat = int(np.argmax(dens))
             py, px = flat // dens.shape[1], flat % dens.shape[1]
-            if dens[py, px] < _DENS_PEAK_MIN:
+            if dens[py, px] < peak_min:
                 break
             blob = _flood_from(dens > _DENS_FLOOD_MIN, py, px)
             if blob.sum() > 0.70 * region.size:
@@ -291,15 +305,164 @@ def _ncc_best(img, tmpl, band) -> Optional[Tuple[Tuple[int, int], float]]:
     return (ix, iy), float(ncc[iy, ix])
 
 
+def _ncc_all(img, tmpl, band, thresh: float) -> List[Tuple[int, int, float]]:
+    """All NCC match positions >= thresh (with non-maximum suppression).
+
+    Returns [(x, y, score)] in img pixels. Used for tiled watermarks where
+    the same graphic repeats at several positions in one frame.
+    """
+    import numpy as np
+    H, W = img.shape
+    h, w = tmpl.shape
+    if h > H or w > W or h < 4 or w < 4:
+        return []
+    t = tmpl - tmpl.mean()
+    t_ss = float((t * t).sum())
+    if t_ss < 1e-9:
+        return []
+    N = h * w
+    fh, fw = H + h, W + w
+    F1 = np.fft.rfft2(img, s=(fh, fw))
+    F2 = np.fft.rfft2(t, s=(fh, fw))
+    xcorr = np.fft.irfft2(F1 * np.conj(F2), s=(fh, fw))
+    C = xcorr[:H - h + 1, :W - w + 1]
+    ii = np.zeros((H + 1, W + 1), dtype=np.float64)
+    ii[1:, 1:] = np.cumsum(np.cumsum(img, axis=0), axis=1)
+    ii2 = np.zeros((H + 1, W + 1), dtype=np.float64)
+    ii2[1:, 1:] = np.cumsum(np.cumsum(img * img, axis=0), axis=1)
+    S = ii[h:, w:] - ii[:-h, w:] - ii[h:, :-w] + ii[:-h, :-w]
+    Q = ii2[h:, w:] - ii2[:-h, w:] - ii2[h:, :-w] + ii2[:-h, :-w]
+    mu = S / N
+    var = np.maximum(Q / N - mu * mu, 0.0)
+    denom = np.sqrt(var) * np.sqrt(t_ss) * np.sqrt(N)
+    ncc = np.where(denom > 1e-9, C / np.maximum(denom, 1e-9), 0.0)
+    cy = np.arange(ncc.shape[0]) + h // 2
+    cx = np.arange(ncc.shape[1]) + w // 2
+    valid = band[cy[:, None], cx[None, :]]
+    ncc = np.where(valid, ncc, -1.0)
+    # non-maximum suppression: greedily take peaks, suppress neighborhood
+    out = []
+    work = ncc.copy()
+    rad = max(h, w) // 2
+    for _ in range(12):  # at most 12 tiles
+        j = int(np.argmax(work))
+        iy, ix = j // work.shape[1], j % work.shape[1]
+        s = float(work[iy, ix])
+        if s < thresh:
+            break
+        out.append((ix, iy, s))
+        y0, y1 = max(0, iy - rad), min(work.shape[0], iy + rad + 1)
+        x0, x1 = max(0, ix - rad), min(work.shape[1], ix + rad + 1)
+        work[y0:y1, x0:x1] = -1.0
+    return out
+
+
+def _detect_tiled(frames: List["object"],
+                  static_overlays: List[Dict]) -> List[Dict]:
+    """Find tiled/repeating watermarks (e.g. stock-photo grids).
+
+    Takes candidate graphics from the middle sample frame and looks for
+    the SAME graphic at 3+ positions in that frame. Returns
+    [{"boxes": [(x0,y0,x1,y1), ...]}] in sample pixels (static positions,
+    blurred for the whole clip). Never raises.
+    """
+    import numpy as np
+    try:
+        n = len(frames)
+        if n < 3:
+            return []
+        grays = [f.astype(np.float32).mean(axis=-1) for f in frames]
+        sh, sw = grays[0].shape
+        mid = n // 2
+        gy, gx = np.gradient(grays[mid])
+        emid = np.abs(gx) + np.abs(gy)
+        band = np.ones((sh, sw), bool)  # tiles can be anywhere
+
+        # candidate blobs (same criteria as _detect_moving)
+        active = emid > _BLOB_EDGE
+        visited = np.zeros_like(active, bool)
+        cands = []
+        ys, xs = np.where(active)
+        for sy, sx in zip(ys.tolist(), xs.tolist()):
+            if visited[sy, sx]:
+                continue
+            q = deque([(sy, sx)])
+            visited[sy, sx] = True
+            pts = []
+            while q:
+                cy, cx = q.popleft()
+                pts.append((cy, cx))
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        if dy == 0 and dx == 0:
+                            continue
+                        ny, nx = cy + dy, cx + dx
+                        if (0 <= ny < sh and 0 <= nx < sw
+                                and active[ny, nx] and not visited[ny, nx]):
+                            visited[ny, nx] = True
+                            q.append((ny, nx))
+            arr = np.array(pts)
+            y0, y1 = int(arr[:, 0].min()), int(arr[:, 0].max())
+            x0, x1 = int(arr[:, 1].min()), int(arr[:, 1].max())
+            bw_ = x1 - x0 + 1
+            bh_ = y1 - y0 + 1
+            if not (8 <= bw_ <= 90 and 8 <= bh_ <= 90):
+                continue
+            if len(pts) < 40:
+                continue
+            if len(pts) / (bw_ * bh_) < 0.15:
+                continue
+            cands.append((x0, y0, x1, y1))
+            if len(cands) >= 4:
+                break
+
+        def _iou(a, b):
+            ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+            ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+            iw, ih = ix1 - ix0, iy1 - iy0
+            if iw <= 0 or ih <= 0:
+                return 0.0
+            inter = iw * ih
+            ua = ((a[2] - a[0]) * (a[3] - a[1])
+                  + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+            return inter / ua if ua > 0 else 0.0
+
+        stat_boxes = [o["bbox"] for o in static_overlays]
+        found = []
+        for (x0, y0, x1, y1) in cands:
+            if any(_iou((x0, y0, x1, y1), s) > 0.25 for s in stat_boxes):
+                continue
+            tmpl = emid[max(0, y0 - 2):y1 + 3,
+                        max(0, x0 - 2):x1 + 3].astype(np.float32)
+            if tmpl.shape[0] < 4 or tmpl.shape[1] < 4:
+                continue
+            th, tw = tmpl.shape
+            matches = _ncc_all(emid.astype(np.float32), tmpl, band,
+                               _NCC_MIN)
+            # need 3+ distinct positions (the original + 2 repeats)
+            if len(matches) < 3:
+                continue
+            boxes = [(mx, my, mx + tw, my + th) for mx, my, _ in matches]
+            found.append({"boxes": boxes, "tiled": True})
+            if found:
+                break  # one tiled watermark is enough
+        return found
+    except Exception:
+        return []
+
+
 def _detect_moving(frames: List["object"], times: List[float],
-                   static_overlays: List[Dict]) -> List[Dict]:
+                   static_overlays: List[Dict],
+                   tiled_overlays: List[Dict] = None) -> List[Dict]:
     """Find moving watermarks via template matching.
 
     Candidate graphics are taken from the middle sample frame; each is
     located in every sample frame with NCC on edge images. A graphic that
     matches in >= _MIN_MATCH_FRAMES frames at clearly different positions
-    is a moving watermark. Returns [{"boxes": [(x0,y0,x1,y1,t), ...]}] in
-    sample pixels. Never raises.
+    is a moving watermark. Candidates overlapping tiled watermarks are
+    skipped (a static tile grid can look like movement when the best NCC
+    peak jumps between identical tiles). Returns [{"boxes":
+    [(x0,y0,x1,y1,t), ...]}] in sample pixels. Never raises.
     """
     import numpy as np
     try:
@@ -314,11 +477,14 @@ def _detect_moving(frames: List["object"], times: List[float],
             edges.append(np.abs(gx) + np.abs(gy))
 
         bh, bw = int(sh * _BAND_FRAC), int(sw * _BAND_FRAC)
+        # Search band: edges + center (centered/bouncing watermarks live
+        # in the middle too, not just the edge strips).
         band = np.zeros((sh, sw), bool)
         band[:bh, :] = True
         band[sh - bh:, :] = True
         band[:, :bw] = True
         band[:, sw - bw:] = True
+        band[sh // 4:3 * sh // 4, sw // 4:3 * sw // 4] = True
 
         def blobs_in(ei):
             active = (ei > _BLOB_EDGE) & band
@@ -372,8 +538,12 @@ def _detect_moving(frames: List["object"], times: List[float],
         mid = n // 2
         cands = blobs_in(edges[mid])[:4]
         stat_boxes = [o["bbox"] for o in static_overlays]
+        tile_boxes = []
+        for t in (tiled_overlays or []):
+            tile_boxes += t["boxes"]
+        skip_boxes = stat_boxes + tile_boxes
         cands = [c for c in cands
-                 if not any(_iou(c, s) > 0.25 for s in stat_boxes)]
+                 if not any(_iou(c, s) > 0.25 for s in skip_boxes)]
 
         found = []
         for (x0, y0, x1, y1) in cands:
@@ -407,16 +577,15 @@ def _detect_moving(frames: List["object"], times: List[float],
 
 
 def _plan(sh_real: int, sw_real: int, overlays: List[Dict],
-          moving: List[Dict], mean_gray, sx: float, sy: float,
-          dur: float) -> Tuple[int, int, List[Tuple]]:
+          moving: List[Dict], tiled: List[Dict], mean_gray, sx: float,
+          sy: float, dur: float) -> Tuple[int, int, List[Tuple]]:
     """Decide crop vs blur.
 
     Returns (crop_top, crop_bottom, blur_specs). A blur spec is
     (x0, y0, x1, y1, t0, t1) in post-crop real-pixel coords; t0/t1 are
-    None for a whole-clip (static) blur, else a time segment for a moving
-    watermark. Crop is chosen only when a static logo touches a top/bottom
-    edge, the strip is thin (<=12%), AND the strip away from the logo is
-    plain so removing it won't hurt the clip.
+    None for a whole-clip blur. Crop is chosen only when a static logo
+    touches a top/bottom edge, the strip is thin (<=12%), AND the strip
+    away from the logo is plain so removing it won't hurt the clip.
     """
     sw = mean_gray.shape[1]
     crop_top, crop_bottom = 0, 0
@@ -458,26 +627,36 @@ def _plan(sh_real: int, sw_real: int, overlays: List[Dict],
                           int(px1 * sx), int(py1 * sy) - crop_top,
                           None, None))
 
-    # moving watermarks: one blur box per time segment (union of the
-    # neighbouring matched boxes, so travel between samples is covered)
+    # moving watermarks: blur the bounding box of the watermark's full
+    # motion range for the whole clip. Time-segmented boxes can't reliably
+    # track fast/bouncing motion with sparse samples (aliasing), so we
+    # trade a larger blur area for guaranteed coverage.
     pad = 6
     for wm in moving:
-        boxes = sorted(wm["boxes"], key=lambda b: b[4])
+        boxes = wm["boxes"]
         if not boxes:
             continue
-        segs: List[Tuple[float, float, Tuple]] = []
-        # lead-in [0, t_first] and tail [t_last, dur]
-        segs.append((0.0, boxes[0][4], boxes[0][:4]))
-        for a, b in zip(boxes, boxes[1:]):
-            ux0 = min(a[0], b[0])
-            uy0 = min(a[1], b[1])
-            ux1 = max(a[2], b[2])
-            uy1 = max(a[3], b[3])
-            segs.append((a[4], b[4], (ux0, uy0, ux1, uy1)))
-        segs.append((boxes[-1][4], dur, boxes[-1][:4]))
-        for (t0, t1, (bx0, by0, bx1, by1)) in segs:
-            if t1 - t0 < 0.05:
-                continue
+        bx0 = min(b[0] for b in boxes)
+        by0 = min(b[1] for b in boxes)
+        bx1 = max(b[2] for b in boxes)
+        by1 = max(b[3] for b in boxes)
+        # motion margin for inter-sample travel (modest - the core range
+        # already covers the sampled positions)
+        mx = (bx1 - bx0) * 0.10
+        my = (by1 - by0) * 0.10
+        x0 = max(0, int((bx0 - pad - mx) * sx))
+        y0 = max(0, int((by0 - pad - my) * sy) - crop_top)
+        x1 = min(sw_real, int((bx1 + pad + mx) * sx))
+        y1 = min(sh_real - crop_top - crop_bottom,
+                 int((by1 + pad + my) * sy) - crop_top)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            continue
+        blurs.append((x0, y0, x1, y1, None, None))
+
+    # tiled watermarks: static positions, blur each tile for the whole clip
+    pad = 6
+    for tw in tiled:
+        for (bx0, by0, bx1, by1) in tw["boxes"]:
             x0 = max(0, int((bx0 - pad) * sx))
             y0 = max(0, int((by0 - pad) * sy) - crop_top)
             x1 = min(sw_real, int((bx1 + pad) * sx))
@@ -485,7 +664,7 @@ def _plan(sh_real: int, sw_real: int, overlays: List[Dict],
                      int((by1 + pad) * sy) - crop_top)
             if x1 - x0 < 8 or y1 - y0 < 8:
                 continue
-            blurs.append((x0, y0, x1, y1, round(t0, 2), round(t1, 2)))
+            blurs.append((x0, y0, x1, y1, None, None))
     return crop_top, crop_bottom, blurs
 
 
@@ -570,11 +749,14 @@ def maybe_clean_clip(path: str, work_dir: str,
         sh = max(2, int(round(h * sw / w)) & ~1)
         frames, times = _sample_frames(path, ff, dur, sw, sh)
         overlays, mean_gray = _detect(frames)
-        moving = _detect_moving(frames, times, overlays)
-        if (not overlays and not moving) or mean_gray is None:
+        # tiled before moving: a static tile grid can mimic movement when
+        # the best NCC peak jumps between identical tiles
+        tiled = _detect_tiled(frames, overlays)
+        moving = _detect_moving(frames, times, overlays, tiled)
+        if (not overlays and not moving and not tiled) or mean_gray is None:
             return path
         sx, sy = w / sw, h / sh
-        crop_top, crop_bottom, blurs = _plan(h, w, overlays, moving,
+        crop_top, crop_bottom, blurs = _plan(h, w, overlays, moving, tiled,
                                              mean_gray, sx, sy, dur)
         if crop_top == 0 and crop_bottom == 0 and not blurs:
             return path
