@@ -1,9 +1,9 @@
 """U One - media search and download.
 
-* Pexels + Pixabay + Wikimedia Commons providers with a shared, pooled
-  HTTP session (connection reuse), request retries and timeouts.
-  Wikimedia is keyless (no API key needed) and great for news niche:
-  real event/place/people photos.
+* Pexels + Pixabay + Wikimedia Commons + Archive.org providers with a
+  shared, pooled HTTP session (connection reuse), request retries and
+  timeouts. Wikimedia (news photos) and Archive.org (news video clips)
+  are keyless (no API key needed) - great for news niche.
 * All providers are searched CONCURRENTLY; results are merged and ranked
   by relevance score (preferred: relevant video > relevant image > graphic).
 * Downloads are cached by URL hash: the same media is never downloaded
@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -334,8 +335,9 @@ def _relevance_score(cand: Dict, analysis) -> float:
         score += 4.0
     elif w >= 640:
         score += 2.0
-    else:
-        score -= 8.0  # very low resolution
+    elif w > 0:
+        score -= 8.0  # known to be very low resolution
+    # w == 0 means unknown resolution: no penalty
     if cand.get("dur"):
         score += 1.0
     return score
@@ -409,6 +411,116 @@ class WikimediaProvider:
             return False, str(e)[:80]
 
 
+class ArchiveOrgProvider:
+    """Keyless provider: Archive.org news/documentary VIDEO clips.
+
+    No API key needed. Real video footage (not just photos): TV news
+    archives, documentaries, event coverage. Perfect for news niche.
+    Prefers the smaller .ia.mp4 derivative for fast downloads.
+    """
+    name = "Archive.org"
+    license = "Archive.org (check per-item license; mostly public domain / CC)"
+
+    _MAX_BYTES = 250 * 1024 * 1024  # skip files bigger than 250 MB
+
+    def _metadata(self, identifier: str) -> Dict:
+        try:
+            r = _SESSION.get(f"https://archive.org/metadata/{identifier}",
+                             timeout=_CONNECT_TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _best_mp4(self, identifier: str, meta: Dict):
+        """Pick the smallest decent mp4 (prefer .ia.mp4 derivative)."""
+        cands = []
+        for f in meta.get("files", []):
+            name = f.get("name", "")
+            if not name.endswith(".mp4"):
+                continue
+            try:
+                size = int(f.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            if size and size > self._MAX_BYTES:
+                continue
+            # .ia.mp4 is the streamable derivative: smaller, faster.
+            rank = 0 if name.endswith(".ia.mp4") else 1
+            cands.append((rank, size, name))
+        if not cands:
+            return None
+        cands.sort()
+        _, size, name = cands[0]
+        url = (f"https://archive.org/download/{identifier}/"
+               + urllib.parse.quote(name))
+        return url, size
+
+    def _one(self, doc: Dict):
+        ident = doc.get("identifier", "")
+        if not ident:
+            return None
+        meta = self._metadata(ident)
+        best = self._best_mp4(ident, meta)
+        if not best:
+            return None
+        url, _size = best
+        # duration if the item metadata has it
+        dur = 0.0
+        try:
+            d = meta.get("metadata", {}).get("duration", "")
+            dur = float(str(d).split(":")[-1]) if d else 0.0
+        except Exception:  # noqa: BLE001
+            dur = 0.0
+        return {"url": url,
+                "page": f"https://archive.org/details/{ident}",
+                "w": 0, "h": 0, "dur": dur,
+                "tags": doc.get("title", "")}
+
+    def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
+        if kind != "video":
+            return []
+        try:
+            params = {
+                "q": f"({query}) AND mediatype:movies",
+                "fl[]": "identifier,title",
+                "rows": str(min(per_page * 2, 8)),
+                "output": "json",
+            }
+            r = _SESSION.get("https://archive.org/advancedsearch.php",
+                             params=params, timeout=_CONNECT_TIMEOUT)
+            r.raise_for_status()
+            docs = r.json().get("response", {}).get("docs", [])
+        except Exception:  # noqa: BLE001
+            return []
+        out: List[Dict] = []
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = [ex.submit(self._one, d) for d in docs]
+            for fut in as_completed(futs, timeout=90):
+                try:
+                    res = fut.result(timeout=10)
+                except Exception:  # noqa: BLE001
+                    res = None
+                if res:
+                    out.append(res)
+                if len(out) >= per_page:
+                    break
+        return [{**o, "source": "Archive.org", "license": self.license,
+                 "query": query} for o in out]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            r = _SESSION.get(
+                "https://archive.org/advancedsearch.php",
+                params={"q": "news", "rows": "1", "output": "json"},
+                timeout=_CONNECT_TIMEOUT)
+            if r.status_code == 200:
+                return True, "Connected (keyless)"
+            return False, f"HTTP {r.status_code}"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
@@ -419,7 +531,7 @@ class MediaFinder:
         self.assets_dir = assets_dir
         os.makedirs(assets_dir, exist_ok=True)
         self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
-                          WikimediaProvider()]
+                          WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
         self.repetition = repetition
         self.used_ids = set()
@@ -436,7 +548,7 @@ class MediaFinder:
     def _search_all(self, query: str, kind: str) -> List[Dict]:
         """Search all providers concurrently for one (query, kind)."""
         results: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        with ThreadPoolExecutor(max_workers=4) as ex:
             futs = {ex.submit(p.search, query, kind): p.name
                     for p in self.providers}
             for fut in as_completed(futs, timeout=45):
@@ -516,5 +628,7 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
     """Test a provider connection with the given key (key never logged)."""
     if which == "wikimedia":
         return WikimediaProvider().test()
+    if which == "archive_org":
+        return ArchiveOrgProvider().test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
