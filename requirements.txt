@@ -11,6 +11,8 @@ PyYAML>=6.0
 matplotlib>=3.8
 edge-tts>=6.1
 pyttsx3>=2.90
+# YouTube clips via yt-dlp (bundled into the Windows installer)
+yt-dlp>=2024.1
 # Secure OS credential storage for API keys (Windows Credential Manager)
 keyring; sys_platform == "win32"
 pywin32; sys_platform == "win32"
