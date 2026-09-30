@@ -727,6 +727,110 @@ CAPTION_TEMPLATES = {
         "highlight_mode": "wordbox", "text_case": "upper",
         "box_color": "&H00FF0000",
     },
+    # -- More Word Highlight styles from Uzair's reference photos ------------
+    "wh_italic_yellow": {
+        "label": "Italic Yellow Highlight",
+        "desc": "Italic + black outline, current word yellow (photo 1)",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&HFF000000", "back_c": "&HFF000000",
+        "bold": 0, "italic": -1, "outline": 3, "shadow": 0,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_italic_green": {
+        "label": "Italic Green Highlight",
+        "desc": "Italic + black outline, current word green (photo 6)",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FF00",
+        "outline_c": "&HFF000000", "back_c": "&HFF000000",
+        "bold": 0, "italic": -1, "outline": 3, "shadow": 0,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_purplebox": {
+        "label": "Word Highlight Purple Box",
+        "desc": "Current word on a purple box, rest white bold (photo 5)",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H00FFFFFF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "wordbox", "text_case": "mixed",
+        "box_color": "&H00800080",
+    },
+    "wh_bigword": {
+        "label": "Big Word Emphasis",
+        "desc": "Current word BIG + green, rest small white (photo 2)",
+        "font": "Arial", "size_scale": 0.85,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FF00",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "wordbig", "text_case": "upper",
+        "big_scale": 1.8,
+    },
+    "wh_pill": {
+        "label": "Black Pill Background",
+        "desc": "Whole caption on a black rounded pill, current word yellow (photo 3)",
+        "font": "Arial", "size_scale": 1.0,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&H90000000", "back_c": "&HC8000000",
+        "bold": -1, "italic": 0, "outline": 2, "shadow": 0,
+        "alignment": 2, "box": False, "pill": True,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_sticker": {
+        "label": "Sticker Outline",
+        "desc": "Italic white, thick black blob outline (photo 4)",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&HFF000000", "back_c": "&HFF000000",
+        "bold": -1, "italic": -1, "outline": 6, "shadow": 0,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_shadow_lime": {
+        "label": "Bold Shadow Lime",
+        "desc": "Extra bold + shadow, current word lime (photo 3)",
+        "font": "Arial Black", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FF80",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 2, "shadow": 3,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_small_yellow": {
+        "label": "Small Text Yellow",
+        "desc": "Small text, current word yellow (photo 6)",
+        "font": "Arial", "size_scale": 0.75,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 2, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_cyan_shadow": {
+        "label": "Cyan Shadow Glow",
+        "desc": "Shadow + cyan highlight on current word (photo 6)",
+        "font": "Arial", "size_scale": 1.0,
+        "primary": "&H00FFFFFF", "secondary": "&H00FFFF00",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 2, "shadow": 3,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_pink_glow": {
+        "label": "Pink Glow Highlight",
+        "desc": "Pink glow/outline on current word (photo 6)",
+        "font": "Arial", "size_scale": 1.0,
+        "primary": "&H00FFFFFF", "secondary": "&H008080FF",
+        "outline_c": "&H80000000", "back_c": "&H80000000",
+        "bold": -1, "italic": 0, "outline": 2, "shadow": 0,
+        "alignment": 2, "box": False,
+        "highlight_mode": "wordglow", "text_case": "upper",
+        "glow_color": "&H008080FF",
+    },
 }
 
 DEFAULT_CAPTION_TEMPLATE = "tiktok_classic"
@@ -784,8 +888,14 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
     pw, ph = play_res
     cap_size = max(24, int(ph * font_size / 1080 * tmpl["size_scale"]))
     top_size = max(30, int(ph / 20))
-    # BorderStyle 3 = opaque box behind text (Hormozi style), else 1 = outline.
-    border_style = 3 if tmpl["box"] else 1
+    # BorderStyle: 3 = opaque box (Hormozi), 4 = rounded box (pill),
+    # else 1 = outline.
+    if tmpl.get("pill"):
+        border_style = 4
+    elif tmpl["box"]:
+        border_style = 3
+    else:
+        border_style = 1
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: %d
@@ -812,13 +922,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return w.lower()
         return w
 
-    if highlight and word_timings and hmode in ("word", "wordbox"):
+    if highlight and word_timings and hmode in ("word", "wordbox", "wordbig", "wordglow"):
         # CapCut "Word Highlight": the FULL sentence stays on screen, but
-        # only the CURRENT word is colored (non-cumulative). One event per
+        # only the CURRENT word is emphasized (non-cumulative). One event per
         # word, each spanning until the next word starts.
+        #   word:    current word colored
+        #   wordbox: current word on a colored box
+        #   wordbig: current word bigger + colored (size emphasis)
+        #   wordglow: current word with colored glow outline
         sec = tmpl["secondary"]
         pri = tmpl["primary"]
         box_c = tmpl.get("box_color", "&H00FF0000")
+        glow_c = tmpl.get("glow_color", sec)
+        big_scale = tmpl.get("big_scale", 1.8)
+        big_size = int(cap_size * big_scale)
         words = list(word_timings)
         wi = 0
         for s in sentence_timings:
@@ -851,6 +968,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                                 "{\\bord6\\3c%s}%s{\\bord%d\\3c%s}" %
                                 (box_c, safe, tmpl["outline"],
                                  tmpl["outline_c"]))
+                        elif hmode == "wordbig":
+                            parts.append(
+                                "{\\fs%d\\c%s}%s{\\fs%d\\c%s}" %
+                                (big_size, sec, safe, cap_size, pri))
+                        elif hmode == "wordglow":
+                            parts.append(
+                                "{\\c%s\\bord4\\3c%s}%s{\\c%s\\bord%d\\3c%s}" %
+                                (sec, glow_c, safe, pri,
+                                 tmpl["outline"], tmpl["outline_c"]))
                         else:
                             parts.append("{\\c%s}%s{\\c%s}" % (sec, safe, pri))
                     else:
