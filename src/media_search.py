@@ -514,5 +514,7 @@ class MediaFinder:
 
 def test_provider(which: str, key: str) -> tuple[bool, str]:
     """Test a provider connection with the given key (key never logged)."""
+    if which == "wikimedia":
+        return WikimediaProvider().test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
