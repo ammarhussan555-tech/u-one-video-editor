@@ -1012,6 +1012,8 @@ _WORD_RE = re.compile(r"[a-z0-9]{3,}")
 # Note: Reddit blocks many datacenter IPs; residential connections
 # (like the user's PC) normally work. Failures are silent (no results).
 _REDDIT_SUBS = ("CombatFootage", "Military", "news", "worldnews")
+# Reddit's API rules require a unique, descriptive User-Agent for OAuth.
+_REDDIT_UA = "U-One/1.0 (AI Automatic Video Editor; contact: u-one.app)"
 _REDDIT_IMG_RE = re.compile(r"\.(jpg|jpeg|png|webp)(\?|$)", re.IGNORECASE)
 
 
@@ -1130,7 +1132,15 @@ class TelegramProvider:
 
 
 class RedditProvider:
-    """Military/eyewitness clips + photos from Reddit (keyless JSON API).
+    """Military/eyewitness clips + photos from Reddit (official OAuth API).
+
+    Reddit shut down anonymous JSON access (www.reddit.com now returns
+    HTTP 403 for bots). The supported path is Reddit's free OAuth API:
+    the user creates a free "script" app at reddit.com/prefs/apps and
+    pastes its client ID + secret into U One Settings. With credentials
+    the provider uses the app-only (client_credentials) flow against
+    oauth.reddit.com; without them it tries the legacy anonymous
+    endpoint as a best-effort fallback.
 
     Searches the newest posts in each subreddit; native video posts carry
     a direct v.redd.it mp4 fallback URL, image posts carry direct
@@ -1141,10 +1151,76 @@ class RedditProvider:
     license = "Reddit (check per-post license)"
     first_query_only = True
 
-    def __init__(self, subs=()):
+    def __init__(self, client_id: str = "", client_secret: str = "",
+                 subs=()):
         self.subs = tuple(subs) or _REDDIT_SUBS
+        self.client_id = (client_id or "").strip()
+        self.client_secret = (client_secret or "").strip()
+        self._token = ""
+        self._token_exp = 0.0
 
-    def _search_sub(self, sub: str, query: str) -> List[Dict]:
+    def _get_token(self) -> str:
+        """App-only OAuth token (client_credentials grant). Cached."""
+        import time as _time
+        if self._token and _time.time() < self._token_exp - 60:
+            return self._token
+        if not (self.client_id and self.client_secret):
+            return ""
+        try:
+            r = _SESSION.post(
+                "https://www.reddit.com/api/v1/access_token",
+                auth=(self.client_id, self.client_secret),
+                data={"grant_type": "client_credentials"},
+                headers={"User-Agent": _REDDIT_UA},
+                timeout=_CONNECT_TIMEOUT)
+            if r.status_code != 200:
+                return ""
+            data = r.json()
+            tok = data.get("access_token", "") or ""
+            if tok:
+                self._token = tok
+                try:
+                    ttl = int(data.get("expires_in", 3600))
+                except Exception:  # noqa: BLE001
+                    ttl = 3600
+                self._token_exp = _time.time() + max(ttl, 60)
+            return self._token
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _search_sub_oauth(self, sub: str, query: str) -> List[Dict]:
+        tok = self._get_token()
+        if not tok:
+            return []
+        try:
+            r = _SESSION.get(
+                f"https://oauth.reddit.com/r/{sub}/search",
+                params={"q": query, "sort": "new", "restrict_sr": "1",
+                        "limit": 10, "raw_json": 1},
+                headers={"Authorization": f"Bearer {tok}",
+                         "User-Agent": _REDDIT_UA},
+                timeout=_CONNECT_TIMEOUT)
+            if r.status_code == 401:
+                # Token rejected; drop cache and retry once.
+                self._token, self._token_exp = "", 0.0
+                tok = self._get_token()
+                if not tok:
+                    return []
+                r = _SESSION.get(
+                    f"https://oauth.reddit.com/r/{sub}/search",
+                    params={"q": query, "sort": "new",
+                            "restrict_sr": "1", "limit": 10,
+                            "raw_json": 1},
+                    headers={"Authorization": f"Bearer {tok}",
+                             "User-Agent": _REDDIT_UA},
+                    timeout=_CONNECT_TIMEOUT)
+            if r.status_code != 200:
+                return []
+            return self._parse_posts(r.json())
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _search_sub_anon(self, sub: str, query: str) -> List[Dict]:
         try:
             r = _SESSION.get(
                 f"https://www.reddit.com/r/{sub}/search.json",
@@ -1156,6 +1232,11 @@ class RedditProvider:
             return self._parse_posts(r.json())
         except Exception:  # noqa: BLE001
             return []
+
+    def _search_sub(self, sub: str, query: str) -> List[Dict]:
+        if self.client_id and self.client_secret:
+            return self._search_sub_oauth(sub, query)
+        return self._search_sub_anon(sub, query)
 
     def _parse_posts(self, data) -> List[Dict]:
         """Parse Reddit search.json into (title, video, image, permalink)."""
@@ -1236,15 +1317,36 @@ class RedditProvider:
                  "query": query} for o in out if o.get("url")]
 
     def test(self) -> tuple[bool, str]:
+        if self.client_id and self.client_secret:
+            tok = self._get_token()
+            if not tok:
+                return False, ("OAuth failed - check Client ID/Secret "
+                               "(script app at reddit.com/prefs/apps)")
+            try:
+                r = _SESSION.get(
+                    "https://oauth.reddit.com/r/news/new",
+                    params={"limit": 1, "raw_json": 1},
+                    headers={"Authorization": f"Bearer {tok}",
+                             "User-Agent": _REDDIT_UA},
+                    timeout=_CONNECT_TIMEOUT)
+                if r.status_code == 200 and '"children"' in r.text:
+                    return True, "Connected (OAuth)"
+                return False, f"HTTP {r.status_code}"
+            except Exception as e:  # noqa: BLE001
+                return False, str(e)[:80]
+        # No credentials: legacy anonymous check (best effort).
         try:
             r = _SESSION.get("https://www.reddit.com/r/news/new.json",
                              params={"limit": 1},
                              timeout=_CONNECT_TIMEOUT)
             if r.status_code == 200 and '"children"' in r.text:
                 return True, "Connected"
-            return False, f"HTTP {r.status_code}"
-        except Exception as e:  # noqa: BLE001
-            return False, str(e)[:80]
+            return False, (f"HTTP {r.status_code} - Reddit now needs free "
+                           "OAuth keys (see Settings)")
+        except Exception:  # noqa: BLE001
+            return False, ("Reddit blocks anonymous access - add free "
+                           "OAuth keys in Settings "
+                           "(script app at reddit.com/prefs/apps)")
 
 
 class NASAProvider:
@@ -1427,6 +1529,7 @@ class MediaFinder:
     def __init__(self, assets_dir: str, pexels_key: str = "",
                  pixabay_key: str = "", google_key: str = "",
                  google_cx: str = "", serper_key: str = "",
+                 reddit_id: str = "", reddit_secret: str = "",
                  preference: str = "ai_auto",
                  repetition: str = "never", project_id: str = "app",
                  safe_mode: bool = False,
@@ -1446,7 +1549,8 @@ class MediaFinder:
             self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
                               SerperProvider(serper_key),
                               XTwitterProvider(serper_key),
-                              TelegramProvider(), RedditProvider(),
+                              TelegramProvider(),
+                              RedditProvider(reddit_id, reddit_secret),
                               YouTubeProvider(), NASAProvider(),
                               GoogleProvider(google_key, google_cx),
                               WikimediaProvider(), ArchiveOrgProvider()]
@@ -1578,7 +1682,11 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
     if which == "telegram":
         return TelegramProvider().test()
     if which == "reddit":
-        return RedditProvider().test()
+        # key is "client_id|client_secret" (free script app at
+        # reddit.com/prefs/apps); empty = legacy anonymous attempt.
+        parts = (key or "").split("|", 1)
+        return RedditProvider(parts[0] if len(parts) > 0 else "",
+                              parts[1] if len(parts) > 1 else "").test()
     if which == "youtube":
         return YouTubeProvider().test()
     if which == "nasa":
