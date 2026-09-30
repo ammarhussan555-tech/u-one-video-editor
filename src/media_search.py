@@ -581,9 +581,9 @@ class GoogleProvider:
                     # pagemap videoobject often has the direct file URL
                     pm = it.get("pagemap", {})
                     for vo in pm.get("videoobject", []):
-                        cu = vo.get("contenturl", "")
+                        cu = (vo.get("contenturl", "") or "").split("?")[0]
                         if cu.lower().endswith(".mp4"):
-                            url = cu
+                            url = vo.get("contenturl", "")
                             break
                     if not url:
                         link = it.get("link", "")
