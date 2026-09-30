@@ -63,7 +63,8 @@ STAGES = [
 
 
 def _api_key(settings: Settings, service: str) -> str:
-    env = {"pexels": "PEXELS_API_KEY", "pixabay": "PIXABAY_API_KEY"}[service]
+    env = {"pexels": "PEXELS_API_KEY", "pixabay": "PIXABAY_API_KEY",
+           "google_key": "GOOGLE_API_KEY", "google_cx": "GOOGLE_CX"}[service]
     if os.environ.get(env):
         return os.environ[env]
     stored = secure_store.get_key(service)
@@ -454,6 +455,8 @@ class RenderEngine:
             self.assets_dir,
             pexels_key=_api_key(S, "pexels"),
             pixabay_key=_api_key(S, "pixabay"),
+            google_key=_api_key(S, "google_key"),
+            google_cx=_api_key(S, "google_cx"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             project_id=getattr(self.pm.project, "id", "uone"))
@@ -635,6 +638,8 @@ class RenderEngine:
             self.assets_dir,
             pexels_key=_api_key(S, "pexels"),
             pixabay_key=_api_key(S, "pixabay"),
+            google_key=_api_key(S, "google_key"),
+            google_cx=_api_key(S, "google_cx"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             project_id=getattr(self.pm.project, "id", "uone"))
