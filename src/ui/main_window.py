@@ -964,6 +964,14 @@ class MainWindow(QMainWindow):
         self.serper_key.setEchoMode(QLineEdit.Password)
         self.serper_key.setPlaceholderText("Serper API key (free 2500 searches at serper.dev - whole web)")
         aform.addRow("Serper API key:", self.serper_key)
+        self.reddit_id = QLineEdit()
+        self.reddit_id.setEchoMode(QLineEdit.Password)
+        self.reddit_id.setPlaceholderText("Reddit Client ID (free script app at reddit.com/prefs/apps)")
+        aform.addRow("Reddit Client ID:", self.reddit_id)
+        self.reddit_secret = QLineEdit()
+        self.reddit_secret.setEchoMode(QLineEdit.Password)
+        self.reddit_secret.setPlaceholderText("Reddit Client Secret (from the same script app)")
+        aform.addRow("Reddit Client Secret:", self.reddit_secret)
         abtns = QHBoxLayout()
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._save_api_keys)
@@ -1719,11 +1727,19 @@ class MainWindow(QMainWindow):
         sk = self.serper_key.text().strip()
         if sk:
             secure_store.set_key("serper", sk)
+        rd_id = self.reddit_id.text().strip()
+        rd_sec = self.reddit_secret.text().strip()
+        if rd_id:
+            secure_store.set_key("reddit_id", rd_id)
+        if rd_sec:
+            secure_store.set_key("reddit_secret", rd_sec)
         self.pexels_key.clear()
         self.pixabay_key.clear()
         self.google_key.clear()
         self.google_cx.clear()
         self.serper_key.clear()
+        self.reddit_id.clear()
+        self.reddit_secret.clear()
         self._refresh_api_status(saved_only=True)
         self._log("API keys saved securely on this PC.")
         QMessageBox.information(self, "U One", "API keys saved.")
@@ -1776,7 +1792,9 @@ class MainWindow(QMainWindow):
                 except Exception as e:  # noqa: BLE001
                     ok_tg, msg_tg = False, str(e)[:120]
                 try:
-                    ok_rd, msg_rd = test_provider("reddit", "")
+                    rd_key = (secure_store.get_key("reddit_id") + "|" +
+                              secure_store.get_key("reddit_secret"))
+                    ok_rd, msg_rd = test_provider("reddit", rd_key)
                 except Exception as e:  # noqa: BLE001
                     ok_rd, msg_rd = False, str(e)[:120]
                 try:
@@ -1816,7 +1834,7 @@ class MainWindow(QMainWindow):
             self.telegram_status.setText(
                 "Connected (keyless)" if ok_tg else f"Not Connected - {msg_tg}")
             self.reddit_status.setText(
-                "Connected (keyless)" if ok_rd else f"Not Connected - {msg_rd}")
+                "Connected" if ok_rd else f"Not Connected - {msg_rd}")
             self.youtube_status.setText(
                 "Connected (keyless)" if ok_yt else f"Not Connected - {msg_yt}")
             self.nasa_status.setText(
@@ -1874,10 +1892,10 @@ class MainWindow(QMainWindow):
         self.google_status.setStyleSheet("color:#2f9e44;" if has["google"] else "color:#888;")
         self.serper_status.setText("Saved" if has["serper"] else "Not Connected")
         self.serper_status.setStyleSheet("color:#2f9e44;" if has["serper"] else "color:#888;")
+        self.reddit_status.setText("Saved" if has["reddit"] else "Needs free OAuth keys")
+        self.reddit_status.setStyleSheet("color:#2f9e44;" if has["reddit"] else "color:#888;")
         self.telegram_status.setText("Always on (no key needed)")
         self.telegram_status.setStyleSheet("color:#2f9e44;")
-        self.reddit_status.setText("Always on (no key needed)")
-        self.reddit_status.setStyleSheet("color:#2f9e44;")
         self.youtube_status.setText("Always on (no key needed)")
         self.youtube_status.setStyleSheet("color:#2f9e44;")
         self.nasa_status.setText("Always on (no key needed)")
