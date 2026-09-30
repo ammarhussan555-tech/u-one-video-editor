@@ -114,6 +114,123 @@ class CaptionEditWorker(QThread):
             self.error.emit(str(e))
 
 
+class CaptionGenerateWorker(QThread):
+    """Generate captions for a video that was rendered WITHOUT captions.
+
+    Transcribes the video's audio with Whisper (word timestamps), groups
+    words into sentences, saves a caption edit session, then burns the
+    captions in with the chosen template. Runs in the background.
+    """
+    log = Signal(str)
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, video_path, template, font_size, work_dir):
+        super().__init__()
+        self.video_path = video_path
+        self.template = template
+        self.font_size = font_size
+        self.work_dir = work_dir
+
+    def run(self):
+        try:
+            import os
+            import re
+            from src.ffmpeg_util import find_ffmpeg, popen_no_window, safe_temp_path
+            from src.caption_editor import save_edit_session, reburn_captions
+            from src.ffmpeg_engine import FFmpegEngine
+
+            ffmpeg = find_ffmpeg()
+            video = self.video_path
+            self.log.emit("Extracting audio for transcription...")
+
+            # 1. Extract audio as 16kHz mono WAV (Whisper-friendly).
+            wav = safe_temp_path(self.work_dir, "capgen_audio", ".wav")
+            proc = popen_no_window([
+                ffmpeg, "-y", "-i", video,
+                "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav,
+            ])
+            _, err = proc.communicate()
+            if proc.returncode != 0 or not os.path.isfile(wav):
+                raise RuntimeError("Could not extract audio from the video.")
+
+            # 2. Transcribe with word timestamps.
+            self.log.emit("Transcribing audio (Whisper)... ye thoda time le sakta hai.")
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                raise RuntimeError(
+                    "faster-whisper not installed. Captions generate nahi ho sakte.")
+            model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            segments, _ = model.transcribe(wav, word_timestamps=True)
+            words = []
+            for seg in segments:
+                for w in (seg.words or []):
+                    txt = (w.word or "").strip()
+                    if txt:
+                        words.append({"word": txt, "start": w.start, "end": w.end})
+            try:
+                os.unlink(wav)
+            except OSError:
+                pass
+            if not words:
+                raise RuntimeError("Koi speech nahi mili — captions generate nahi ho sake.")
+
+            self.log.emit(f"Transcribed {len(words)} words. Grouping into captions...")
+
+            # 3. Group words into sentence-like captions (max ~10 words or
+            #    break on sentence-ending punctuation).
+            sentences = []
+            cur = []
+            for w in words:
+                cur.append(w)
+                if (w["word"][-1:] in ".!?") or len(cur) >= 10:
+                    sentences.append(cur)
+                    cur = []
+            if cur:
+                sentences.append(cur)
+            sentence_timings = []
+            for grp in sentences:
+                text = " ".join(g["word"] for g in grp)
+                # Clean up spacing before punctuation.
+                text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+                sentence_timings.append({
+                    "text": text,
+                    "start": round(grp[0]["start"], 3),
+                    "end": round(grp[-1]["end"], 3),
+                })
+
+            # 4. Save an edit session so the style can be changed later too.
+            session_path = os.path.join(self.work_dir, "caption_edit.json")
+            # The "clean" video IS the current video (it has no burned captions).
+            save_edit_session(
+                session_path,
+                clean_video=video,
+                sentence_timings=sentence_timings,
+                word_timings=words,
+                fmt="16:9", res="1080p", fps=30,
+                template=self.template, font_size=self.font_size,
+                output_video=video)
+
+            # 5. Burn the captions in.
+            hw_enc = None
+            try:
+                hw_enc = FFmpegEngine(ffmpeg).detect_hw_encoder("h264")
+            except Exception:  # noqa: BLE001
+                pass
+            self.log.emit(f"Burning captions: {self.template}, size {self.font_size}..."
+                          + (" (hardware accelerated)" if hw_enc else ""))
+            reburn_captions(
+                video, sentence_timings, words,
+                self.template, self.font_size, video,
+                fmt="16:9", res="1080p",
+                ffmpeg_path=ffmpeg, hw_enc=hw_enc,
+                log_cb=lambda m: self.log.emit(m))
+            self.finished.emit(video)
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))
+
+
 class TimelineEditWorker(QThread):
     """Apply a CapCut-style timeline edit (delete/volume) in background."""
     log = Signal(str)
@@ -1562,6 +1679,16 @@ class MainWindow(QMainWindow):
             "permanently burn karo.")
         self.edit_apply_btn.clicked.connect(self._apply_caption_edits)
         lay.addWidget(self.edit_apply_btn)
+        # "Generate Captions": for videos rendered with captions OFF.
+        # Transcribes the video's audio and burns fresh captions in.
+        self.gen_captions_btn = QPushButton("Generate Captions for This Video")
+        self.gen_captions_btn.setEnabled(False)
+        self.gen_captions_btn.setMinimumHeight(44)
+        self.gen_captions_btn.setToolTip(
+            "Video bina captions ke bani thi? Audio se captions generate "
+            "karo aur isi style mein burn karo.")
+        self.gen_captions_btn.clicked.connect(self._generate_captions_now)
+        lay.addWidget(self.gen_captions_btn)
         lay.addStretch(1)
         self._edit_session = ""  # path to caption_edit.json
         self._cap_sentences = []
@@ -1882,6 +2009,7 @@ class MainWindow(QMainWindow):
                 self.edit_template_btn.setEnabled(True)
                 self.edit_size_slider.setEnabled(True)
                 self.edit_apply_btn.setEnabled(True)
+                self.gen_captions_btn.setEnabled(True)
                 # Cache timings for the live caption overlay.
                 self._cap_sentences = data.get("sentence_timings", [])
                 self._cap_words = data.get("word_timings", [])
@@ -1941,6 +2069,72 @@ class MainWindow(QMainWindow):
         self._cap_worker.finished.connect(self._on_caption_edit_done)
         self._cap_worker.error.connect(self._on_caption_edit_error)
         self._cap_worker.start()
+
+    def _generate_captions_now(self):
+        """Generate captions for a video rendered WITHOUT captions.
+
+        Transcribes the current video's audio (Whisper) and burns fresh
+        captions in with the selected template/size.
+        """
+        video = self._current_video
+        if not video or not os.path.isfile(video):
+            QMessageBox.warning(self, "Generate Captions",
+                                "Pehle video render karo, phir captions generate karo.")
+            return
+        # If an edit session with timings already exists, just re-burn —
+        # no need to re-transcribe.
+        if self._edit_session and os.path.isfile(self._edit_session):
+            try:
+                from src.caption_editor import load_edit_session
+                data = load_edit_session(self._edit_session)
+                if data.get("sentence_timings"):
+                    self._log("Timings already hain — captions burn kar raha hun...")
+                    self._apply_caption_edits()
+                    return
+            except Exception:  # noqa: BLE001 - fall through to transcription
+                pass
+        template = self._caption_template_key
+        size = self.edit_size_slider.value()
+        self.gen_captions_btn.setEnabled(False)
+        self.edit_apply_btn.setEnabled(False)
+        self.stage_lbl.setText("Generating captions from audio...")
+        self._log("Captions generate ho rahe hain — audio transcribe ho raha hai...")
+        self._capgen_worker = CaptionGenerateWorker(
+            video, template, size, self.work_dir)
+        self._capgen_worker.log.connect(self._log)
+        self._capgen_worker.finished.connect(self._on_caption_gen_done)
+        self._capgen_worker.error.connect(self._on_caption_gen_error)
+        self._capgen_worker.start()
+
+    def _on_caption_gen_done(self, out):
+        self.gen_captions_btn.setEnabled(True)
+        self.edit_apply_btn.setEnabled(True)
+        self.stage_lbl.setText("Done.")
+        self._log(f"Captions generated: {out}")
+        # Point the edit session at the new timings for future style changes.
+        try:
+            session = os.path.join(self.work_dir, "caption_edit.json")
+            if os.path.isfile(session):
+                self._edit_session = session
+                from src.caption_editor import load_edit_session
+                data = load_edit_session(session)
+                self._cap_sentences = data.get("sentence_timings", [])
+                self._cap_words = data.get("word_timings", [])
+        except Exception:  # noqa: BLE001
+            pass
+        QMessageBox.information(self, "Generate Captions",
+                                "Captions generate ho gaye!")
+        if os.path.isfile(out) and self._ensure_player():
+            self.player.setSource(QUrl.fromLocalFile(out))
+            self.player.play()
+            self._current_video = out
+
+    def _on_caption_gen_error(self, msg):
+        self.gen_captions_btn.setEnabled(True)
+        self.edit_apply_btn.setEnabled(True)
+        self.stage_lbl.setText("Done.")
+        QMessageBox.warning(self, "Generate Captions",
+                            f"Captions generate nahi ho sake:\n{msg}")
 
     def _on_caption_edit_done(self, out):
         self.edit_apply_btn.setEnabled(True)
