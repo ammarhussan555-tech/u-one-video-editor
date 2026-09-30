@@ -53,7 +53,8 @@ def _api_key(settings, service):
     """Resolve a stock-media key: env var -> secure OS storage -> settings
     (UI) -> config.yaml api_keys section. The value is never logged."""
     env = {"pexels": "PEXELS_API_KEY", "pixabay": "PIXABAY_API_KEY",
-           "google_key": "GOOGLE_API_KEY", "google_cx": "GOOGLE_CX"}[service]
+           "google_key": "GOOGLE_API_KEY", "google_cx": "GOOGLE_CX",
+           "serper": "SERPER_API_KEY"}[service]
     if os.environ.get(env):
         return os.environ[env]
     stored = secure_store.get_key(service)
@@ -389,6 +390,7 @@ class Pipeline:
             pixabay_key=_api_key(S, "pixabay"),
             google_key=_api_key(S, "google_key"),
             google_cx=_api_key(S, "google_cx"),
+            serper_key=_api_key(S, "serper"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             project_id=self.pid)
@@ -483,6 +485,7 @@ class Pipeline:
             pixabay_key=_api_key(S, "pixabay"),
             google_key=_api_key(S, "google_key"),
             google_cx=_api_key(S, "google_cx"),
+            serper_key=_api_key(S, "serper"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             project_id=self.pid)
