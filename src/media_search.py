@@ -494,7 +494,7 @@ class ArchiveOrgProvider:
         except Exception:  # noqa: BLE001
             return []
         out: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             futs = [ex.submit(self._one, d) for d in docs]
             for fut in as_completed(futs, timeout=90):
                 try:
@@ -617,17 +617,96 @@ class GoogleProvider:
             return False, str(e)[:80]
 
 
+class SerperProvider:
+    """Optional provider: Serper.dev - real Google results, whole web.
+
+    Free signup at serper.dev (2,500 free searches, no card needed).
+    Single API key. Searches the entire web: images via /images
+    endpoint, videos via /videos endpoint (best-effort direct mp4s).
+    Without a key this provider is silently skipped.
+    """
+    name = "Serper"
+    license = "Web search (check per-site license)"
+
+    def __init__(self, api_key: str = ""):
+        self.api_key = api_key or ""
+
+    def _api(self, endpoint: str, query: str, num: int) -> Dict:
+        r = _SESSION.post(
+            f"https://google.serper.dev/{endpoint}",
+            headers={"X-API-KEY": self.api_key,
+                     "Content-Type": "application/json"},
+            json={"q": query, "num": num},
+            timeout=_CONNECT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
+        if not self.api_key:
+            return []
+        try:
+            if kind == "image":
+                data = self._api("images", query, min(per_page * 2, 10))
+                out = []
+                for it in data.get("images", []):
+                    url = it.get("imageUrl", "")
+                    if not url:
+                        continue
+                    out.append({
+                        "url": url,
+                        "page": it.get("link", ""),
+                        "w": it.get("imageWidth", 0),
+                        "h": it.get("imageHeight", 0),
+                        "dur": 0,
+                        "tags": it.get("title", ""),
+                    })
+                    if len(out) >= per_page:
+                        break
+            else:
+                data = self._api("videos", query, min(per_page * 2, 10))
+                out = []
+                for it in data.get("videos", []):
+                    link = (it.get("link", "") or "").split("?")[0]
+                    if not link.lower().endswith(".mp4"):
+                        continue
+                    out.append({
+                        "url": it.get("link", ""),
+                        "page": it.get("link", ""),
+                        "w": 0, "h": 0, "dur": 0,
+                        "tags": it.get("title", ""),
+                    })
+                    if len(out) >= per_page:
+                        break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "Serper", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        if not self.api_key:
+            return False, "No key saved."
+        try:
+            data = self._api("search", "news", 1)
+            if "organic" in data:
+                return True, "Connected"
+            return False, str(data.get("error", ""))[:80] or "API error"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
 
     def __init__(self, assets_dir: str, pexels_key: str = "",
                  pixabay_key: str = "", google_key: str = "",
-                 google_cx: str = "", preference: str = "ai_auto",
+                 google_cx: str = "", serper_key: str = "",
+                 preference: str = "ai_auto",
                  repetition: str = "never", project_id: str = "app"):
         self.assets_dir = assets_dir
         os.makedirs(assets_dir, exist_ok=True)
         self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
+                          SerperProvider(serper_key),
                           GoogleProvider(google_key, google_cx),
                           WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
@@ -646,7 +725,7 @@ class MediaFinder:
     def _search_all(self, query: str, kind: str) -> List[Dict]:
         """Search all providers concurrently for one (query, kind)."""
         results: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             futs = {ex.submit(p.search, query, kind): p.name
                     for p in self.providers}
             for fut in as_completed(futs, timeout=45):
@@ -733,5 +812,7 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
         parts = (key or "").split("|", 1)
         return GoogleProvider(parts[0] if len(parts) > 0 else "",
                               parts[1] if len(parts) > 1 else "").test()
+    if which == "serper":
+        return SerperProvider(key).test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
