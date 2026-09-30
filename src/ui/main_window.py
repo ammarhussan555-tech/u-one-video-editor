@@ -791,14 +791,20 @@ class MainWindow(QMainWindow):
         self.chk_captions = QCheckBox("Captions")
         self.chk_captions.setChecked(True)
         form.addRow(self.chk_captions)
-        # Caption template selector (CapCut viral/trending styles)
-        from src.text_captions import caption_template_labels
-        self.cb_caption_template = QComboBox()
-        for key, label in caption_template_labels():
-            self.cb_caption_template.addItem(label, key)
-        self.cb_caption_template.setToolTip(
-            "Pick a caption style like CapCut's viral templates.")
-        form.addRow("Caption style:", self.cb_caption_template)
+        # Caption template gallery (CapCut-style visual picker)
+        from src.text_captions import CAPTION_TEMPLATES, DEFAULT_CAPTION_TEMPLATE
+        self._caption_template_key = DEFAULT_CAPTION_TEMPLATE
+        cap_row = QHBoxLayout()
+        self.caption_style_lbl = QLabel(
+            CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE]["label"])
+        self.caption_style_lbl.setStyleSheet("color:#4da3ff;font-weight:bold;")
+        cap_gallery_btn = QPushButton("Choose Style...")
+        cap_gallery_btn.setToolTip(
+            "Open the CapCut-style template gallery and pick a caption look.")
+        cap_gallery_btn.clicked.connect(self._open_caption_gallery)
+        cap_row.addWidget(self.caption_style_lbl, 1)
+        cap_row.addWidget(cap_gallery_btn)
+        form.addRow("Caption style:", cap_row)
         mrow = QHBoxLayout()
         self.music_lbl = QLabel("(optional)")
         mb = QPushButton("Music folder...")
@@ -974,7 +980,7 @@ class MainWindow(QMainWindow):
     def _caption_overlay_style(self) -> str:
         """Build QLabel QSS from the selected template + size (instant)."""
         from src.text_captions import CAPTION_TEMPLATES
-        key = self.edit_template_cb.currentData()
+        key = self._caption_template_key
         tmpl = CAPTION_TEMPLATES.get(key) or {}
         size = self.edit_size_slider.value()
         primary = self._ass_to_css(tmpl.get("primary", "&H00FFFFFF"))
@@ -1017,6 +1023,21 @@ class MainWindow(QMainWindow):
             if self.player is not None:
                 self._update_caption_text(self.player.position())
 
+    def _open_caption_gallery(self):
+        """Open the CapCut-style visual template gallery."""
+        from src.ui.caption_gallery import CaptionGalleryDialog
+        from src.text_captions import CAPTION_TEMPLATES
+        dlg = CaptionGalleryDialog(self._caption_template_key, self)
+        if dlg.exec():
+            self._caption_template_key = dlg.selected_key
+            label = CAPTION_TEMPLATES[dlg.selected_key]["label"]
+            self.caption_style_lbl.setText(label)
+            if hasattr(self, "edit_template_lbl"):
+                self.edit_template_lbl.setText(label)
+            self._log(f"Caption style: {label}")
+            # CapCut-style: foran preview mein nazar aaye.
+            self._refresh_caption_style()
+
     def _update_caption_text(self, pos_ms: int):
         """Show the caption visible at pos_ms on the overlay (karaoke)."""
         ov = getattr(self, "caption_overlay", None)
@@ -1046,7 +1067,7 @@ class MainWindow(QMainWindow):
         if cur_word:
             from src.text_captions import CAPTION_TEMPLATES
             tmpl = CAPTION_TEMPLATES.get(
-                self.edit_template_cb.currentData()) or {}
+                self._caption_template_key) or {}
             hl = self._ass_to_css(tmpl.get("secondary", "&H0000D7FF"))
             # Highlight first occurrence of the current word.
             import re as _re
@@ -1301,16 +1322,26 @@ class MainWindow(QMainWindow):
                         f"{t0[0]:02d}:{t0[1]:02d}  {new_text[:70]}")
         self._cap_text_edit.textChanged.connect(_save_text)
 
-        # Template + size in the same dialog.
+        # Template (gallery button) + size in the same dialog.
+        from src.text_captions import CAPTION_TEMPLATES
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Template:"))
-        tmpl_cb = QComboBox()
-        for key, label in caption_template_labels():
-            tmpl_cb.addItem(label, key)
-        idx = tmpl_cb.findData(data.get("template"))
-        if idx >= 0:
-            tmpl_cb.setCurrentIndex(idx)
-        trow.addWidget(tmpl_cb, 1)
+        tmpl_lbl = QLabel(
+            CAPTION_TEMPLATES.get(data.get("template"), {}).get("label", ""))
+        tmpl_lbl.setStyleSheet("color:#4da3ff;font-weight:bold;")
+        tmpl_btn = QPushButton("Choose Style...")
+        chosen = {"key": data.get("template")}
+
+        def _pick():
+            from src.ui.caption_gallery import CaptionGalleryDialog
+            g = CaptionGalleryDialog(chosen["key"] or "", dlg)
+            if g.exec():
+                chosen["key"] = g.selected_key
+                tmpl_lbl.setText(CAPTION_TEMPLATES[g.selected_key]["label"])
+
+        tmpl_btn.clicked.connect(_pick)
+        trow.addWidget(tmpl_lbl, 1)
+        trow.addWidget(tmpl_btn)
         lay.addLayout(trow)
 
         srow = QHBoxLayout()
@@ -1334,12 +1365,16 @@ class MainWindow(QMainWindow):
             # Save edited texts back to the session, then re-burn.
             import json
             data["sentence_timings"] = timings
+            if chosen["key"]:
+                data["template"] = chosen["key"]
             with open(self._edit_session, "w", encoding="utf-8") as f:
                 json.dump(data, f)
             # Sync the main panel controls too.
-            idx2 = self.edit_template_cb.findData(tmpl_cb.currentData())
-            if idx2 >= 0:
-                self.edit_template_cb.setCurrentIndex(idx2)
+            if chosen["key"]:
+                self._caption_template_key = chosen["key"]
+                from src.text_captions import CAPTION_TEMPLATES as _CT
+                self.caption_style_lbl.setText(
+                    _CT[chosen["key"]]["label"])
             self.edit_size_slider.setValue(size_sl.value())
             self._apply_caption_edits()
 
@@ -1456,15 +1491,17 @@ class MainWindow(QMainWindow):
         info.setWordWrap(True)
         lay.addWidget(info)
         cap_form = QFormLayout()
-        from src.text_captions import caption_template_labels
-        self.edit_template_cb = QComboBox()
-        for key, label in caption_template_labels():
-            self.edit_template_cb.addItem(label, key)
-        self.edit_template_cb.setEnabled(False)
+        from src.text_captions import CAPTION_TEMPLATES as _CT2
+        trow2 = QHBoxLayout()
+        self.edit_template_lbl = QLabel("")
+        self.edit_template_lbl.setStyleSheet("color:#4da3ff;font-weight:bold;")
+        self.edit_template_btn = QPushButton("Choose Style...")
+        self.edit_template_btn.setEnabled(False)
+        self.edit_template_btn.clicked.connect(self._open_caption_gallery)
         # CapCut-style: template select karte hi preview mein nazar aaye.
-        self.edit_template_cb.currentIndexChanged.connect(
-            lambda _i: self._refresh_caption_style())
-        cap_form.addRow("Template:", self.edit_template_cb)
+        trow2.addWidget(self.edit_template_lbl, 1)
+        trow2.addWidget(self.edit_template_btn)
+        cap_form.addRow("Template:", trow2)
         size_row = QHBoxLayout()
         self.edit_size_slider = QSlider(Qt.Horizontal)
         self.edit_size_slider.setRange(24, 96)
@@ -1603,7 +1640,7 @@ class MainWindow(QMainWindow):
             "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
             "captions_enabled": self.chk_captions.isChecked(),
             "caption_highlight": True, "caption_font_size": 48,
-            "caption_template": self.cb_caption_template.currentData(),
+            "caption_template": self._caption_template_key,
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
             "voice_name": self.voice_combo.currentText(),
@@ -1698,11 +1735,13 @@ class MainWindow(QMainWindow):
                 data = load_edit_session(session)
                 self._edit_session = session
                 # Sync the editor controls with the render's caption style.
-                idx = self.edit_template_cb.findData(data.get("template"))
-                if idx >= 0:
-                    self.edit_template_cb.setCurrentIndex(idx)
+                from src.text_captions import CAPTION_TEMPLATES as _CT3
+                tkey = data.get("template") or self._caption_template_key
+                self._caption_template_key = tkey
+                self.caption_style_lbl.setText(_CT3.get(tkey, {}).get("label", tkey))
+                self.edit_template_lbl.setText(_CT3.get(tkey, {}).get("label", tkey))
                 self.edit_size_slider.setValue(int(data.get("font_size", 48)))
-                self.edit_template_cb.setEnabled(True)
+                self.edit_template_btn.setEnabled(True)
                 self.edit_size_slider.setEnabled(True)
                 self.edit_apply_btn.setEnabled(True)
                 # Cache timings for the live caption overlay.
@@ -1755,7 +1794,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Edit Captions",
                                 "Render a video first, then edit its captions.")
             return
-        template = self.edit_template_cb.currentData()
+        template = self._caption_template_key
         size = self.edit_size_slider.value()
         self.edit_apply_btn.setEnabled(False)
         self.stage_lbl.setText("Updating captions...")
