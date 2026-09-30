@@ -65,7 +65,9 @@ STAGES = [
 def _api_key(settings: Settings, service: str) -> str:
     env = {"pexels": "PEXELS_API_KEY", "pixabay": "PIXABAY_API_KEY",
            "google_key": "GOOGLE_API_KEY", "google_cx": "GOOGLE_CX",
-           "serper": "SERPER_API_KEY"}[service]
+           "serper": "SERPER_API_KEY",
+           "reddit_id": "REDDIT_CLIENT_ID",
+           "reddit_secret": "REDDIT_CLIENT_SECRET"}[service]
     if os.environ.get(env):
         return os.environ[env]
     stored = secure_store.get_key(service)
@@ -459,6 +461,8 @@ class RenderEngine:
             google_key=_api_key(S, "google_key"),
             google_cx=_api_key(S, "google_cx"),
             serper_key=_api_key(S, "serper"),
+            reddit_id=_api_key(S, "reddit_id"),
+            reddit_secret=_api_key(S, "reddit_secret"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             safe_mode=S.get("safe_mode", False),
@@ -645,6 +649,8 @@ class RenderEngine:
             google_key=_api_key(S, "google_key"),
             google_cx=_api_key(S, "google_cx"),
             serper_key=_api_key(S, "serper"),
+            reddit_id=_api_key(S, "reddit_id"),
+            reddit_secret=_api_key(S, "reddit_secret"),
             preference=S.get("media_preference", "ai_auto"),
             repetition=S.get("repetition_limit", "never"),
             safe_mode=S.get("safe_mode", False),
