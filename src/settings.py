@@ -29,6 +29,8 @@ DEFAULTS: Dict[str, Any] = {
     "media_preference": "ai_auto",        # ai_auto | video_only | image_only
     "repetition_limit": "never",          # never | allow_once
     "music_dir": "",
+    "safe_mode": False,                   # only copyright-safe providers
+    "auto_clean_logos": True,             # crop/blur logos on risky clips
     # voice
     "voice_upload": "",
     "voice_generate_text": "",
