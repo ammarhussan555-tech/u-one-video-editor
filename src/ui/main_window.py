@@ -859,6 +859,10 @@ class MainWindow(QMainWindow):
         aform.addRow("Telegram (eyewitness):", self.telegram_status)
         self.reddit_status = QLabel("Not Connected")
         aform.addRow("Reddit (clips):", self.reddit_status)
+        self.youtube_status = QLabel("Not Connected")
+        aform.addRow("YouTube (clips):", self.youtube_status)
+        self.nasa_status = QLabel("Not Connected")
+        aform.addRow("NASA (space/earth):", self.nasa_status)
         self.wikimedia_status = QLabel("Always on (no key needed)")
         self.wikimedia_status.setStyleSheet("color:#2f9e44;")
         aform.addRow("Wikimedia (news photos):", self.wikimedia_status)
@@ -1600,7 +1604,7 @@ class MainWindow(QMainWindow):
         class _ApiTestWorker(QThread):
             done = Signal(bool, str, bool, str, bool, str, bool, str,
                           bool, str, bool, str, bool, str, bool, str,
-                          bool, str)
+                          bool, str, bool, str, bool, str)
 
             def run(self):  # noqa: D102
                 try:
@@ -1638,6 +1642,14 @@ class MainWindow(QMainWindow):
                 except Exception as e:  # noqa: BLE001
                     ok_rd, msg_rd = False, str(e)[:120]
                 try:
+                    ok_yt, msg_yt = test_provider("youtube", "")
+                except Exception as e:  # noqa: BLE001
+                    ok_yt, msg_yt = False, str(e)[:120]
+                try:
+                    ok_na, msg_na = test_provider("nasa", "")
+                except Exception as e:  # noqa: BLE001
+                    ok_na, msg_na = False, str(e)[:120]
+                try:
                     ok_wm, msg_wm = test_provider("wikimedia", "")
                 except Exception as e:  # noqa: BLE001
                     ok_wm, msg_wm = False, str(e)[:120]
@@ -1647,11 +1659,12 @@ class MainWindow(QMainWindow):
                     ok_ar, msg_ar = False, str(e)[:120]
                 self.done.emit(ok_px, msg_px, ok_pb, msg_pb, ok_g, msg_g,
                                ok_sp, msg_sp, ok_x, msg_x, ok_wm, msg_wm,
-                               ok_ar, msg_ar, ok_tg, msg_tg, ok_rd, msg_rd)
+                               ok_ar, msg_ar, ok_tg, msg_tg, ok_rd, msg_rd,
+                               ok_yt, msg_yt, ok_na, msg_na)
 
         def _on_done(ok_px, msg_px, ok_pb, msg_pb, ok_g, msg_g,
                      ok_sp, msg_sp, ok_x, msg_x, ok_wm, msg_wm, ok_ar, msg_ar,
-                     ok_tg, msg_tg, ok_rd, msg_rd):
+                     ok_tg, msg_tg, ok_rd, msg_rd, ok_yt, msg_yt, ok_na, msg_na):
             self.pexels_status.setText(
                 "Connected" if ok_px else f"Not Connected - {msg_px}")
             self.pixabay_status.setText(
@@ -1666,6 +1679,10 @@ class MainWindow(QMainWindow):
                 "Connected (keyless)" if ok_tg else f"Not Connected - {msg_tg}")
             self.reddit_status.setText(
                 "Connected (keyless)" if ok_rd else f"Not Connected - {msg_rd}")
+            self.youtube_status.setText(
+                "Connected (keyless)" if ok_yt else f"Not Connected - {msg_yt}")
+            self.nasa_status.setText(
+                "Connected (keyless)" if ok_na else f"Not Connected - {msg_na}")
             self.wikimedia_status.setText(
                 "Connected (keyless)" if ok_wm else f"Not Connected - {msg_wm}")
             self.archive_status.setText(
@@ -1684,6 +1701,10 @@ class MainWindow(QMainWindow):
                 "color:#2f9e44;" if ok_tg else "color:#c0392b;")
             self.reddit_status.setStyleSheet(
                 "color:#2f9e44;" if ok_rd else "color:#c0392b;")
+            self.youtube_status.setStyleSheet(
+                "color:#2f9e44;" if ok_yt else "color:#c0392b;")
+            self.nasa_status.setStyleSheet(
+                "color:#2f9e44;" if ok_na else "color:#c0392b;")
             self.wikimedia_status.setStyleSheet(
                 "color:#2f9e44;" if ok_wm else "color:#c0392b;")
             self.archive_status.setStyleSheet(
@@ -1695,6 +1716,8 @@ class MainWindow(QMainWindow):
                       f"X: {'Connected' if ok_x else 'Not Connected'} | "
                       f"Telegram: {'Connected' if ok_tg else 'Not Connected'} | "
                       f"Reddit: {'Connected' if ok_rd else 'Not Connected'} | "
+                      f"YouTube: {'Connected' if ok_yt else 'Not Connected'} | "
+                      f"NASA: {'Connected' if ok_na else 'Not Connected'} | "
                       f"Wikimedia: {'Connected' if ok_wm else 'Not Connected'} | "
                       f"Archive.org: {'Connected' if ok_ar else 'Not Connected'}")
             self._api_worker = None
@@ -1717,6 +1740,10 @@ class MainWindow(QMainWindow):
         self.telegram_status.setStyleSheet("color:#2f9e44;")
         self.reddit_status.setText("Always on (no key needed)")
         self.reddit_status.setStyleSheet("color:#2f9e44;")
+        self.youtube_status.setText("Always on (no key needed)")
+        self.youtube_status.setStyleSheet("color:#2f9e44;")
+        self.nasa_status.setText("Always on (no key needed)")
+        self.nasa_status.setStyleSheet("color:#2f9e44;")
         self.wikimedia_status.setText("Always on (no key needed)")
         self.wikimedia_status.setStyleSheet("color:#2f9e44;")
         self.archive_status.setText("Always on (no key needed)")
