@@ -82,7 +82,8 @@ def render_template_preview(key: str) -> bytes:
     """Render a PNG preview card for a caption template.
 
     Shows "The" in the highlight (secondary/karaoke) color and "quick"
-    in the primary color - the CapCut active-word look.
+    in the primary color - the CapCut active-word look. Respects
+    text_case and the wordbox highlight mode.
     """
     tmpl = CAPTION_TEMPLATES[key]
     img = Image.new("RGB", (_CARD_W, _CARD_H), (26, 26, 30))
@@ -90,30 +91,44 @@ def render_template_preview(key: str) -> bytes:
     primary = _ass_to_rgb(tmpl["primary"])
     secondary = _ass_to_rgb(tmpl["secondary"])
     outline_c = _ass_to_rgb(tmpl["outline_c"])
+    tcase = tmpl.get("text_case")
+    w_the = "THE" if tcase == "upper" else "The"
+    w_quick = "QUICK" if tcase == "upper" else "quick"
+    hmode = tmpl.get("highlight_mode", "karaoke")
     size = 34
     font = _load_font(tmpl["font"], size,
                       bool(tmpl["bold"]), bool(tmpl["italic"]))
-    w1 = d.textlength("The ", font=font)
-    w2 = d.textlength("quick", font=font)
+    w1 = d.textlength(w_the + " ", font=font)
+    w2 = d.textlength(w_quick, font=font)
     total = w1 + w2
     x = (_CARD_W - total) / 2
     y = (_CARD_H - size) / 2 - 4
     outline_w = max(1, int(tmpl["outline"]))
 
-    def _draw_text(px, text, fill):
+    def _draw_text(px, text, fill, hl_box=False):
         if tmpl["box"]:
             # opaque box behind text (Hormozi style)
             bx0 = px - 6
             bx1 = px + d.textlength(text, font=font) + 6
             d.rectangle([bx0, y - 6, bx1, y + size + 6],
                         fill=outline_c)
+        if hl_box:
+            # blue highlight box behind the active word
+            box_c = _ass_to_rgb(tmpl.get("box_color", "&H00FF0000"))
+            bx0 = px - 4
+            bx1 = px + d.textlength(text, font=font) + 4
+            d.rectangle([bx0, y - 4, bx1, y + size + 4], fill=box_c)
         if tmpl["shadow"]:
             d.text((px + 2, y + 2), text, font=font, fill=(0, 0, 0))
         d.text((px, y), text, font=font, fill=fill,
                stroke_width=outline_w, stroke_fill=outline_c)
 
-    _draw_text(x, "The ", secondary)
-    _draw_text(x + w1, "quick", primary)
+    if hmode == "wordbox":
+        _draw_text(x, w_the + " ", primary, hl_box=True)
+        _draw_text(x + w1, w_quick, primary)
+    else:
+        _draw_text(x, w_the + " ", secondary)
+        _draw_text(x + w1, w_quick, primary)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
