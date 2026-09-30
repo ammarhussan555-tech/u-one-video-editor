@@ -96,7 +96,13 @@ class PexelsProvider:
                     files = v.get("video_files", [])
                     if not files:
                         continue
-                    f = max(files, key=lambda x: x.get("width", 0))
+                    # SPEED: pick the SMALLEST file that meets 720p, not the
+                    # largest (4K). Smaller download = 3-5x faster, and we
+                    # upscale to 1080p in normalization anyway.
+                    big_enough = [f for f in files
+                                  if f.get("width", 0) >= 1280]
+                    pool = big_enough or files
+                    f = min(pool, key=lambda x: x.get("width", 0))
                     out.append({"url": f.get("link"), "page": v.get("url", ""),
                                 "w": f.get("width", 0), "h": f.get("height", 0),
                                 "dur": v.get("duration", 0), "tags": ""})
@@ -155,7 +161,9 @@ class PixabayProvider:
                 out = []
                 for it in hits:
                     vids = it.get("videos", {})
-                    f = vids.get("large") or vids.get("medium") or {}
+                    # SPEED: prefer medium (720p) over large; faster download,
+                    # upscaled to 1080p in normalization.
+                    f = vids.get("medium") or vids.get("large") or {}
                     out.append({"url": f.get("url"), "page": it.get("pageURL", ""),
                                 "w": f.get("width", 0), "h": f.get("height", 0),
                                 "dur": it.get("duration", 0),
