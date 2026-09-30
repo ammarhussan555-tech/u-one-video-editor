@@ -48,6 +48,9 @@ a = Analysis(
         "src.settings", "src.cache_manager", "src.temp_manager",
         "src.log_system", "src.error_recovery", "src.script_engine",
         "src.voiceover", "src.timeline_engine", "src.audio_mixer",
+        # yt-dlp is imported lazily inside functions; listing it keeps the
+        # frozen build honest so YouTubeProvider works in the installer
+        "yt_dlp",
         "src.text_engine",
     ],
     hookspath=[],
