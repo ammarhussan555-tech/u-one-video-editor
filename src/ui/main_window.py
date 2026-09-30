@@ -1058,6 +1058,11 @@ class MainWindow(QMainWindow):
         self.player = None
         self.audio_out = None
         self._restart_on_play = False
+        # Generation counter: every user play/pause/stop bumps it, and every
+        # deferred play / watchdog call carries the generation it was
+        # scheduled with. Stale calls (user pressed something newer) bail
+        # out instead of fighting the user's latest intent.
+        self._play_gen = 0
 
         # Playback controls: play/pause + stop + seek bar + time label
         ctl = QHBoxLayout()
@@ -1281,11 +1286,14 @@ class MainWindow(QMainWindow):
             return
         if self.player.playbackState() == self.player.PlayingState:
             self.player.pause()
+            self._play_gen += 1  # cancel any pending play/watchdog
             return
         # Not playing: (re)start. If the video ended (or stop was
         # pressed), seek to the start first so the button always works.
         # The seek is async on the Windows backend, so play() is issued
         # via a deferred call — never back-to-back with the seek.
+        self._play_gen += 1
+        gen = self._play_gen
         self._player_diag("play-pressed")
         try:
             dur = self.player.duration()
@@ -1295,7 +1303,7 @@ class MainWindow(QMainWindow):
                 self._restart_on_play = False
                 self.player.setPosition(0)
                 from PySide6.QtCore import QTimer
-                QTimer.singleShot(250, self._deferred_play)
+                QTimer.singleShot(250, lambda: self._deferred_play(gen))
                 return
         except Exception as e:  # noqa: BLE001
             self._log(f"Play seek check failed: {e}")
@@ -1303,11 +1311,13 @@ class MainWindow(QMainWindow):
         self._player_diag("play-issued")
         # Watchdog: if the backend swallowed play(), retry harder.
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(800, self._play_watchdog)
+        QTimer.singleShot(800, lambda: self._play_watchdog(gen))
 
-    def _play_watchdog(self):
+    def _play_watchdog(self, gen):
         """If play() didn't take effect, force a hard pipeline reset."""
         try:
+            if gen != self._play_gen:
+                return  # user pressed something newer; stand down
             if self.player is None:
                 return
             if self.player.playbackState() == self.player.PlayingState:
@@ -1323,24 +1333,26 @@ class MainWindow(QMainWindow):
             self.player.setPosition(0)
             self.player.play()
             self._player_diag("watchdog-retry-issued")
-            QTimer.singleShot(2000, self._play_watchdog2)
+            QTimer.singleShot(2000, lambda: self._play_watchdog2(gen))
         except Exception as e:  # noqa: BLE001
             self._log(f"Play restart failed: {e}")
 
-    def _play_watchdog2(self):
+    def _play_watchdog2(self, gen):
         """Last resort: destroy and recreate the player entirely."""
         try:
+            if gen != self._play_gen:
+                return  # user pressed something newer; stand down
             if self.player is None:
                 return
             if self.player.playbackState() == self.player.PlayingState:
                 return
             self._player_diag("watchdog2-failed")
             self._log("Play still stuck — recreating player...")
-            self._recreate_player()
+            self._recreate_player(gen)
         except Exception as e:  # noqa: BLE001
             self._log(f"Player recreation failed: {e}")
 
-    def _recreate_player(self):
+    def _recreate_player(self, gen):
         """Destroy the QMediaPlayer and build a fresh one on the same
         video widget. Nuclear fallback for a wedged backend pipeline."""
         from PySide6.QtCore import QTimer
@@ -1365,17 +1377,26 @@ class MainWindow(QMainWindow):
             if src is not None and not src.isEmpty():
                 self.player.setSource(src)
                 self.player.setPosition(0)
-            QTimer.singleShot(300, self._deferred_play)
+            QTimer.singleShot(300, lambda: self._deferred_play(gen))
             self._log("Player recreated — retrying playback...")
         except Exception as e:  # noqa: BLE001
             self._log(f"Player recreation failed: {e}")
 
-    def _deferred_play(self):
+    def _deferred_play(self, gen):
         try:
+            if gen != self._play_gen:
+                return  # user pressed stop/pause after play; stand down
             if (self.player is not None and
                     self.player.playbackState() != self.player.PlayingState):
                 self.player.play()
                 self._player_diag("deferred-play-issued")
+                # The Windows backend can swallow a play() issued right
+                # after a seek. Arm the same watchdog the direct play path
+                # uses: if this play() didn't take effect, the watchdog
+                # resets the media pipeline instead of leaving the preview
+                # wedged at Paused/0 forever.
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(800, lambda: self._play_watchdog(gen))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1386,6 +1407,7 @@ class MainWindow(QMainWindow):
         # The seek is a single async call here; the play path does its
         # own seek(0) + delayed play(), so the old stop->play wedge is
         # avoided.
+        self._play_gen += 1  # cancel any pending play/watchdog
         self._player_diag("stop-pressed")
         self.player.pause()
         self.player.setPosition(0)
