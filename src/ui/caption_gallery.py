@@ -43,6 +43,22 @@ def _load_font(name: str, size: int, bold: bool, italic: bool):
     """Best-effort font load; falls back to PIL default."""
     candidates = []
     n = (name or "").lower()
+    # bundled OFL fonts ship in assets/fonts — check there first
+    bundled = {
+        "anton": ["Anton-Regular.ttf"],
+        "bebas": ["BebasNeue-Regular.ttf"],
+        "bangers": ["Bangers-Regular.ttf"],
+        "montserrat": ["Montserrat-ExtraBold.ttf"],
+        "fredoka": ["Fredoka-SemiBold.ttf"],
+        "outfit": ["Outfit-ExtraBold.ttf"],
+        "poppins": ["Poppins-Bold.ttf"],
+        "courier prime": ["CourierPrime-Bold.ttf"],
+        "caveat": ["Caveat-Bold.ttf"],
+    }
+    for _bk, _bf in bundled.items():
+        if _bk in n:
+            candidates = _bf
+            break
     if "arial black" in n:
         candidates = ["ariblk.ttf", "Arial Black.ttf"]
     elif "arial" in n:
@@ -58,6 +74,13 @@ def _load_font(name: str, size: int, bold: bool, italic: bool):
     import os
     search = [os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")]
     search += ["/usr/share/fonts", os.path.expanduser("~/.fonts")]
+    try:
+        from ..app_paths import fonts_dir
+        _fd = fonts_dir()
+        if _fd:
+            search.insert(0, str(_fd))
+    except Exception:  # noqa: BLE001
+        pass
     for d in search:
         if not os.path.isdir(d):
             continue
@@ -222,9 +245,10 @@ class CaptionGalleryDialog(QDialog):
     def __init__(self, current_key: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Caption Templates - CapCut Style")
-        self.setMinimumSize(760, 540)
+        self.setMinimumSize(760, 580)
         self.selected_key = current_key or "tiktok_classic"
         self._cards = {}
+        self._category = "All"
 
         lay = QVBoxLayout(self)
         # search row
@@ -235,6 +259,30 @@ class CaptionGalleryDialog(QDialog):
         self.search.textChanged.connect(self._filter)
         top.addWidget(self.search, 1)
         lay.addLayout(top)
+
+        # CapCut-style category tabs
+        try:
+            from ..text_captions import CAPTION_TEMPLATE_CATEGORIES
+        except Exception:
+            CAPTION_TEMPLATE_CATEGORIES = []
+        cats = ["All"] + list(CAPTION_TEMPLATE_CATEGORIES)
+        tabrow = QHBoxLayout()
+        tabrow.setSpacing(4)
+        for cat in cats:
+            b = QPushButton(cat)
+            b.setCheckable(True)
+            b.setChecked(cat == "All")
+            b.setStyleSheet(
+                "QPushButton{background:#232326;color:#ccc;border:1px solid #333;"
+                "border-radius:10px;padding:4px 10px;}"
+                "QPushButton:checked{background:#0aa;color:#fff;}")
+            b.clicked.connect(lambda _c=False, c=cat: self._set_category(c))
+            tabrow.addWidget(b)
+            if not hasattr(self, "_cat_btns"):
+                self._cat_btns = {}
+            self._cat_btns[cat] = b
+        tabrow.addStretch(1)
+        lay.addLayout(tabrow)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -259,6 +307,12 @@ class CaptionGalleryDialog(QDialog):
         self._populate("")
         self.setStyleSheet("QDialog{background:#141416;}")
 
+    def _set_category(self, cat: str):
+        self._category = cat
+        for c, b in self._cat_btns.items():
+            b.setChecked(c == cat)
+        self._populate(self.search.text())
+
     def _populate(self, filt: str):
         # clear
         while self.grid.count():
@@ -271,6 +325,8 @@ class CaptionGalleryDialog(QDialog):
         r = c = 0
         for key, tmpl in CAPTION_TEMPLATES.items():
             label = tmpl["label"]
+            if self._category != "All" and tmpl.get("category") != self._category:
+                continue
             if filt and filt not in label.lower() and filt not in key.lower():
                 continue
             card = _TemplateCard(key, label)
