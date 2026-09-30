@@ -38,6 +38,27 @@ def app_dir(*parts: str) -> Path:
     return p
 
 
+def fonts_dir() -> Path | None:
+    """Directory with U One's bundled caption fonts (OFL), or None.
+
+    Resolves to the PyInstaller bundle (sys._MEIPASS/assets/fonts) when
+    frozen, else to <project>/assets/fonts in a dev checkout.
+    """
+    import sys
+    cands = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            cands.append(Path(meipass) / "assets" / "fonts")
+        cands.append(Path(sys.executable).parent / "assets" / "fonts")
+    # dev checkout: <project>/assets/fonts (this file is <project>/src/app_paths.py)
+    cands.append(Path(__file__).resolve().parent.parent / "assets" / "fonts")
+    for c in cands:
+        if c.is_dir() and any(c.glob("*.ttf")):
+            return c
+    return None
+
+
 def work_root() -> Path:
     return app_dir("work")
 
