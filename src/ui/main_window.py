@@ -824,6 +824,14 @@ class MainWindow(QMainWindow):
         self.pixabay_key.setEchoMode(QLineEdit.Password)
         self.pixabay_key.setPlaceholderText("Paste Pixabay API key (free at pixabay.com/api/docs)")
         aform.addRow("Pixabay API key:", self.pixabay_key)
+        self.google_key = QLineEdit()
+        self.google_key.setEchoMode(QLineEdit.Password)
+        self.google_key.setPlaceholderText("Google Custom Search API key (free 100/day at console.cloud.google.com)")
+        aform.addRow("Google API key:", self.google_key)
+        self.google_cx = QLineEdit()
+        self.google_cx.setEchoMode(QLineEdit.Password)
+        self.google_cx.setPlaceholderText("Google Search Engine ID (cx from programmablesearchengine.google.com)")
+        aform.addRow("Google Search Engine ID:", self.google_cx)
         abtns = QHBoxLayout()
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._save_api_keys)
@@ -837,6 +845,8 @@ class MainWindow(QMainWindow):
         self.pixabay_status = QLabel("Not Connected")
         aform.addRow("Pexels:", self.pexels_status)
         aform.addRow("Pixabay:", self.pixabay_status)
+        self.google_status = QLabel("Not Connected")
+        aform.addRow("Google (web images):", self.google_status)
         self.wikimedia_status = QLabel("Always on (no key needed)")
         self.wikimedia_status.setStyleSheet("color:#2f9e44;")
         aform.addRow("Wikimedia (news photos):", self.wikimedia_status)
@@ -1542,12 +1552,20 @@ class MainWindow(QMainWindow):
     def _save_api_keys(self):
         px = self.pexels_key.text().strip()
         pb = self.pixabay_key.text().strip()
+        gk = self.google_key.text().strip()
+        gx = self.google_cx.text().strip()
         if px:
             secure_store.set_key("pexels", px)
         if pb:
             secure_store.set_key("pixabay", pb)
+        if gk:
+            secure_store.set_key("google_key", gk)
+        if gx:
+            secure_store.set_key("google_cx", gx)
         self.pexels_key.clear()
         self.pixabay_key.clear()
+        self.google_key.clear()
+        self.google_cx.clear()
         self._refresh_api_status(saved_only=True)
         self._log("API keys saved securely on this PC.")
         QMessageBox.information(self, "U One", "API keys saved.")
@@ -1558,11 +1576,12 @@ class MainWindow(QMainWindow):
         self._log("Testing API connections...")
         self.pexels_status.setText("Testing...")
         self.pixabay_status.setText("Testing...")
+        self.google_status.setText("Testing...")
         self.wikimedia_status.setText("Testing...")
         self.archive_status.setText("Testing...")
 
         class _ApiTestWorker(QThread):
-            done = Signal(bool, str, bool, str, bool, str, bool, str)
+            done = Signal(bool, str, bool, str, bool, str, bool, str, bool, str)
 
             def run(self):  # noqa: D102
                 try:
@@ -1576,6 +1595,12 @@ class MainWindow(QMainWindow):
                 except Exception as e:  # noqa: BLE001
                     ok_pb, msg_pb = False, str(e)[:120]
                 try:
+                    gk = secure_store.get_key("google_key") + "|" + \
+                        secure_store.get_key("google_cx")
+                    ok_g, msg_g = test_provider("google", gk)
+                except Exception as e:  # noqa: BLE001
+                    ok_g, msg_g = False, str(e)[:120]
+                try:
                     ok_wm, msg_wm = test_provider("wikimedia", "")
                 except Exception as e:  # noqa: BLE001
                     ok_wm, msg_wm = False, str(e)[:120]
@@ -1583,14 +1608,17 @@ class MainWindow(QMainWindow):
                     ok_ar, msg_ar = test_provider("archive_org", "")
                 except Exception as e:  # noqa: BLE001
                     ok_ar, msg_ar = False, str(e)[:120]
-                self.done.emit(ok_px, msg_px, ok_pb, msg_pb,
+                self.done.emit(ok_px, msg_px, ok_pb, msg_pb, ok_g, msg_g,
                                ok_wm, msg_wm, ok_ar, msg_ar)
 
-        def _on_done(ok_px, msg_px, ok_pb, msg_pb, ok_wm, msg_wm, ok_ar, msg_ar):
+        def _on_done(ok_px, msg_px, ok_pb, msg_pb, ok_g, msg_g,
+                     ok_wm, msg_wm, ok_ar, msg_ar):
             self.pexels_status.setText(
                 "Connected" if ok_px else f"Not Connected - {msg_px}")
             self.pixabay_status.setText(
                 "Connected" if ok_pb else f"Not Connected - {msg_pb}")
+            self.google_status.setText(
+                "Connected" if ok_g else f"Not Connected - {msg_g}")
             self.wikimedia_status.setText(
                 "Connected (keyless)" if ok_wm else f"Not Connected - {msg_wm}")
             self.archive_status.setText(
@@ -1599,12 +1627,15 @@ class MainWindow(QMainWindow):
                 "color:#2f9e44;" if ok_px else "color:#c0392b;")
             self.pixabay_status.setStyleSheet(
                 "color:#2f9e44;" if ok_pb else "color:#c0392b;")
+            self.google_status.setStyleSheet(
+                "color:#2f9e44;" if ok_g else "color:#c0392b;")
             self.wikimedia_status.setStyleSheet(
                 "color:#2f9e44;" if ok_wm else "color:#c0392b;")
             self.archive_status.setStyleSheet(
                 "color:#2f9e44;" if ok_ar else "color:#c0392b;")
             self._log(f"Pexels: {'Connected' if ok_px else 'Not Connected'} | "
                       f"Pixabay: {'Connected' if ok_pb else 'Not Connected'} | "
+                      f"Google: {'Connected' if ok_g else 'Not Connected'} | "
                       f"Wikimedia: {'Connected' if ok_wm else 'Not Connected'} | "
                       f"Archive.org: {'Connected' if ok_ar else 'Not Connected'}")
             self._api_worker = None
@@ -1619,6 +1650,8 @@ class MainWindow(QMainWindow):
         self.pixabay_status.setText("Saved" if has["pixabay"] else "Not Connected")
         self.pexels_status.setStyleSheet("color:#2f9e44;" if has["pexels"] else "color:#888;")
         self.pixabay_status.setStyleSheet("color:#2f9e44;" if has["pixabay"] else "color:#888;")
+        self.google_status.setText("Saved" if has["google"] else "Not Connected")
+        self.google_status.setStyleSheet("color:#2f9e44;" if has["google"] else "color:#888;")
         self.wikimedia_status.setText("Always on (no key needed)")
         self.wikimedia_status.setStyleSheet("color:#2f9e44;")
         self.archive_status.setText("Always on (no key needed)")
