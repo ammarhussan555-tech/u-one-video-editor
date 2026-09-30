@@ -123,7 +123,17 @@ def _burn_captions_filter(ass_path: str) -> str:
     src = Path(ass_path)
     # First choice: copy next to the render target would change caller's layout,
     # so we just escape the given path. Callers may pre-copy to a safe name.
-    return f"subtitles='{escape_filter_path(str(src))}'"
+    filt = f"subtitles='{escape_filter_path(str(src))}'"
+    # Bundled OFL caption fonts (Anton, Bebas Neue, ...) so ASS Fontname
+    # resolves on any Windows PC without installing fonts.
+    try:
+        from .app_paths import fonts_dir
+        fd = fonts_dir()
+    except Exception:
+        fd = None
+    if fd is not None:
+        filt += f":fontsdir='{escape_filter_path(str(fd))}'"
+    return filt
 
 
 def render_final(video_noaudio: str, mixed_audio: str, ass_path: str,
