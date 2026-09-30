@@ -899,6 +899,265 @@ class XTwitterProvider:
             return False, str(e)[:80]
 
 
+# Telegram public channel previews: t.me/s/<channel> is server-rendered
+# (no login, no API key) and embeds direct telesco.pe mp4 video URLs and
+# photo URLs with short-lived tokens. Pages are fetched fresh on every
+# search and the URLs are used immediately, so expiry is not an issue.
+# Channels below were verified live (HTTP 200 + message blocks) on
+# 2026-09-30: 3 military/eyewitness + 3 news.
+_TELEGRAM_CHANNELS = ("Osinttechnical", "rybar", "clashreport",
+                      "disclosetv", "BNONews", "spectatorindex")
+_TELEGRAM_STOPWORDS = frozenset({
+    "news", "video", "videos", "photo", "photos", "latest", "today",
+    "breaking", "watch", "live", "update", "updates", "new", "the",
+    "and", "for", "with", "from", "this", "that",
+})
+_TG_MSG_SPLIT_RE = re.compile(r"tgme_widget_message_wrap")
+_TG_MSG_TEXT_RE = re.compile(
+    r'class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', re.S)
+_TG_MSG_VIDEO_RE = re.compile(r'<video[^>]+src="([^"]+)"')
+_TG_MSG_PHOTO_RE = re.compile(r"background-image:url\('([^']+)'\)")
+_WORD_RE = re.compile(r"[a-z0-9]{3,}")
+# Reddit public JSON API (no key). secure_media.reddit_video.fallback_url
+# is a direct mp4; image posts expose i.redd.it / preview.redd.it URLs.
+# Note: Reddit blocks many datacenter IPs; residential connections
+# (like the user's PC) normally work. Failures are silent (no results).
+_REDDIT_SUBS = ("CombatFootage", "Military", "news", "worldnews")
+_REDDIT_IMG_RE = re.compile(r"\.(jpg|jpeg|png|webp)(\?|$)", re.IGNORECASE)
+
+
+class TelegramProvider:
+    """Eyewitness/news clips + photos from public Telegram channels.
+
+    Keyless and quota-free: fetches the public t.me/s/<channel> preview
+    pages, extracts per-post text + direct media URLs, and keyword-matches
+    the post text against the query. first_query_only keeps it to one
+    query variant per scene (6 channel pages x 2 kinds).
+    """
+    name = "Telegram"
+    license = "Telegram public channels (check per-post license)"
+    first_query_only = True
+
+    def __init__(self, channels=()):
+        self.channels = tuple(channels) or _TELEGRAM_CHANNELS
+
+    @staticmethod
+    def _query_words(query: str):
+        return {w for w in _WORD_RE.findall((query or "").lower())
+                if w not in _TELEGRAM_STOPWORDS}
+
+    def _fetch_channel(self, channel: str) -> List[Dict]:
+        """Fetch one channel preview page; return parsed message dicts."""
+        try:
+            r = _SESSION.get(f"https://t.me/s/{channel}",
+                             timeout=_CONNECT_TIMEOUT)
+            if r.status_code != 200 or "tgme_widget_message" not in r.text:
+                return []
+            return self._parse_messages(r.text, channel)
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _parse_messages(self, page_html: str, channel: str) -> List[Dict]:
+        """Split the preview page into per-message (text, videos, photos)."""
+        msgs: List[Dict] = []
+        chunks = _TG_MSG_SPLIT_RE.split(page_html)
+        for chunk in chunks[1:]:  # chunk 0 is the page header
+            try:
+                m = _TG_MSG_TEXT_RE.search(chunk)
+                text = ""
+                if m:
+                    text = _html.unescape(re.sub(r"<[^>]+>", " ", m.group(1)))
+                    text = re.sub(r"\s+", " ", text).strip()
+                vids = []
+                for v in _TG_MSG_VIDEO_RE.findall(chunk):
+                    v = _html.unescape(v)
+                    if "telesco.pe/file/" in v and ".mp4" in v and \
+                            v not in vids:
+                        vids.append(v)
+                photos = []
+                for p in _TG_MSG_PHOTO_RE.findall(chunk):
+                    p = _html.unescape(p)
+                    if "telesco.pe/file/" in p and p not in photos:
+                        photos.append(p)
+                if text or vids or photos:
+                    msgs.append({"text": text, "videos": vids,
+                                 "photos": photos, "channel": channel})
+            except Exception:  # noqa: BLE001
+                continue
+        return msgs
+
+    def search(self, query: str, kind: str = "video",
+               per_page: int = 4) -> List[Dict]:
+        words = self._query_words(query)
+        if not words:
+            return []
+        try:
+            msgs: List[Dict] = []
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                futs = {ex.submit(self._fetch_channel, ch): ch
+                        for ch in self.channels}
+                for fut in as_completed(futs):
+                    try:
+                        msgs.extend(fut.result() or [])
+                    except Exception:  # noqa: BLE001
+                        continue
+            scored = []
+            for m in msgs:
+                text_words = set(_WORD_RE.findall(m["text"].lower()))
+                score = len(words & text_words)
+                if score == 0:
+                    continue
+                urls = m["videos"] if kind == "video" else m["photos"]
+                for u in urls:
+                    scored.append((score, u, m))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            out, seen = [], set()
+            for score, url, m in scored:
+                if url in seen:
+                    continue
+                seen.add(url)
+                out.append({
+                    "url": url,
+                    "page": f"https://t.me/s/{m['channel']}",
+                    "w": 0, "h": 0, "dur": 0,
+                    "tags": m["text"][:200],
+                })
+                if len(out) >= per_page:
+                    break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "Telegram", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            r = _SESSION.get("https://t.me/s/disclosetv",
+                             timeout=_CONNECT_TIMEOUT)
+            if r.status_code == 200 and "tgme_widget_message" in r.text:
+                return True, "Connected"
+            return False, f"HTTP {r.status_code}"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
+class RedditProvider:
+    """Military/eyewitness clips + photos from Reddit (keyless JSON API).
+
+    Searches the newest posts in each subreddit; native video posts carry
+    a direct v.redd.it mp4 fallback URL, image posts carry direct
+    i.redd.it / preview.redd.it URLs. NSFW posts are skipped.
+    first_query_only keeps it to one query variant per scene.
+    """
+    name = "Reddit"
+    license = "Reddit (check per-post license)"
+    first_query_only = True
+
+    def __init__(self, subs=()):
+        self.subs = tuple(subs) or _REDDIT_SUBS
+
+    def _search_sub(self, sub: str, query: str) -> List[Dict]:
+        try:
+            r = _SESSION.get(
+                f"https://www.reddit.com/r/{sub}/search.json",
+                params={"q": query, "sort": "new", "restrict_sr": "1",
+                        "limit": 10},
+                timeout=_CONNECT_TIMEOUT)
+            if r.status_code != 200:
+                return []
+            return self._parse_posts(r.json())
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _parse_posts(self, data) -> List[Dict]:
+        """Parse Reddit search.json into (title, video, image, permalink)."""
+        posts: List[Dict] = []
+        try:
+            children = ((data or {}).get("data", {}) or {}).get(
+                "children", []) or []
+        except Exception:  # noqa: BLE001
+            return []
+        for ch in children:
+            try:
+                pd = ((ch or {}).get("data", {}) or {})
+                if pd.get("over_18") or pd.get("stickied"):
+                    continue
+                title = pd.get("title", "") or ""
+                url = pd.get("url", "") or ""
+                video_url = None
+                rv = ((pd.get("secure_media") or {}).get("reddit_video")
+                      or {})
+                fb = rv.get("fallback_url", "") or ""
+                if fb.startswith("https://v.redd.it/"):
+                    video_url = fb.split("?")[0]
+                elif url.startswith("https://v.redd.it/"):
+                    video_url = url.rstrip("/").split("?")[0] + \
+                        "/DASH_720.mp4"
+                img_url = None
+                if _REDDIT_IMG_RE.search(url) and \
+                        ("i.redd.it" in url or "preview.redd.it" in url):
+                    img_url = url
+                if not img_url:
+                    try:
+                        src = pd["preview"]["images"][0]["source"]["url"]
+                        src = _html.unescape(src or "")
+                        if _REDDIT_IMG_RE.search(src):
+                            img_url = src.split("?")[0]
+                    except Exception:  # noqa: BLE001
+                        pass
+                if video_url or img_url:
+                    posts.append({
+                        "title": title, "video": video_url,
+                        "image": img_url,
+                        "permalink": "https://www.reddit.com" +
+                                     (pd.get("permalink") or ""),
+                    })
+            except Exception:  # noqa: BLE001
+                continue
+        return posts
+
+    def search(self, query: str, kind: str = "video",
+               per_page: int = 4) -> List[Dict]:
+        try:
+            posts: List[Dict] = []
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futs = {ex.submit(self._search_sub, s, query): s
+                        for s in self.subs}
+                for fut in as_completed(futs):
+                    try:
+                        posts.extend(fut.result() or [])
+                    except Exception:  # noqa: BLE001
+                        continue
+            out, seen = [], set()
+            for p in posts:
+                url = p["video"] if kind == "video" else p["image"]
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                out.append({
+                    "url": url,
+                    "page": p["permalink"],
+                    "w": 0, "h": 0, "dur": 0,
+                    "tags": p["title"],
+                })
+                if len(out) >= per_page:
+                    break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "Reddit", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            r = _SESSION.get("https://www.reddit.com/r/news/new.json",
+                             params={"limit": 1},
+                             timeout=_CONNECT_TIMEOUT)
+            if r.status_code == 200 and '"children"' in r.text:
+                return True, "Connected"
+            return False, f"HTTP {r.status_code}"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
@@ -913,6 +1172,7 @@ class MediaFinder:
         self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
                           SerperProvider(serper_key),
                           XTwitterProvider(serper_key),
+                          TelegramProvider(), RedditProvider(),
                           GoogleProvider(google_key, google_cx),
                           WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
@@ -1030,5 +1290,9 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
         return SerperProvider(key).test()
     if which == "x_twitter":
         return XTwitterProvider(key).test()
+    if which == "telegram":
+        return TelegramProvider().test()
+    if which == "reddit":
+        return RedditProvider().test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
