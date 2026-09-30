@@ -28,6 +28,7 @@ for exe in ("ffmpeg.exe", "ffprobe.exe"):
 datas = [
     (str(ROOT / "config.yaml"), "."),
     (str(ROOT / "README.txt"), "."),
+    (str(ASSETS / "fonts"), "assets/fonts"),
 ]
 
 a = Analysis(
