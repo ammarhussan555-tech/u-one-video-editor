@@ -19,6 +19,15 @@ from .app_paths import key_file_path
 SERVICE = "U One"
 ACCOUNT_PEXELS = "pexels_api_key"
 ACCOUNT_PIXABAY = "pixabay_api_key"
+ACCOUNT_GOOGLE_KEY = "google_api_key"
+ACCOUNT_GOOGLE_CX = "google_cx"
+
+_ACCOUNTS = {
+    "pexels": ACCOUNT_PEXELS,
+    "pixabay": ACCOUNT_PIXABAY,
+    "google_key": ACCOUNT_GOOGLE_KEY,
+    "google_cx": ACCOUNT_GOOGLE_CX,
+}
 
 try:
     import keyring  # type: ignore
@@ -55,7 +64,7 @@ def _write_store(d: Dict[str, str]):
 
 def set_key(which: str, value: str):
     value = (value or "").strip()
-    account = ACCOUNT_PEXELS if which == "pexels" else ACCOUNT_PIXABAY
+    account = _ACCOUNTS.get(which, ACCOUNT_PIXABAY)
     if _HAS_KEYRING:
         try:
             if value:
@@ -74,7 +83,7 @@ def set_key(which: str, value: str):
 
 
 def get_key(which: str) -> str:
-    account = ACCOUNT_PEXELS if which == "pexels" else ACCOUNT_PIXABAY
+    account = _ACCOUNTS.get(which, ACCOUNT_PIXABAY)
     if _HAS_KEYRING:
         try:
             v = keyring.get_password(SERVICE, account)
@@ -86,4 +95,6 @@ def get_key(which: str) -> str:
 
 
 def has_keys() -> Dict[str, bool]:
-    return {"pexels": bool(get_key("pexels")), "pixabay": bool(get_key("pixabay"))}
+    return {"pexels": bool(get_key("pexels")),
+            "pixabay": bool(get_key("pixabay")),
+            "google": bool(get_key("google_key") and get_key("google_cx"))}
