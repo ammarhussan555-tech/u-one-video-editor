@@ -443,6 +443,22 @@ class WikimediaProvider:
     name = "Wikimedia"
     license = "Wikimedia Commons (check per-image license; mostly free)"
 
+    def __init__(self, pd_only: bool = False):
+        # pd_only: Safe-mode filter - keep only public-domain / CC0 files.
+        self.pd_only = pd_only
+        if pd_only:
+            self.license = "Wikimedia Commons (public domain)"
+
+    @staticmethod
+    def _is_public_domain(ii: dict) -> bool:
+        try:
+            lic = (ii.get("extmetadata", {}).get("LicenseShortName", {})
+                     .get("value", "") or "")
+        except Exception:  # noqa: BLE001
+            return False
+        lv = lic.strip().lower()
+        return "public domain" in lv or lv == "cc0"
+
     def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
         if kind != "image":
             return []
@@ -453,7 +469,7 @@ class WikimediaProvider:
                 "gsrnamespace": "6",  # File: namespace
                 "gsrlimit": str(min(per_page * 2, 10)),
                 "prop": "imageinfo",
-                "iiprop": "url|size",
+                "iiprop": "url|size" + ("|extmetadata" if self.pd_only else ""),
                 "iiurlwidth": "1280",
             }
             r = _SESSION.get("https://commons.wikimedia.org/w/api.php",
@@ -469,6 +485,8 @@ class WikimediaProvider:
                     continue
                 # Skip tiny images.
                 if (ii.get("thumbwidth") or ii.get("width") or 0) < 640:
+                    continue
+                if self.pd_only and not self._is_public_domain(ii):
                     continue
                 out.append({
                     "url": url,
@@ -1410,16 +1428,28 @@ class MediaFinder:
                  pixabay_key: str = "", google_key: str = "",
                  google_cx: str = "", serper_key: str = "",
                  preference: str = "ai_auto",
-                 repetition: str = "never", project_id: str = "app"):
+                 repetition: str = "never", project_id: str = "app",
+                 safe_mode: bool = False,
+                 auto_clean_logos: bool = True):
         self.assets_dir = assets_dir
         os.makedirs(assets_dir, exist_ok=True)
-        self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
-                          SerperProvider(serper_key),
-                          XTwitterProvider(serper_key),
-                          TelegramProvider(), RedditProvider(),
-                          YouTubeProvider(), NASAProvider(),
-                          GoogleProvider(google_key, google_cx),
-                          WikimediaProvider(), ArchiveOrgProvider()]
+        self.safe_mode = safe_mode
+        self.auto_clean_logos = auto_clean_logos
+        if safe_mode:
+            # Copyright-safe providers only: Pexels, Pixabay, NASA,
+            # Wikimedia (public-domain files only).
+            self.providers = [PexelsProvider(pexels_key),
+                              PixabayProvider(pixabay_key),
+                              NASAProvider(),
+                              WikimediaProvider(pd_only=True)]
+        else:
+            self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
+                              SerperProvider(serper_key),
+                              XTwitterProvider(serper_key),
+                              TelegramProvider(), RedditProvider(),
+                              YouTubeProvider(), NASAProvider(),
+                              GoogleProvider(google_key, google_cx),
+                              WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
         self.repetition = repetition
         self.used_ids = set()
@@ -1482,6 +1512,16 @@ class MediaFinder:
                     local = _safe_download(cand["url"], kind)
                     if local is None:
                         continue  # broken download -> next candidate
+                    if self.auto_clean_logos and kind == "video":
+                        # Crop/blur static corner logos on risky clips.
+                        # Never raises; returns the original on any failure.
+                        try:
+                            from .logo_clean import maybe_clean_clip
+                            local = maybe_clean_clip(
+                                str(local), self.assets_dir,
+                                cand.get("source", ""))
+                        except Exception:  # noqa: BLE001
+                            pass
                     self.used_ids.add(cid)
                     return Asset(id=cid, kind=kind, local_path=str(local),
                                  source=cand["source"], license=cand["license"],
