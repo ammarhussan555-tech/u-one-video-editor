@@ -21,12 +21,14 @@ ACCOUNT_PEXELS = "pexels_api_key"
 ACCOUNT_PIXABAY = "pixabay_api_key"
 ACCOUNT_GOOGLE_KEY = "google_api_key"
 ACCOUNT_GOOGLE_CX = "google_cx"
+ACCOUNT_SERPER = "serper_api_key"
 
 _ACCOUNTS = {
     "pexels": ACCOUNT_PEXELS,
     "pixabay": ACCOUNT_PIXABAY,
     "google_key": ACCOUNT_GOOGLE_KEY,
     "google_cx": ACCOUNT_GOOGLE_CX,
+    "serper": ACCOUNT_SERPER,
 }
 
 try:
@@ -97,4 +99,5 @@ def get_key(which: str) -> str:
 def has_keys() -> Dict[str, bool]:
     return {"pexels": bool(get_key("pexels")),
             "pixabay": bool(get_key("pixabay")),
-            "google": bool(get_key("google_key") and get_key("google_cx"))}
+            "google": bool(get_key("google_key") and get_key("google_cx")),
+            "serper": bool(get_key("serper"))}
