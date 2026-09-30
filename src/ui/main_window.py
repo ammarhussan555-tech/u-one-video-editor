@@ -1057,7 +1057,6 @@ class MainWindow(QMainWindow):
         # FFmpeg backend init, so create it only when preview is actually needed.
         self.player = None
         self.audio_out = None
-        self._restart_on_play = False
         # Generation counter: every user play/pause/stop bumps it, and every
         # deferred play / watchdog call carries the generation it was
         # scheduled with. Stale calls (user pressed something newer) bail
@@ -1281,149 +1280,197 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._log(f"[play-diag:{tag}] diag failed: {e}")
 
+    # -- preview playback: Qt6 FFmpeg-backend-safe play/pause/stop --
+    #
+    # Ground rules (Qt6 qtmultimedia source + QTBUG-147839):
+    #  * NEVER do pause() -> setPosition(0) -> play(). That exact sequence
+    #    can wedge the FFmpeg backend (stuck buffering/paused forever).
+    #  * play() after natural end auto-rewinds to 0 by itself.
+    #  * stop() rewinds to 0 by itself — no manual seek needed.
+    #  * setPosition() is async; silently dropped during LoadingMedia.
+    #  * setSource() with the SAME URL is a no-op — clear with QUrl() first.
+    #  * After InvalidMedia the backend engine is gone; only a fresh
+    #    setSource() rebuilds it (play/pause/stop become silent no-ops).
+    #  * Qt6 MediaStatus: EndOfMedia=6, InvalidMedia=7 (Qt5 had 7=EndOfMedia).
+    #    Always compare against the named enumerators, never raw ints.
+
     def _toggle_play(self):
         if not self._ensure_player():
             return
-        if self.player.playbackState() == self.player.PlayingState:
-            self.player.pause()
+        PS = self.player.PlaybackState
+        MS = self.player.MediaStatus
+        if self.player.playbackState() == PS.PlayingState:
             self._play_gen += 1  # cancel any pending play/watchdog
+            self.player.pause()
+            self._player_diag("pause-pressed")
             return
-        # Not playing: (re)start. If the video ended (or stop was
-        # pressed), seek to the start first so the button always works.
-        # The seek is async on the Windows backend, so play() is issued
-        # via a deferred call — never back-to-back with the seek.
+        # Not playing: just play(). The backend handles every resume case:
+        # end-of-media -> auto-rewind to 0; after stop() -> starts at 0;
+        # after pause() -> resumes. No manual setPosition(0): the extra
+        # seek is what wedged the backend (QTBUG-147839 family).
         self._play_gen += 1
         gen = self._play_gen
         self._player_diag("play-pressed")
         try:
-            dur = self.player.duration()
-            pos = self.player.position()
-            if (dur > 0 and pos >= dur - 300) or getattr(
-                    self, "_restart_on_play", False):
-                self._restart_on_play = False
-                self.player.setPosition(0)
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(250, lambda: self._deferred_play(gen))
-                return
-        except Exception as e:  # noqa: BLE001
-            self._log(f"Play seek check failed: {e}")
-        self.player.play()
-        self._player_diag("play-issued")
-        # Watchdog: if the backend swallowed play(), retry harder.
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(800, lambda: self._play_watchdog(gen))
-
-    def _play_watchdog(self, gen):
-        """If play() didn't take effect, force a hard pipeline reset."""
-        try:
-            if gen != self._play_gen:
-                return  # user pressed something newer; stand down
-            if self.player is None:
-                return
-            if self.player.playbackState() == self.player.PlayingState:
-                return
-            self._player_diag("watchdog-failed")
-            self._log("Play didn't start — resetting media pipeline...")
-            from PySide6.QtCore import QUrl, QTimer
-            src = self.player.source()
-            # Empty source first: forces a full pipeline teardown even
-            # if the backend ignores setSource() with the same URL.
-            self.player.setSource(QUrl())
-            self.player.setSource(src)
-            self.player.setPosition(0)
-            self.player.play()
-            self._player_diag("watchdog-retry-issued")
-            QTimer.singleShot(2000, lambda: self._play_watchdog2(gen))
-        except Exception as e:  # noqa: BLE001
-            self._log(f"Play restart failed: {e}")
-
-    def _play_watchdog2(self, gen):
-        """Last resort: destroy and recreate the player entirely."""
-        try:
-            if gen != self._play_gen:
-                return  # user pressed something newer; stand down
-            if self.player is None:
-                return
-            if self.player.playbackState() == self.player.PlayingState:
-                return
-            self._player_diag("watchdog2-failed")
-            self._log("Play still stuck — recreating player...")
-            self._recreate_player(gen)
-        except Exception as e:  # noqa: BLE001
-            self._log(f"Player recreation failed: {e}")
-
-    def _recreate_player(self, gen):
-        """Destroy the QMediaPlayer and build a fresh one on the same
-        video widget. Nuclear fallback for a wedged backend pipeline."""
-        from PySide6.QtCore import QTimer
-        try:
-            src = self.player.source() if self.player is not None else None
-            old = self.player
-            self.player = None
-            self.audio_out = None
-            if old is not None:
-                try:
-                    old.stop()
-                except Exception:  # noqa: BLE001
-                    pass
-                try:
-                    old.deleteLater()
-                except Exception:  # noqa: BLE001
-                    pass
-            # Re-run creation (video_widget already exists, so it is reused).
-            if not self._ensure_player():
-                self._log("Player recreation unavailable on this system.")
-                return
-            if src is not None and not src.isEmpty():
-                self.player.setSource(src)
-                self.player.setPosition(0)
-            QTimer.singleShot(300, lambda: self._deferred_play(gen))
-            self._log("Player recreated — retrying playback...")
-        except Exception as e:  # noqa: BLE001
-            self._log(f"Player recreation failed: {e}")
-
-    def _deferred_play(self, gen):
-        try:
-            if gen != self._play_gen:
-                return  # user pressed stop/pause after play; stand down
-            if (self.player is not None and
-                    self.player.playbackState() != self.player.PlayingState):
-                self.player.play()
-                self._player_diag("deferred-play-issued")
-                # The Windows backend can swallow a play() issued right
-                # after a seek. Arm the same watchdog the direct play path
-                # uses: if this play() didn't take effect, the watchdog
-                # resets the media pipeline instead of leaving the preview
-                # wedged at Paused/0 forever.
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(800, lambda: self._play_watchdog(gen))
+            if self.player.mediaStatus() == MS.InvalidMedia:
+                # Backend engine is dead — rebuild it before play().
+                self._reload_player_source()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self.player.play()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Play failed: {e}")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(900, lambda: self._play_watchdog(gen))
+
+    def _play_watchdog(self, gen, attempt=1):
+        """Verify play() took effect; escalate if the backend swallowed it."""
+        try:
+            if gen != self._play_gen:
+                return  # user pressed something newer; stand down
+            p = self.player
+            if p is None:
+                return
+            PS = p.PlaybackState
+            MS = p.MediaStatus
+            if p.playbackState() == PS.PlayingState:
+                return  # recovered
+            if attempt > 4:
+                self._player_diag("watchdog-gave-up")
+                self._log("Preview play didn't start — Play dobara dabayein.")
+                return
+            from PySide6.QtCore import QTimer
+            st = p.mediaStatus()
+            if st == MS.LoadingMedia:
+                # Still loading: the backend deferred play() until loaded.
+                # Wait without burning an attempt.
+                QTimer.singleShot(800,
+                                  lambda: self._play_watchdog(gen, attempt))
+                return
+            if st == MS.InvalidMedia:
+                # Backend engine is gone — only a fresh source rebuilds it.
+                self._player_diag("watchdog-invalid-media")
+                self._reload_player_source()
+                QTimer.singleShot(1200,
+                                  lambda: self._play_watchdog(gen, attempt + 1))
+                return
+            # Loaded but not playing: re-issue play(). Covers end-of-media
+            # (auto-rewind), post-stop (starts at 0), and swallowed play().
+            self._player_diag(f"watchdog-replay#{attempt}")
+            p.play()
+            QTimer.singleShot(1200,
+                              lambda: self._play_watchdog(gen, attempt + 1))
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Play watchdog failed: {e}")
+
+    def _reload_player_source(self):
+        """Rebuild the backend pipeline for the current source.
+
+        Clears with an empty QUrl first: setSource() with the SAME URL is
+        a backend no-op, and a re-rendered file at the same path leaves
+        stale demuxer state ("Invalid data found when processing input").
+        """
+        p = self.player
+        if p is None:
+            return
+        from PySide6.QtCore import QUrl
+        src = p.source()
+        try:
+            p.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        p.setSource(QUrl())
+        if src is not None and not src.isEmpty():
+            p.setSource(src)
+        self._player_diag("source-reloaded")
+
+    def _preview_play_file(self, path):
+        """Load a file into the preview player and start playing it.
+
+        Used after caption re-burns / timeline edits where the output may
+        land on the SAME path the player already has loaded.
+        """
+        if not path or not os.path.isfile(path):
+            return
+        if not self._ensure_player():
+            return
+        from PySide6.QtCore import QUrl, QTimer
+        self._play_gen += 1
+        gen = self._play_gen
+        p = self.player
+        try:
+            p.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        p.setSource(QUrl())  # clear stale pipeline state (same-URL no-op)
+        p.setSource(QUrl.fromLocalFile(path))
+        self._current_video = path
+        self._player_diag("preview-reload")
+        try:
+            p.play()  # if still loading, the backend defers until loaded
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Preview play failed: {e}")
+        QTimer.singleShot(1200, lambda: self._play_watchdog(gen))
 
     def _stop_play(self):
         if not self._ensure_player():
             return
-        # Stop = pause + back to start (shuru se), as the tooltip says.
-        # The seek is a single async call here; the play path does its
-        # own seek(0) + delayed play(), so the old stop->play wedge is
-        # avoided.
+        # Real stop(): the backend rewinds to 0 itself and emits
+        # StoppedState. No pause()+setPosition(0) — that sequence is what
+        # wedged the backend (QTBUG-147839 family).
         self._play_gen += 1  # cancel any pending play/watchdog
         self._player_diag("stop-pressed")
-        self.player.pause()
-        self.player.setPosition(0)
-        self._restart_on_play = True
+        try:
+            self.player.stop()
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Stop failed: {e}")
         self.play_btn.setText("▶")
         self._player_diag("stopped")
+        # Belt & braces: if this Qt build's stop() didn't rewind, seek once
+        # while stopped (no play() follows, so no race).
+        from PySide6.QtCore import QTimer
+        gen = self._play_gen
+        QTimer.singleShot(350, lambda: self._stop_rewind_check(gen))
+
+    def _stop_rewind_check(self, gen):
+        try:
+            if gen != self._play_gen:
+                return
+            p = self.player
+            if p is None:
+                return
+            PS = p.PlaybackState
+            MS = p.MediaStatus
+            if (p.playbackState() == PS.StoppedState
+                    and p.position() > 500
+                    and p.mediaStatus() not in (MS.LoadingMedia,
+                                                MS.InvalidMedia)
+                    and p.isSeekable()):
+                p.setPosition(0)
+                self._player_diag("stop-rewind-fixup")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_media_status(self, status):
-        # 7 = EndOfMedia. Just update the button — do NOT seek here.
-        # Seeking from inside the status handler can fight with the
-        # play logic's own seek and wedge the backend. _toggle_play
-        # handles the rewind when the user presses play.
-        if self._enum_val(status) == 7:
-            self.play_btn.setText("▶")
-            self._player_diag("end-of-media")
-
+        # Qt6: EndOfMedia=6, InvalidMedia=7.
+        # (Qt5 had 7=EndOfMedia — that stale int mapping misread real
+        # errors as "ended". Always use the named enumerators.)
+        try:
+            p = self.player
+            if p is None:
+                return
+            MS = p.MediaStatus
+            if status == MS.EndOfMedia:
+                self.play_btn.setText("▶")
+                self._player_diag("end-of-media")
+                # No seek here: play() auto-rewinds from EndOfMedia itself.
+            elif status == MS.InvalidMedia:
+                self._player_diag("invalid-media")
+                # Backend engine is gone; the next Play press (or the
+                # watchdog) rebuilds it via _reload_player_source().
+        except Exception:  # noqa: BLE001
+            pass
     def eventFilter(self, obj, event):
         # Click on the video -> pause and open the caption editor
         # for the caption visible at that moment.
@@ -1565,7 +1612,16 @@ class MainWindow(QMainWindow):
     def _seek(self, pos: int):
         if not self._ensure_player():
             return
-        self.player.setPosition(pos)
+        # Seeks are async and silently dropped while loading; never seek
+        # then either.
+        p = self.player
+        try:
+            if (p.mediaStatus() == p.MediaStatus.LoadingMedia
+                    or not p.isSeekable()):
+                return
+            p.setPosition(pos)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _on_position(self, pos: int):
         self.seek_slider.blockSignals(True)
@@ -2082,8 +2138,7 @@ class MainWindow(QMainWindow):
         # Verify the file exists before trying to play it.
         if os.path.isfile(out):
             if self._ensure_player():
-                self.player.setSource(QUrl.fromLocalFile(out))
-                self.player.play()
+                self._preview_play_file(out)
                 self._log(f"Playing preview: {out}")
             else:
                 self._log("Preview unavailable on this system.")
@@ -2164,10 +2219,8 @@ class MainWindow(QMainWindow):
             pass
         QMessageBox.information(self, "Generate Captions",
                                 "Captions generate ho gaye!")
-        if os.path.isfile(out) and self._ensure_player():
-            self.player.setSource(QUrl.fromLocalFile(out))
-            self.player.play()
-            self._current_video = out
+        if os.path.isfile(out):
+            self._preview_play_file(out)
 
     def _on_caption_gen_error(self, msg):
         self.gen_captions_btn.setEnabled(True)
@@ -2183,10 +2236,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Edit Captions",
                                 "Caption style updated!")
         # Refresh the preview player with the updated video.
-        if os.path.isfile(out) and self._ensure_player():
-            self.player.setSource(QUrl.fromLocalFile(out))
-            self.player.play()
-            self._current_video = out
+        if os.path.isfile(out):
+            self._preview_play_file(out)
 
     def _on_caption_edit_error(self, msg):
         self.edit_apply_btn.setEnabled(True)
@@ -2473,9 +2524,7 @@ class MainWindow(QMainWindow):
             for c in tl.by_track("captions"):
                 tl.remove(c.id)
             self.timeline_widget.set_timeline(tl)
-        if self._ensure_player():
-            self.player.setSource(QUrl.fromLocalFile(out))
-            self.player.play()
+        self._preview_play_file(out)
         self._log("Captions removed — clean video restored.")
 
     def _run_timeline_edit(self, operation, params):
@@ -2532,9 +2581,8 @@ class MainWindow(QMainWindow):
             self._log(f"Audio {what} "
                       f"({params['start']:.1f}s–{params['end']:.1f}s).")
         # Refresh preview with the edited video.
-        if os.path.isfile(out) and self._ensure_player():
-            self.player.setSource(QUrl.fromLocalFile(out))
-            self.player.play()
+        if os.path.isfile(out):
+            self._preview_play_file(out)
         QMessageBox.information(self, "Timeline",
                                 "Timeline edit apply ho gaya!")
 
