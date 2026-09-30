@@ -1,8 +1,10 @@
 """U One - media search and download.
 
-* Pexels + Pixabay providers with a shared, pooled HTTP session
-  (connection reuse), request retries and timeouts.
-* Both providers are searched CONCURRENTLY; results are merged and ranked
+* Pexels + Pixabay + Wikimedia Commons providers with a shared, pooled
+  HTTP session (connection reuse), request retries and timeouts.
+  Wikimedia is keyless (no API key needed) and great for news niche:
+  real event/place/people photos.
+* All providers are searched CONCURRENTLY; results are merged and ranked
   by relevance score (preferred: relevant video > relevant image > graphic).
 * Downloads are cached by URL hash: the same media is never downloaded
   twice, even across projects.
@@ -339,6 +341,74 @@ def _relevance_score(cand: Dict, analysis) -> float:
     return score
 
 
+class WikimediaProvider:
+    """Keyless provider: Wikimedia Commons news/event photos.
+
+    No API key needed. Great for news niche: real photos of events,
+    places, people, disasters (not just generic stock). Only images
+    (no videos); the app applies Ken Burns motion to images.
+    """
+    name = "Wikimedia"
+    license = "Wikimedia Commons (check per-image license; mostly free)"
+
+    def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
+        if kind != "image":
+            return []
+        try:
+            params = {
+                "action": "query", "format": "json",
+                "generator": "search", "gsrsearch": query,
+                "gsrnamespace": "6",  # File: namespace
+                "gsrlimit": str(min(per_page * 2, 10)),
+                "prop": "imageinfo",
+                "iiprop": "url|size",
+                "iiurlwidth": "1280",
+            }
+            r = _SESSION.get("https://commons.wikimedia.org/w/api.php",
+                             params=params, timeout=_CONNECT_TIMEOUT)
+            r.raise_for_status()
+            pages = r.json().get("query", {}).get("pages", {})
+            out = []
+            for pid, p in pages.items():
+                ii = (p.get("imageinfo") or [{}])[0]
+                # Prefer thumbnail (1280px wide); fall back to original.
+                url = ii.get("thumburl") or ii.get("url")
+                if not url:
+                    continue
+                # Skip tiny images.
+                if (ii.get("thumbwidth") or ii.get("width") or 0) < 640:
+                    continue
+                out.append({
+                    "url": url,
+                    "page": "https://commons.wikimedia.org/wiki/" +
+                            p.get("title", "").replace(" ", "_"),
+                    "w": ii.get("thumbwidth") or ii.get("width", 0),
+                    "h": ii.get("thumbheight") or ii.get("height", 0),
+                    "dur": 0,
+                    "tags": p.get("title", ""),
+                })
+                if len(out) >= per_page:
+                    break
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "Wikimedia", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        try:
+            r = _SESSION.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={"action": "query", "format": "json",
+                        "list": "search", "srsearch": "news",
+                        "srlimit": "1"},
+                timeout=_CONNECT_TIMEOUT)
+            if r.status_code == 200:
+                return True, "Connected (keyless)"
+            return False, f"HTTP {r.status_code}"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
@@ -348,7 +418,8 @@ class MediaFinder:
                  repetition: str = "never", project_id: str = "app"):
         self.assets_dir = assets_dir
         os.makedirs(assets_dir, exist_ok=True)
-        self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key)]
+        self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
+                          WikimediaProvider()]
         self.preference = preference
         self.repetition = repetition
         self.used_ids = set()
@@ -363,9 +434,9 @@ class MediaFinder:
         return ["video", "image"]
 
     def _search_all(self, query: str, kind: str) -> List[Dict]:
-        """Search both providers concurrently for one (query, kind)."""
+        """Search all providers concurrently for one (query, kind)."""
         results: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        with ThreadPoolExecutor(max_workers=3) as ex:
             futs = {ex.submit(p.search, query, kind): p.name
                     for p in self.providers}
             for fut in as_completed(futs, timeout=45):
