@@ -33,6 +33,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                     'alignment': 2,
                     'box': False,
                     'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                     'text_case': 'upper'},
  'hormozi_yellow': {'label': 'Hormozi Yellow',
                     'category': 'Trending',
@@ -50,6 +51,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                     'alignment': 2,
                     'box': False,
                     'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                     'text_case': 'upper'},
  'hormozi_cyan': {'label': 'Hormozi Cyan',
                   'category': 'Trending',
@@ -67,6 +69,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                   'text_case': 'upper'},
  'hormozi_green': {'label': 'Hormozi Green',
                    'category': 'Trending',
@@ -84,6 +87,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'upper'},
  'hormozi_orange': {'label': 'Hormozi Orange',
                     'category': 'Trending',
@@ -101,6 +105,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                     'alignment': 2,
                     'box': False,
                     'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                     'text_case': 'upper'},
  'hormozi_pink': {'label': 'Hormozi Pink',
                   'category': 'Trending',
@@ -118,6 +123,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                   'text_case': 'upper'},
  'hormozi_red': {'label': 'Hormozi Red',
                  'category': 'Trending',
@@ -135,6 +141,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper'},
  'mrbeast': {'label': 'MrBeast',
              'category': 'Trending',
@@ -152,6 +159,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
              'alignment': 2,
              'box': False,
              'highlight_mode': 'wordbig',
+                      'anim': 'pop', 'entrance': 'slideup',
              'text_case': 'upper',
              'big_scale': 1.5},
  'podcast_viral': {'label': 'Podcast Viral',
@@ -170,6 +178,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'upper'},
  'kapwing_viral': {'label': 'Kapwing Viral',
                    'category': 'Trending',
@@ -187,6 +196,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'upper'},
  'submagic': {'label': 'Submagic',
               'category': 'Trending',
@@ -204,6 +214,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': False,
               'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
               'text_case': 'mixed'},
  'beast_word': {'label': 'Beast Word',
                 'category': 'Trending',
@@ -221,6 +232,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'wordbig',
+                      'anim': 'pop', 'entrance': 'slideup',
                 'text_case': 'upper',
                 'big_scale': 1.7},
  'neon_cyan': {'label': 'Neon Cyan',
@@ -239,6 +251,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H00FFFF00'},
  'neon_pink': {'label': 'Neon Pink',
@@ -257,6 +270,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H005500FF'},
  'neon_lime': {'label': 'Neon Lime',
@@ -275,6 +289,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H0035E6A3'},
  'neon_gold': {'label': 'Neon Gold',
@@ -293,6 +308,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H0000D7FF'},
  'cyberpunk': {'label': 'Cyberpunk',
@@ -311,6 +327,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H005E3FF4'},
  'dark_psychology': {'label': 'Dark Psychology',
@@ -329,6 +346,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                      'alignment': 2,
                      'box': False,
                      'highlight_mode': 'wordglow',
+                      'anim': 'shake', 'entrance': 'slideup',
                      'text_case': 'upper',
                      'glow_color': '&H002626DC'},
  'fintech': {'label': 'Fintech Wealth',
@@ -347,6 +365,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
              'alignment': 2,
              'box': False,
              'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
              'text_case': 'upper',
              'glow_color': '&H0081B910'},
  'rainbow_glow': {'label': 'Rainbow Glow',
@@ -365,6 +384,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                   'text_case': 'upper',
                   'glow_color': '&H00F755A8'},
  'neon_tube': {'label': 'Neon Tube',
@@ -383,6 +403,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordglow',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'glow_color': '&H005500FF'},
  'ali_abdaal': {'label': 'Ali Abdaal',
@@ -401,6 +422,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                 'text_case': 'mixed'},
  'iman_luxury': {'label': 'Iman Luxury',
                  'category': 'Aesthetic',
@@ -418,6 +440,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                  'text_case': 'mixed'},
  'cinema_noir': {'label': 'Cinema Noir',
                  'category': 'Aesthetic',
@@ -435,6 +458,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                  'text_case': 'mixed'},
  'vox_explainer': {'label': 'Vox Explainer',
                    'category': 'Aesthetic',
@@ -452,6 +476,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                    'text_case': 'mixed'},
  'cinema_gold': {'label': 'Cinema Gold',
                  'category': 'Aesthetic',
@@ -469,6 +494,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                  'text_case': 'mixed'},
  'elegant_serif': {'label': 'Elegant Serif',
                    'category': 'Aesthetic',
@@ -486,6 +512,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                    'text_case': 'mixed'},
  'nordic_clean': {'label': 'Nordic Clean',
                   'category': 'Aesthetic',
@@ -503,6 +530,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                   'text_case': 'mixed'},
  'clean_tech': {'label': 'Clean Tech',
                 'category': 'Aesthetic',
@@ -520,6 +548,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                 'text_case': 'mixed'},
  'script_accent': {'label': 'Script Accent',
                    'category': 'Aesthetic',
@@ -537,6 +566,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'mixed'},
  'purple_pill': {'label': 'Purple Pill',
                  'category': 'Highlight',
@@ -554,6 +584,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper',
                  'box_color': '&H00DC279B'},
  'yellow_pill': {'label': 'Yellow Pill',
@@ -572,6 +603,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper',
                  'box_color': '&H0000D7FF'},
  'red_pill': {'label': 'Red Pill',
@@ -590,6 +622,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': False,
               'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
               'text_case': 'upper',
               'box_color': '&H002626DC'},
  'blue_pill': {'label': 'Blue Pill',
@@ -608,6 +641,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'box_color': '&H00EB6325'},
  'green_pill': {'label': 'Green Pill',
@@ -626,6 +660,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                 'text_case': 'upper',
                 'box_color': '&H0035E6A3'},
  'black_pill': {'label': 'Black Pill',
@@ -644,6 +679,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                 'text_case': 'upper',
                 'box_color': '&H00000000'},
  'cyan_pill': {'label': 'Cyan Pill',
@@ -662,6 +698,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                'text_case': 'upper',
                'box_color': '&H00FFFF00'},
  'highlighter_yellow': {'label': 'Highlighter Yellow',
@@ -680,6 +717,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                         'alignment': 2,
                         'box': False,
                         'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                         'text_case': 'mixed',
                         'box_color': '&H0000D7FF'},
  'highlighter_pink': {'label': 'Highlighter Pink',
@@ -698,6 +736,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                       'alignment': 2,
                       'box': False,
                       'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                       'text_case': 'mixed',
                       'box_color': '&H009948EC'},
  'red_box_sweep': {'label': 'Red Box Sweep',
@@ -716,6 +755,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'wordbox',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'upper',
                    'box_color': '&H004F38E5'},
  'karaoke_fill': {'label': 'Karaoke Fill',
@@ -733,7 +773,8 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'shadow': 1,
                   'alignment': 2,
                   'box': False,
-                  'highlight_mode': 'karaoke',
+                  'highlight_mode': 'karaoke', 'karaoke_smooth': True,
+                      'anim': 'none', 'entrance': 'slideup',
                   'text_case': 'upper'},
  'word_big_pop': {'label': 'Word Big Pop',
                   'category': 'Highlight',
@@ -751,6 +792,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'wordbig',
+                      'anim': 'bounce', 'entrance': 'slideup',
                   'text_case': 'upper',
                   'big_scale': 1.8},
  'word_pop': {'label': 'Word Pop',
@@ -769,6 +811,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': False,
               'highlight_mode': 'word',
+                      'anim': 'bounce', 'entrance': 'slideup',
               'text_case': 'upper'},
  'single_word_flash': {'label': 'Single Word Flash',
                        'category': 'Word',
@@ -786,6 +829,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                        'alignment': 2,
                        'box': False,
                        'highlight_mode': 'wordbig',
+                      'anim': 'pop', 'entrance': 'slideup',
                        'text_case': 'upper',
                        'big_scale': 1.3},
  'scale_pop': {'label': 'Scale Pop',
@@ -804,6 +848,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                'alignment': 2,
                'box': False,
                'highlight_mode': 'wordbig',
+                      'anim': 'bounce', 'entrance': 'slideup',
                'text_case': 'upper',
                'big_scale': 1.6},
  'typewriter': {'label': 'Typewriter',
@@ -821,7 +866,8 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'shadow': 0,
                 'alignment': 2,
                 'box': True,
-                'highlight_mode': 'karaoke',
+                'highlight_mode': 'typewriter',
+                      'anim': 'none', 'entrance': 'none',
                 'text_case': 'mixed'},
  'code_terminal': {'label': 'Code Terminal',
                    'category': 'Word',
@@ -838,7 +884,8 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'shadow': 0,
                    'alignment': 2,
                    'box': True,
-                   'highlight_mode': 'word',
+                   'highlight_mode': 'typewriter',
+                      'anim': 'pop', 'entrance': 'none',
                    'text_case': 'mixed'},
  'hormozi_box': {'label': 'Hormozi Box',
                  'category': 'Frame',
@@ -856,6 +903,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': True,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper'},
  'blue_box': {'label': 'Blue Box',
               'category': 'Frame',
@@ -873,6 +921,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': True,
               'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
               'text_case': 'upper'},
  'red_box': {'label': 'Red Box',
              'category': 'Frame',
@@ -890,6 +939,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
              'alignment': 2,
              'box': True,
              'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
              'text_case': 'upper'},
  'caption_bar': {'label': 'Caption Bar',
                  'category': 'Frame',
@@ -908,6 +958,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'box': False,
                  'pill': True,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'fadein',
                  'text_case': 'mixed'},
  'news_bar': {'label': 'News Bar',
               'category': 'Frame',
@@ -925,6 +976,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': True,
               'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'fadein',
               'text_case': 'upper'},
  'tiktok_bar': {'label': 'TikTok Bar',
                 'category': 'Frame',
@@ -943,6 +995,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'box': False,
                 'pill': True,
                 'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'fadein',
                 'text_case': 'mixed'},
  'white_card': {'label': 'White Card',
                 'category': 'Frame',
@@ -961,6 +1014,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'box': False,
                 'pill': True,
                 'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                 'text_case': 'mixed'},
  'black_contour': {'label': 'Black Contour',
                    'category': 'Frame',
@@ -979,6 +1033,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'box': False,
                    'pill': True,
                    'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                    'text_case': 'upper'},
  'minimal_vlog_capsule': {'label': 'Vlog Capsule',
                           'category': 'Frame',
@@ -997,6 +1052,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                           'box': False,
                           'pill': True,
                           'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                           'text_case': 'upper'},
  'minimal_clean': {'label': 'Minimal Clean',
                    'category': 'Monoline',
@@ -1014,6 +1070,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': False,
                    'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                    'text_case': 'mixed'},
  'youtube_style': {'label': 'YouTube Style',
                    'category': 'Monoline',
@@ -1031,6 +1088,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                    'alignment': 2,
                    'box': True,
                    'highlight_mode': 'karaoke',
+                      'anim': 'none', 'entrance': 'fadein',
                    'text_case': 'mixed'},
  'outline_only': {'label': 'Outline Only',
                   'category': 'Monoline',
@@ -1048,6 +1106,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                   'text_case': 'upper'},
  'thin_clean': {'label': 'Thin Clean',
                 'category': 'Monoline',
@@ -1065,6 +1124,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                 'text_case': 'mixed'},
  'meme_top': {'label': 'Meme Top',
               'category': 'Basic',
@@ -1082,6 +1142,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 8,
               'box': False,
               'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'fadein',
               'text_case': 'upper'},
  'meme_bottom': {'label': 'Meme Bottom',
                  'category': 'Basic',
@@ -1099,6 +1160,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'fadein',
                  'text_case': 'upper'},
  'comic': {'label': 'Comic',
            'category': 'Basic',
@@ -1116,6 +1178,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
            'alignment': 2,
            'box': False,
            'highlight_mode': 'word',
+                      'anim': 'bounce', 'entrance': 'slideup',
            'text_case': 'mixed'},
  'comic_pink': {'label': 'Comic Pink',
                 'category': 'Basic',
@@ -1133,6 +1196,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'word',
+                      'anim': 'bounce', 'entrance': 'slideup',
                 'text_case': 'mixed'},
  'retro': {'label': 'Retro',
            'category': 'Basic',
@@ -1150,6 +1214,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
            'alignment': 2,
            'box': False,
            'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
            'text_case': 'upper'},
  'urban_rebel': {'label': 'Urban Rebel',
                  'category': 'Basic',
@@ -1167,6 +1232,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper'},
  'warm_pastel': {'label': 'Warm Pastel',
                  'category': 'Basic',
@@ -1184,6 +1250,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop_soft', 'entrance': 'fadein',
                  'text_case': 'mixed'},
  'creator_pop': {'label': 'Creator Pop',
                  'category': 'Basic',
@@ -1201,6 +1268,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'bounce', 'entrance': 'slideup',
                  'text_case': 'mixed'},
  'tiktok_hype': {'label': 'TikTok Hype',
                  'category': 'Basic',
@@ -1218,6 +1286,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'upper'},
  'sports_hype': {'label': 'Sports Hype',
                  'category': 'Basic',
@@ -1235,6 +1304,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'shake', 'entrance': 'slideup',
                  'text_case': 'upper'},
  'dark_documentary': {'label': 'Dark Documentary',
                       'category': 'Basic',
@@ -1252,6 +1322,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                       'alignment': 2,
                       'box': False,
                       'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                       'text_case': 'mixed'},
  'desi_dhamaka': {'label': 'Desi Dhamaka',
                   'category': 'Basic',
@@ -1269,6 +1340,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                   'alignment': 2,
                   'box': False,
                   'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                   'text_case': 'upper'},
  'red_text': {'label': 'Red Text',
               'category': 'Basic',
@@ -1286,6 +1358,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
               'alignment': 2,
               'box': False,
               'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
               'text_case': 'upper'},
  'green_highlight': {'label': 'Green Highlight',
                      'category': 'Basic',
@@ -1303,6 +1376,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                      'alignment': 2,
                      'box': False,
                      'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                      'text_case': 'upper'},
  'lime_highlight': {'label': 'Lime Highlight',
                     'category': 'Basic',
@@ -1320,6 +1394,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                     'alignment': 2,
                     'box': False,
                     'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                     'text_case': 'upper'},
  'yellow_highlight': {'label': 'Yellow Highlight',
                       'category': 'Basic',
@@ -1337,6 +1412,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                       'alignment': 2,
                       'box': False,
                       'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                       'text_case': 'upper'},
  'plain_bold': {'label': 'Plain Bold',
                 'category': 'Basic',
@@ -1354,6 +1430,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                 'alignment': 2,
                 'box': False,
                 'highlight_mode': 'karaoke',
+                      'anim': 'none', 'entrance': 'fadein',
                 'text_case': 'upper'},
  'handwritten': {'label': 'Handwritten',
                  'category': 'Basic',
@@ -1371,6 +1448,7 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'alignment': 2,
                  'box': False,
                  'highlight_mode': 'word',
+                      'anim': 'pop', 'entrance': 'slideup',
                  'text_case': 'mixed'}}
 
 CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Glow', 'Aesthetic', 'Highlight', 'Word', 'Frame', 'Monoline', 'Basic']
@@ -1408,6 +1486,137 @@ def _ts_ass(sec):
     h, rem = int(sec // 3600), sec % 3600
     m, rem = int(rem // 60), rem % 60
     return f"{h}:{m:02d}:{int(rem):02d}.{int(rem % 1 * 100):02d}"
+
+
+# ---------------------------------------------------------------------------
+# Kinetic typography animation engines (CapCut-style animated captions).
+#
+# Tag mechanics verified against libass master ass_parse.c (2026-09-30):
+#  * \t(t1,t2[,accel],tags): t1/t2 = ms from EVENT start (not absolute);
+#    k=pow((t-t1)/(t2-t1),accel) clamped to [0,1]; sequential \t tags chain
+#    correctly; nested \t is NOT supported (inner overwrites outer).
+#  * Transformable in \t: \fscx \fscy \fs \frz \bord \shad \1c-\4c \alpha...
+#    NOT transformable: \pos \move \fad \fade \k* \an (first-wins / own timing).
+#  * Word animations use \t on \fscx/\fscy/\1c/\frz (cheap affine+color ops).
+#    Entrance animations use \fad and \move ONLY (no tag overlap -> no
+#    conflicts between entrance and word-level transforms).
+# ---------------------------------------------------------------------------
+
+def _word_anim_open(anim, sec, pri, tmpl):
+    """ASS override block for the ACTIVE (spoken) word.
+
+    Returns (open_tags, close_tags). open_tags goes before the word,
+    close_tags after it. Times in \t are ms relative to the word-event's
+    own start, so each word pops exactly when it is spoken.
+    """
+    c_open = "{\\c%s" % sec
+    c_close = "{\\c%s}" % pri
+    if anim == "pop":
+        # 100 -> 135% over 150ms, settle back by 350ms (CapCut signature)
+        return (c_open + "\\t(0,150,\\fscx135\\fscy135)"
+                "\\t(150,350,\\fscx100\\fscy100)}", c_close)
+    if anim == "pop_soft":
+        # gentler 118% pop for minimal/clean styles
+        return (c_open + "\\t(0,150,\\fscx118\\fscy118)"
+                "\\t(150,350,\\fscx100\\fscy100)}", c_close)
+    if anim == "bounce":
+        # pop -> slight undershoot -> settle (k clamps to [0,1], so bounce
+        # needs chained \t; accel 0.6 = fast start, ease out)
+        return (c_open + "\\t(0,120,0.6,\\fscx140\\fscy140)"
+                "\\t(120,220,\\fscx95\\fscy95)"
+                "\\t(220,340,\\fscx100\\fscy100)}", c_close)
+    if anim == "shake":
+        # rotational wobble via \frz (chained \move does NOT work in libass)
+        return (c_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
+                "\\t(120,180,\\frz0)}", c_close)
+    # "none" or unknown: static color swap (old behaviour)
+    return (c_open + "}", c_close)
+
+
+def _wordbox_anim_open(anim, tmpl, sec, pri):
+    """Active-word tags for the wordbox style (colored box + optional pop)."""
+    box_c = tmpl.get("box_color", "&H00FF0000")
+    bo = tmpl.get("outline", 2)
+    oc = tmpl["outline_c"]
+    base_open = "{\\bord6\\3c%s\\c%s" % (box_c, sec)
+    base_close = "{\\bord%d\\3c%s\\c%s}" % (bo, oc, pri)
+    if anim == "pop":
+        return (base_open + "\\t(0,150,\\fscx130\\fscy130)"
+                "\\t(150,350,\\fscx100\\fscy100)}", base_close)
+    if anim == "bounce":
+        return (base_open + "\\t(0,120,0.6,\\fscx140\\fscy140)"
+                "\\t(120,220,\\fscx95\\fscy95)"
+                "\\t(220,340,\\fscx100\\fscy100)}", base_close)
+    if anim == "shake":
+        return (base_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
+                "\\t(120,180,\\frz0)}", base_close)
+    return (base_open + "}", base_close)
+
+
+def _wordglow_anim_open(anim, tmpl, sec, pri):
+    """Active-word tags for the wordglow style (colored glow + optional pop)."""
+    glow_c = tmpl.get("glow_color", sec)
+    bo = tmpl.get("outline", 2)
+    oc = tmpl["outline_c"]
+    base_open = "{\\c%s\\bord4\\3c%s" % (sec, glow_c)
+    base_close = "{\\c%s\\bord%d\\3c%s}" % (pri, bo, oc)
+    if anim == "pop":
+        return (base_open + "\\t(0,150,\\fscx130\\fscy130)"
+                "\\t(150,350,\\fscx100\\fscy100)}", base_close)
+    if anim == "bounce":
+        return (base_open + "\\t(0,120,0.6,\\fscx140\\fscy140)"
+                "\\t(120,220,\\fscx95\\fscy95)"
+                "\\t(220,340,\\fscx100\\fscy100)}", base_close)
+    if anim == "shake":
+        return (base_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
+                "\\t(120,180,\\frz0)}", base_close)
+    return (base_open + "}", base_close)
+
+
+def _wordbig_anim_open(anim, tmpl, sec, pri):
+    """Active-word tags for wordbig: bigger + colored, with pop animation."""
+    if anim == "pop":
+        # punch to 150%, settle at 120% (stays emphasized), reset after
+        return ("{\\c%s\\t(0,150,\\fscx150\\fscy150)"
+                "\\t(150,350,\\fscx120\\fscy120)}" % sec,
+                "{\\c%s\\fscx100\\fscy100}" % pri)
+    if anim == "bounce":
+        return ("{\\c%s\\t(0,120,0.6,\\fscx160\\fscy160)"
+                "\\t(120,220,\\fscx110\\fscy110)"
+                "\\t(220,340,\\fscx120\\fscy120)}" % sec,
+                "{\\c%s\\fscx100\\fscy100}" % pri)
+    if anim == "shake":
+        return ("{\\c%s\\fscx120\\fscy120"
+                "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)\\t(120,180,\\frz0)}" % sec,
+                "{\\c%s\\fscx100\\fscy100}" % pri)
+    # static fallback (old behaviour): instant \fs size jump
+    cap_size = tmpl.get("_cap_size", 48)
+    big_size = int(cap_size * tmpl.get("big_scale", 1.8))
+    return ("{\\fs%d\\c%s}" % (big_size, sec),
+            "{\\fs%d\\c%s}" % (cap_size, pri))
+
+
+def _entrance_tags(entrance, alignment, pw, ph):
+    """Line-entrance animation tags (prepended to the event text).
+
+    Uses ONLY \\fad and \\move so it never conflicts with the word-level
+    \\t(\\fscx/\\fscy/\\1c) transforms.
+    """
+    if entrance == "fadein":
+        return "{\\fad(180,0)}"
+    if entrance == "slideup":
+        # resting anchor depends on alignment; \\move positions the anchor.
+        # \\an2 (bottom-center): anchor = (pw/2, ph - MarginV); MarginV = 60.
+        # \\an5 (middle-center): anchor = (pw/2, ph/2).
+        # \\an8 (top-center):    anchor = (pw/2, MarginV).
+        if alignment == 8:
+            x, y = pw // 2, 60
+        elif alignment == 5:
+            x, y = pw // 2, ph // 2
+        else:
+            x, y = pw // 2, ph - 60
+        return "{\\move(%d,%d,%d,%d,0,250)\\fad(250,0)}" % (x, y + 50, x, y)
+    return ""
 
 
 def build_srt(sentence_timings, path):
@@ -1455,7 +1664,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
        top_size)
     lines = []
     hmode = tmpl.get("highlight_mode", "karaoke")
+    anim = tmpl.get("anim", "pop")
+    entrance = tmpl.get("entrance", "slideup")
     tcase = tmpl.get("text_case")
+    tmpl["_cap_size"] = cap_size  # for wordbig static fallback sizing
 
     def _case(w: str) -> str:
         if tcase == "upper":
@@ -1468,16 +1680,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # CapCut "Word Highlight": the FULL sentence stays on screen, but
         # only the CURRENT word is emphasized (non-cumulative). One event per
         # word, each spanning until the next word starts.
-        #   word:    current word colored
-        #   wordbox: current word on a colored box
-        #   wordbig: current word bigger + colored (size emphasis)
-        #   wordglow: current word with colored glow outline
+        #   word:    current word colored + kinetic pop/bounce/shake
+        #   wordbox: current word on a colored box + kinetic pop
+        #   wordbig: current word bigger + colored, animated scale punch
+        #   wordglow: current word with colored glow outline + kinetic pop
+        # The active word gets \\t(\\fscx/\\fscy) transforms timed from the
+        # word-event's own start, so each word pops exactly when spoken.
         sec = tmpl["secondary"]
         pri = tmpl["primary"]
-        box_c = tmpl.get("box_color", "&H00FF0000")
-        glow_c = tmpl.get("glow_color", sec)
-        big_scale = tmpl.get("big_scale", 1.8)
-        big_size = int(cap_size * big_scale)
         words = list(word_timings)
         wi = 0
         for s in sentence_timings:
@@ -1488,9 +1698,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not seg:
                 w0 = _case(s["text"])
                 safe = sanitize_ass_text(w0)
+                ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
-                    f"Cap,,0,0,0,,{safe}")
+                    f"Cap,,0,0,0,,{ent}{safe}")
                 continue
             sent_words = [_case(w["word"]) for w in seg]
             for i, w in enumerate(seg):
@@ -1501,34 +1712,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     we = max(we, s["end"])
                 if we <= ws:
                     we = ws + 0.01
+                # entrance animation only on the first word-event of the line
+                ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph) if i == 0 else ""
+                if hmode == "wordbox":
+                    wopen, wclose = _wordbox_anim_open(anim, tmpl, sec, pri)
+                elif hmode == "wordbig":
+                    wopen, wclose = _wordbig_anim_open(anim, tmpl, sec, pri)
+                elif hmode == "wordglow":
+                    wopen, wclose = _wordglow_anim_open(anim, tmpl, sec, pri)
+                else:
+                    wopen, wclose = _word_anim_open(anim, sec, pri, tmpl)
                 parts = []
                 for j, sw_ in enumerate(sent_words):
                     safe = sanitize_ass_text(sw_)
                     if j == i:
-                        if hmode == "wordbox":
-                            parts.append(
-                                "{\\bord6\\3c%s}%s{\\bord%d\\3c%s}" %
-                                (box_c, safe, tmpl["outline"],
-                                 tmpl["outline_c"]))
-                        elif hmode == "wordbig":
-                            parts.append(
-                                "{\\fs%d\\c%s}%s{\\fs%d\\c%s}" %
-                                (big_size, sec, safe, cap_size, pri))
-                        elif hmode == "wordglow":
-                            parts.append(
-                                "{\\c%s\\bord4\\3c%s}%s{\\c%s\\bord%d\\3c%s}" %
-                                (sec, glow_c, safe, pri,
-                                 tmpl["outline"], tmpl["outline_c"]))
-                        else:
-                            parts.append("{\\c%s}%s{\\c%s}" % (sec, safe, pri))
+                        parts.append("%s%s%s" % (wopen, safe, wclose))
                     else:
                         parts.append(safe)
                 txt = " ".join(parts)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
-                    f"Cap,,0,0,0,,{txt}")
+                    f"Cap,,0,0,0,,{ent}{txt}")
+    elif highlight and word_timings and hmode == "typewriter":
+        # Real typewriter: one event per character step, progressively
+        # revealing the sentence (centered growth looks best for captions).
+        for s in sentence_timings:
+            text = _case(s["text"])
+            n = len(text)
+            if n == 0:
+                continue
+            dur = max(0.3, s["end"] - s["start"])
+            step = dur / n
+            for i in range(1, n + 1):
+                cs = s["start"] + (i - 1) * step
+                ce = s["start"] + i * step if i < n else s["end"]
+                safe = sanitize_ass_text(text[:i])
+                lines.append(
+                    f"Dialogue: 0,{_ts_ass(cs)},{_ts_ass(ce)},"
+                    f"Cap,,0,0,0,,{safe}")
     elif highlight and word_timings:
         # karaoke-style per-word highlight
+        k_tag = "\\kf" if tmpl.get("karaoke_smooth") else "\\k"
+        ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
         words = list(word_timings)
         wi = 0
         for s in sentence_timings:
@@ -1538,10 +1763,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 wi += 1
             if not seg:
                 seg = [{"word": s["text"], "start": s["start"], "end": s["end"]}]
-            txt = "".join("{\\k%d}%s " % (max(1, int((w["end"] - w["start"]) * 100)),
-                                          sanitize_ass_text(w["word"]))
+            txt = "".join("{%s%d}%s " % (k_tag, max(1, int((w["end"] - w["start"]) * 100)),
+                                          sanitize_ass_text(_case(w["word"])))
                           for w in seg)
-            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{txt.strip()}")
+            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{ent}{txt.strip()}")
     else:
         for s in sentence_timings:
             safe = sanitize_ass_text(s["text"])
