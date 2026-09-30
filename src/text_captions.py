@@ -653,6 +653,80 @@ CAPTION_TEMPLATES = {
         "bold": -1, "italic": 0, "outline": 2, "shadow": 1,
         "alignment": 2, "box": False,
     },
+    # -- Word Highlight styles (CapCut "Word Highlight" look) -----------------
+    # highlight_mode="word": only the CURRENT word is colored, the rest stay
+    # white — like the reference photos. text_case controls caps vs mixed.
+    "wh_yellow": {
+        "label": "Word Highlight Yellow",
+        "desc": "Current word in yellow, rest white — viral CapCut style",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_yellow_caps": {
+        "label": "Word Highlight Yellow CAPS",
+        "desc": "ALL CAPS, current word yellow — bold viral style",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FFFF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_green": {
+        "label": "Word Highlight Green",
+        "desc": "Current word in green, rest white",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FF00",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "mixed",
+    },
+    "wh_green_caps": {
+        "label": "Word Highlight Green CAPS",
+        "desc": "ALL CAPS, current word green",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H0000FF00",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_cyan_caps": {
+        "label": "Word Highlight Cyan CAPS",
+        "desc": "ALL CAPS, current word cyan",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H00FFFF00",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_pink_caps": {
+        "label": "Word Highlight Pink CAPS",
+        "desc": "ALL CAPS, current word pink",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H00FF80FF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "word", "text_case": "upper",
+    },
+    "wh_bluebox_caps": {
+        "label": "Word Highlight Blue Box",
+        "desc": "ALL CAPS, current word on a blue box",
+        "font": "Arial", "size_scale": 1.1,
+        "primary": "&H00FFFFFF", "secondary": "&H00FFFFFF",
+        "outline_c": "&H90000000", "back_c": "&H90000000",
+        "bold": -1, "italic": 0, "outline": 3, "shadow": 1,
+        "alignment": 2, "box": False,
+        "highlight_mode": "wordbox", "text_case": "upper",
+        "box_color": "&H00FF0000",
+    },
 }
 
 DEFAULT_CAPTION_TEMPLATE = "tiktok_classic"
@@ -728,7 +802,64 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
        border_style, tmpl["outline"], tmpl["shadow"], tmpl["alignment"],
        top_size)
     lines = []
-    if highlight and word_timings:
+    hmode = tmpl.get("highlight_mode", "karaoke")
+    tcase = tmpl.get("text_case")
+
+    def _case(w: str) -> str:
+        if tcase == "upper":
+            return w.upper()
+        if tcase == "lower":
+            return w.lower()
+        return w
+
+    if highlight and word_timings and hmode in ("word", "wordbox"):
+        # CapCut "Word Highlight": the FULL sentence stays on screen, but
+        # only the CURRENT word is colored (non-cumulative). One event per
+        # word, each spanning until the next word starts.
+        sec = tmpl["secondary"]
+        pri = tmpl["primary"]
+        box_c = tmpl.get("box_color", "&H00FF0000")
+        words = list(word_timings)
+        wi = 0
+        for s in sentence_timings:
+            seg = []
+            while wi < len(words) and words[wi]["end"] <= s["end"] + 0.05:
+                seg.append(words[wi])
+                wi += 1
+            if not seg:
+                w0 = _case(s["text"])
+                safe = sanitize_ass_text(w0)
+                lines.append(
+                    f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
+                    f"Cap,,0,0,0,,{safe}")
+                continue
+            sent_words = [_case(w["word"]) for w in seg]
+            for i, w in enumerate(seg):
+                ws, we = w["start"], w["end"]
+                if i + 1 < len(seg):
+                    we = seg[i + 1]["start"]
+                else:
+                    we = max(we, s["end"])
+                if we <= ws:
+                    we = ws + 0.01
+                parts = []
+                for j, sw_ in enumerate(sent_words):
+                    safe = sanitize_ass_text(sw_)
+                    if j == i:
+                        if hmode == "wordbox":
+                            parts.append(
+                                "{\\bord6\\3c%s}%s{\\bord%d\\3c%s}" %
+                                (box_c, safe, tmpl["outline"],
+                                 tmpl["outline_c"]))
+                        else:
+                            parts.append("{\\c%s}%s{\\c%s}" % (sec, safe, pri))
+                    else:
+                        parts.append(safe)
+                txt = " ".join(parts)
+                lines.append(
+                    f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
+                    f"Cap,,0,0,0,,{txt}")
+    elif highlight and word_timings:
         # karaoke-style per-word highlight
         words = list(word_timings)
         wi = 0
