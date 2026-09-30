@@ -100,4 +100,5 @@ def has_keys() -> Dict[str, bool]:
     return {"pexels": bool(get_key("pexels")),
             "pixabay": bool(get_key("pixabay")),
             "google": bool(get_key("google_key") and get_key("google_cx")),
-            "serper": bool(get_key("serper"))}
+            "serper": bool(get_key("serper")),
+            "reddit": bool(get_key("reddit_id") and get_key("reddit_secret"))}
