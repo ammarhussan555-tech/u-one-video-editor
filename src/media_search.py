@@ -47,6 +47,14 @@ _VIDEO_PAGE_BLOCKLIST = (
     "twitter.com", "x.com", "instagram.com", "tiktok.com",
     "dailymotion.com", "rumble.com",
 )
+# Tweet URL -> (user, status_id). X itself is blocklisted above because its
+# pages need login; tweets are resolved via the FxEmbed "d." hosts instead.
+_TWEET_RE = re.compile(
+    r"https?://(?:www\.)?(?:x\.com|twitter\.com)/(\w+)/status/(\d+)",
+    re.IGNORECASE)
+# FxEmbed hosts: d.<host>/<user>/status/<id> 302-redirects to the direct
+# video.twimg.com mp4 (no login, no API key).
+_FX_VIDEO_HOSTS = ("d.fxtwitter.com", "d.fixupx.com", "d.vxtwitter.com")
 _MIN_BYTES = 8 * 1024
 
 
@@ -778,6 +786,119 @@ class SerperProvider:
             return False, str(e)[:80]
 
 
+class XTwitterProvider:
+    """X/Twitter latest media via Serper discovery + FxEmbed resolution.
+
+    X's own API is paid-only and X login-walls scrapers, so this provider:
+      video: Serper /videos with 'site:x.com' -> tweet URLs ->
+             d.fxtwitter.com (302 redirect) -> direct video.twimg.com mp4.
+      image: Serper /images with 'site:x.com' -> direct pbs.twimg.com URLs.
+    Reuses the Serper API key (no separate key); without it, silently
+    skipped. first_query_only keeps Serper quota use to 1 call/scene/kind.
+    """
+    name = "X"
+    license = "X/Twitter (check per-post license)"
+    first_query_only = True
+
+    def __init__(self, serper_key: str = ""):
+        self.api_key = serper_key or ""
+
+    def _api(self, endpoint: str, query: str, num: int) -> Dict:
+        r = _SESSION.post(
+            f"https://google.serper.dev/{endpoint}",
+            headers={"X-API-KEY": self.api_key,
+                     "Content-Type": "application/json"},
+            json={"q": query, "num": num},
+            timeout=_CONNECT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def _tweet_direct_mp4(self, tweet_url: str) -> Optional[str]:
+        """Resolve a tweet URL to its direct video.twimg.com mp4 (or None)."""
+        m = _TWEET_RE.match((tweet_url or "").strip())
+        if not m:
+            return None
+        user, sid = m.group(1), m.group(2)
+        for host in _FX_VIDEO_HOSTS:
+            try:
+                with _SESSION.get(f"https://{host}/{user}/status/{sid}",
+                                  timeout=12, stream=True) as r:
+                    final = r.url or ""
+                    if "video.twimg.com" in final:
+                        return final
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
+        if not self.api_key:
+            return []
+        try:
+            out: List[Dict] = []
+            if kind == "image":
+                data = self._api("images", f"{query} site:x.com",
+                                 min(per_page * 2, 10))
+                for it in data.get("images", []):
+                    url = it.get("imageUrl", "") or ""
+                    if "pbs.twimg.com" not in url:
+                        continue
+                    out.append({
+                        "url": url,
+                        "page": it.get("link", ""),
+                        "w": it.get("imageWidth", 0),
+                        "h": it.get("imageHeight", 0),
+                        "dur": 0,
+                        "tags": it.get("title", ""),
+                    })
+                    if len(out) >= per_page:
+                        break
+            else:
+                data = self._api("videos", f"{query} site:x.com",
+                                 min(per_page * 2, 10))
+                tweets: List[tuple] = []
+                for it in data.get("videos", []):
+                    link = it.get("link", "") or ""
+                    if _TWEET_RE.match(link) and \
+                            all(link != t[0] for t in tweets):
+                        tweets.append((link, it.get("title", "") or ""))
+                    if len(tweets) >= 4:
+                        break
+                if tweets:
+                    with ThreadPoolExecutor(max_workers=3) as ex:
+                        futs = {ex.submit(self._tweet_direct_mp4, link): (link, t)
+                                for link, t in tweets}
+                        for fut in as_completed(futs):
+                            if len(out) >= per_page:
+                                break
+                            link, title = futs[fut]
+                            try:
+                                mp4 = fut.result()
+                            except Exception:  # noqa: BLE001
+                                continue
+                            if mp4:
+                                out.append({
+                                    "url": mp4,
+                                    "page": link,
+                                    "w": 0, "h": 0, "dur": 0,
+                                    "tags": title,
+                                })
+        except Exception:  # noqa: BLE001
+            return []
+        return [{**o, "source": "X", "license": self.license,
+                 "query": query} for o in out if o.get("url")]
+
+    def test(self) -> tuple[bool, str]:
+        if not self.api_key:
+            return False, "Needs Serper key."
+        try:
+            data = self._api("search", "news site:x.com", 1)
+            if "organic" in data:
+                return True, "Connected"
+            return False, str(data.get("error", ""))[:80] or "API error"
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)[:80]
+
+
 class MediaFinder:
     """Concurrent provider search, ranked selection, dedupe, safe cached
     downloads, generated-graphics fallback. Never raises."""
@@ -791,6 +912,7 @@ class MediaFinder:
         os.makedirs(assets_dir, exist_ok=True)
         self.providers = [PexelsProvider(pexels_key), PixabayProvider(pixabay_key),
                           SerperProvider(serper_key),
+                          XTwitterProvider(serper_key),
                           GoogleProvider(google_key, google_cx),
                           WikimediaProvider(), ArchiveOrgProvider()]
         self.preference = preference
@@ -806,12 +928,19 @@ class MediaFinder:
             return ["image", "video"]
         return ["video", "image"]
 
-    def _search_all(self, query: str, kind: str) -> List[Dict]:
-        """Search all providers concurrently for one (query, kind)."""
+    def _search_all(self, query: str, kind: str,
+                    first_only: bool = False) -> List[Dict]:
+        """Search all providers concurrently for one (query, kind).
+
+        first_only=True skips providers flagged first_query_only (used for
+        the 2nd/3rd query variants to save paid-search quota).
+        """
         results: List[Dict] = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
+        provs = [p for p in self.providers
+                 if not (first_only and getattr(p, "first_query_only", False))]
+        with ThreadPoolExecutor(max_workers=8) as ex:
             futs = {ex.submit(p.search, query, kind): p.name
-                    for p in self.providers}
+                    for p in provs}
             for fut in as_completed(futs, timeout=45):
                 try:
                     results.extend(fut.result(timeout=5) or [])
@@ -825,9 +954,10 @@ class MediaFinder:
         try:
             for kind in self._kind_order():
                 candidates: List[Dict] = []
-                for q in queries:
+                for qi, q in enumerate(queries):
                     try:
-                        candidates.extend(self._search_all(q, kind))
+                        candidates.extend(
+                            self._search_all(q, kind, first_only=(qi > 0)))
                     except Exception:  # noqa: BLE001
                         continue
                 # rank: relevance first, then provider preference
@@ -898,5 +1028,7 @@ def test_provider(which: str, key: str) -> tuple[bool, str]:
                               parts[1] if len(parts) > 1 else "").test()
     if which == "serper":
         return SerperProvider(key).test()
+    if which == "x_twitter":
+        return XTwitterProvider(key).test()
     prov = PexelsProvider(key) if which == "pexels" else PixabayProvider(key)
     return prov.test()
