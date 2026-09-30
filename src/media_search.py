@@ -19,7 +19,9 @@
 from __future__ import annotations
 
 import hashlib
+import html as _html
 import os
+import re
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,6 +38,15 @@ from .ffmpeg_util import ffprobe_duration, media_has_streams
 
 _CONNECT_TIMEOUT = 12
 _DOWNLOAD_TIMEOUT = 60
+
+# Direct video files the downloader can fetch over plain HTTP.
+_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".m4v")
+# Video pages that never expose a direct file in static HTML (JS players).
+_VIDEO_PAGE_BLOCKLIST = (
+    "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.watch",
+    "twitter.com", "x.com", "instagram.com", "tiktok.com",
+    "dailymotion.com", "rumble.com",
+)
 _MIN_BYTES = 8 * 1024
 
 
@@ -622,7 +633,10 @@ class SerperProvider:
 
     Free signup at serper.dev (2,500 free searches, no card needed).
     Single API key. Searches the entire web: images via /images
-    endpoint, videos via /videos endpoint (best-effort direct mp4s).
+    endpoint; videos via /videos endpoint PLUS page scraping - each
+    video result page is fetched and its embedded direct mp4/webm
+    (og:video, <video>/<source> tags, JSON-LD contentUrl) is extracted,
+    so news sites yield real downloadable clips, not just page links.
     Without a key this provider is silently skipped.
     """
     name = "Serper"
@@ -640,6 +654,49 @@ class SerperProvider:
             timeout=_CONNECT_TIMEOUT)
         r.raise_for_status()
         return r.json()
+
+    def _page_direct_videos(self, page_url: str) -> List[str]:
+        """Fetch a video page; extract direct video-file URLs from HTML."""
+        try:
+            host = (urllib.parse.urlparse(page_url).netloc or "").lower()
+            if any(b in host for b in _VIDEO_PAGE_BLOCKLIST):
+                return []
+            r = _SESSION.get(page_url, timeout=10)
+            if r.status_code != 200:
+                return []
+            if "html" not in (r.headers.get("Content-Type", "") or "").lower():
+                return []
+            markup = r.text[:600_000]
+        except Exception:  # noqa: BLE001
+            return []
+        patterns = (
+            r'<meta[^>]+property=["\']og:video(?::secure_url)?["\'][^>]+'
+            r'content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+'
+            r'property=["\']og:video(?::secure_url)?["\']',
+            r'<meta[^>]+(?:name|property)=["\']twitter:player:stream["\']'
+            r'[^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+'
+            r'(?:name|property)=["\']twitter:player:stream["\']',
+            r'<(?:video|source)[^>]+src=["\']([^"\']+)["\']',
+            r'"contentUrl"\s*:\s*"([^"]+)"',
+        )
+        found: List[str] = []
+        for pat in patterns:
+            for m in re.finditer(pat, markup, re.IGNORECASE):
+                u = _html.unescape(m.group(1)).strip()
+                if not u or u.startswith("data:"):
+                    continue
+                u = urllib.parse.urljoin(page_url, u)
+                if urllib.parse.urlparse(u).path.lower().endswith(_VIDEO_EXTS):
+                    found.append(u)
+        seen = set()
+        out = []
+        for u in found:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out[:5]
 
     def search(self, query: str, kind: str, per_page: int = 4) -> List[Dict]:
         if not self.api_key:
@@ -665,18 +722,45 @@ class SerperProvider:
             else:
                 data = self._api("videos", query, min(per_page * 2, 10))
                 out = []
+                page_jobs: List[tuple] = []
                 for it in data.get("videos", []):
-                    link = (it.get("link", "") or "").split("?")[0]
-                    if not link.lower().endswith(".mp4"):
+                    link = it.get("link", "") or ""
+                    if not link:
                         continue
-                    out.append({
-                        "url": it.get("link", ""),
-                        "page": it.get("link", ""),
-                        "w": 0, "h": 0, "dur": 0,
-                        "tags": it.get("title", ""),
-                    })
+                    if urllib.parse.urlparse(link).path.lower() \
+                            .endswith(_VIDEO_EXTS):
+                        out.append({
+                            "url": link,
+                            "page": link,
+                            "w": 0, "h": 0, "dur": 0,
+                            "tags": it.get("title", ""),
+                        })
+                    elif len(page_jobs) < 4:
+                        page_jobs.append((link, it.get("title", "") or ""))
                     if len(out) >= per_page:
                         break
+                # Scrape top video pages for embedded direct files.
+                if page_jobs and len(out) < per_page:
+                    with ThreadPoolExecutor(max_workers=4) as ex:
+                        futs = {ex.submit(self._page_direct_videos, link): (link, t)
+                                for link, t in page_jobs}
+                        for fut in as_completed(futs):
+                            if len(out) >= per_page:
+                                break
+                            link, title = futs[fut]
+                            try:
+                                urls = fut.result()
+                            except Exception:  # noqa: BLE001
+                                continue
+                            for u in urls:
+                                out.append({
+                                    "url": u,
+                                    "page": link,
+                                    "w": 0, "h": 0, "dur": 0,
+                                    "tags": title,
+                                })
+                                if len(out) >= per_page:
+                                    break
         except Exception:  # noqa: BLE001
             return []
         return [{**o, "source": "Serper", "license": self.license,
