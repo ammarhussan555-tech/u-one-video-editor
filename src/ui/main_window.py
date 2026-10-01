@@ -922,6 +922,9 @@ class MainWindow(QMainWindow):
         # Caption template gallery (CapCut-style visual picker)
         from src.text_captions import CAPTION_TEMPLATES, DEFAULT_CAPTION_TEMPLATE
         self._caption_template_key = DEFAULT_CAPTION_TEMPLATE
+        # Spec 6.5 composer: composed dict (style+preset+motion) or None.
+        self._caption_composed = None
+        self._caption_composition = None
         cap_row = QHBoxLayout()
         self.caption_style_lbl = QLabel(
             CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE]["label"])
@@ -932,6 +935,11 @@ class MainWindow(QMainWindow):
         cap_gallery_btn.clicked.connect(self._open_caption_gallery)
         cap_row.addWidget(self.caption_style_lbl, 1)
         cap_row.addWidget(cap_gallery_btn)
+        cap_compose_btn = QPushButton("Compose 8+5+5...")
+        cap_compose_btn.setToolTip(
+            "Compose a caption style: structural style x visual preset x motion.")
+        cap_compose_btn.clicked.connect(self._open_caption_composer)
+        cap_row.addWidget(cap_compose_btn)
         form.addRow("Caption style:", cap_row)
         mrow = QHBoxLayout()
         self.music_lbl = QLabel("(optional)")
@@ -1145,9 +1153,7 @@ class MainWindow(QMainWindow):
 
     def _caption_overlay_style(self) -> str:
         """Build QLabel QSS from the selected template + size (instant)."""
-        from src.text_captions import CAPTION_TEMPLATES
-        key = self._caption_template_key
-        tmpl = CAPTION_TEMPLATES.get(key) or {}
+        tmpl = self._active_tmpl_dict()
         size = self.edit_size_slider.value()
         primary = self._ass_to_css(tmpl.get("primary", "&H00FFFFFF"))
         bg = ""
@@ -1189,6 +1195,33 @@ class MainWindow(QMainWindow):
             if self.player is not None:
                 self._update_caption_text(self.player.position())
 
+    def _active_caption_template(self):
+        """Template for build_ass: composed dict (composer) or gallery key."""
+        return (self._caption_composed
+                if isinstance(self._caption_composed, dict)
+                else self._caption_template_key)
+
+    def _active_tmpl_dict(self):
+        """Resolved template dict for UI previews/overlays."""
+        from src.text_captions import CAPTION_TEMPLATES
+        if isinstance(self._caption_composed, dict):
+            return self._caption_composed
+        return CAPTION_TEMPLATES.get(self._caption_template_key) or {}
+
+    def _open_caption_composer(self):
+        """Spec 6.5: compose structural style x preset x motion."""
+        from src.ui.caption_gallery import CaptionComposerDialog
+        dlg = CaptionComposerDialog(self._caption_composition, self)
+        if dlg.exec():
+            self._caption_composition = dlg.composition
+            self._caption_composed = dlg.composed
+            label = dlg.composed.get("label", "")
+            self.caption_style_lbl.setText(label)
+            if hasattr(self, "edit_template_lbl"):
+                self.edit_template_lbl.setText(label)
+            self._log(f"Caption style: {label}")
+            self._refresh_caption_style()
+
     def _open_caption_gallery(self):
         """Open the CapCut-style visual template gallery."""
         from src.ui.caption_gallery import CaptionGalleryDialog
@@ -1196,6 +1229,9 @@ class MainWindow(QMainWindow):
         dlg = CaptionGalleryDialog(self._caption_template_key, self)
         if dlg.exec():
             self._caption_template_key = dlg.selected_key
+            # Plain gallery pick replaces any composed style.
+            self._caption_composed = None
+            self._caption_composition = None
             label = CAPTION_TEMPLATES[dlg.selected_key]["label"]
             self.caption_style_lbl.setText(label)
             if hasattr(self, "edit_template_lbl"):
@@ -1231,9 +1267,7 @@ class MainWindow(QMainWindow):
                 cur_word = w["word"]
                 break
         if cur_word:
-            from src.text_captions import CAPTION_TEMPLATES
-            tmpl = CAPTION_TEMPLATES.get(
-                self._caption_template_key) or {}
+            tmpl = self._active_tmpl_dict()
             hl = self._ass_to_css(tmpl.get("secondary", "&H0000D7FF"))
             # Highlight first occurrence of the current word.
             import re as _re
@@ -1603,6 +1637,8 @@ class MainWindow(QMainWindow):
             # Sync the main panel controls too.
             if chosen["key"]:
                 self._caption_template_key = chosen["key"]
+                self._caption_composed = None
+                self._caption_composition = None
                 from src.text_captions import CAPTION_TEMPLATES as _CT
                 self.caption_style_lbl.setText(
                     _CT[chosen["key"]]["label"])
@@ -2001,7 +2037,9 @@ class MainWindow(QMainWindow):
             "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
             "captions_enabled": self.chk_captions.isChecked(),
             "caption_highlight": True, "caption_font_size": 48,
-            "caption_template": self._caption_template_key,
+            "caption_template": self._active_caption_template(),
+            "caption_composition": list(self._caption_composition)
+            if self._caption_composition else None,
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
             "voice_name": self.voice_combo.currentText(),
@@ -2098,9 +2136,21 @@ class MainWindow(QMainWindow):
                 # Sync the editor controls with the render's caption style.
                 from src.text_captions import CAPTION_TEMPLATES as _CT3
                 tkey = data.get("template") or self._caption_template_key
-                self._caption_template_key = tkey
-                self.caption_style_lbl.setText(_CT3.get(tkey, {}).get("label", tkey))
-                self.edit_template_lbl.setText(_CT3.get(tkey, {}).get("label", tkey))
+                if isinstance(tkey, dict):
+                    # Composed (style+preset+motion) style restored from session.
+                    self._caption_composed = tkey
+                    comp = tkey.get("composed_from")
+                    self._caption_composition = (
+                        (comp[0], comp[1], comp[2], tkey.get("keywords", []))
+                        if comp else None)
+                    label = tkey.get("label", "")
+                else:
+                    self._caption_template_key = tkey
+                    self._caption_composed = None
+                    self._caption_composition = None
+                    label = _CT3.get(tkey, {}).get("label", tkey)
+                self.caption_style_lbl.setText(label)
+                self.edit_template_lbl.setText(label)
                 self.edit_size_slider.setValue(int(data.get("font_size", 48)))
                 self.edit_template_btn.setEnabled(True)
                 self.edit_size_slider.setEnabled(True)
@@ -2155,7 +2205,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Edit Captions",
                                 "Render a video first, then edit its captions.")
             return
-        template = self._caption_template_key
+        template = self._active_caption_template()
         size = self.edit_size_slider.value()
         self.edit_apply_btn.setEnabled(False)
         self.stage_lbl.setText("Updating captions...")
@@ -2188,7 +2238,7 @@ class MainWindow(QMainWindow):
                     return
             except Exception:  # noqa: BLE001 - fall through to transcription
                 pass
-        template = self._caption_template_key
+        template = self._active_caption_template()
         size = self.edit_size_slider.value()
         self.gen_captions_btn.setEnabled(False)
         self.edit_apply_btn.setEnabled(False)
