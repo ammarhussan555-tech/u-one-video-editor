@@ -1951,7 +1951,7 @@ HEADLINE_PRESETS = {
         "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
         "box": False, "pill": False, "back_c": "&H00000000",
         "outline": 7, "shadow": 2,
-        "alignment": 8, "margin_v_frac": 0.10,
+        "alignment": 5, "margin_v_frac": 0.0,
         "entrance": "pop", "uppercase": True,
     },
     "archivo": {
@@ -1961,7 +1961,7 @@ HEADLINE_PRESETS = {
         "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
         "box": False, "pill": False, "back_c": "&H00000000",
         "outline": 7, "shadow": 2,
-        "alignment": 8, "margin_v_frac": 0.10,
+        "alignment": 5, "margin_v_frac": 0.0,
         "entrance": "pop", "uppercase": True,
     },
     "oswald": {
@@ -1971,7 +1971,7 @@ HEADLINE_PRESETS = {
         "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
         "box": False, "pill": False, "back_c": "&H00000000",
         "outline": 6, "shadow": 2,
-        "alignment": 8, "margin_v_frac": 0.10,
+        "alignment": 5, "margin_v_frac": 0.0,
         "entrance": "pop", "uppercase": True,
     },
     "breaking": {
@@ -1991,7 +1991,7 @@ HEADLINE_PRESETS = {
         "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
         "box": False, "pill": False, "back_c": "&H00000000",
         "outline": 7, "shadow": 2,
-        "alignment": 8, "margin_v_frac": 0.07,
+        "alignment": 5, "margin_v_frac": 0.0,
         "entrance": "pop", "uppercase": True,
     },
     "pill": {
@@ -2136,36 +2136,106 @@ def headline_preset_labels():
         (k, v["label"]) for k, v in HEADLINE_PRESETS.items()]
 
 
-def make_overlay_text(analysis, max_words=5):
-    """Short punchy overlay, never the whole sentence.
+# Words that make headlines look cheap — never shown as main text.
+# (Fixes "INSTEAD RESEARCHERS..." — transition fillers picked as headlines.)
+HEADLINE_FILLERS = frozenset(
+    "instead rather however moreover furthermore nevertheless therefore thus "
+    "hence also just even still yet very really quite somewhat often usually "
+    "sometimes always never ever much many more most such like well now today "
+    "here there every any some each other another these those this that its "
+    "their our your his her my".split())
+
+# Weak generic words — dropped from the END of a headline so the punch
+# word lands last ("...EARTHQUAKES" not "...EARTHQUAKES REGION").
+WEAK_ENDINGS = frozenset(
+    "region area zone people thing things stuff part side way kind sort".split())
+
+
+def _is_filler(w):
+    return (w or "").lower() in HEADLINE_FILLERS
+
+
+def make_overlay(analysis, max_words=5):
+    """Select on-screen headline text AND the hero words for accent color.
 
     Text-worthiness rule (from the 17-video deep-watch): the single most
     quotable NUMBER / DATE / NAME / TERM per beat gets the big text —
     "voice explains, text anchors". So number-bearing phrases win over
     generic keywords.
+
+    Returns (display_text, accent_words). accent_words (<=3) is the subset
+    of display words rendered in the accent color — everything else stays
+    white, like the researched creator videos. (Accent-on-every-word made
+    headlines render ALL RED — the ugly screenshots.)
     """
-    text = getattr(analysis, "text", "") or ""
+    text = (getattr(analysis, "text", "") or "").strip()
+    if not text:
+        return "", []
     # 1) number spans: $40, 68B, 48,000 tons, 90%, 2026, 3.5 million ...
-    num_spans = []
+    num_words = []
     for m in re.finditer(
             r"\$?\d[\d,]*\.?\d*(?:\s*(?:billion|million|thousand|b\b|m\b|k\b|%|percent|tons?|tonnes?))?"
             r"|\b(?:19|20)\d{2}\b", text, re.IGNORECASE):
-        num_spans.append(m.group(0).strip())
-    parts = []
-    for ns in num_spans:
-        for w in ns.split():
-            if w.lower() not in [x.lower() for x in parts]:
-                parts.append(w)
-    # 2) phrases (often carry the NAME/TERM)
-    for p in analysis.phrases or []:
+        for w in m.group(0).strip().split():
+            wu = w.upper()
+            if wu not in num_words:
+                num_words.append(wu)
+    # 2) proper nouns (original capitalization, fillers excluded)
+    proper_words = []
+    for m in re.finditer(r"\b([A-Z][a-zA-Z']*)\b", text):
+        w, wu = m.group(1), m.group(1).upper()
+        if wu not in proper_words and not _is_filler(w) and len(w) > 2:
+            proper_words.append(wu)
+    # 3) build display words: numbers -> proper nouns -> phrases -> keywords
+    words = []
+
+    def _add(w):
+        wu = (w or "").upper()
+        if (wu and wu not in words and not _is_filler(wu)
+                and len(words) < max_words):
+            words.append(wu)
+
+    for w in num_words:
+        _add(w)
+    for w in proper_words:
+        _add(w)
+    for p in getattr(analysis, "phrases", None) or []:
         for w in p.split():
-            if w.lower() not in [x.lower() for x in parts]:
-                parts.append(w)
-    # 3) keywords fill the rest
-    for k in analysis.keywords or []:
-        if k.lower() not in [x.lower() for x in parts]:
-            parts.append(k)
-    return " ".join(parts[:max_words]).upper()
+            _add(w)
+    for k in getattr(analysis, "keywords", None) or []:
+        _add(k)
+    if not words:
+        for w in re.findall(r"[A-Za-z']+", text):
+            if len(w) > 3:
+                _add(w)
+    words = words[:max_words]
+    # drop weak trailing words so the punch lands last
+    while len(words) > 2 and words[-1].lower() in WEAK_ENDINGS:
+        words.pop()
+    if not words:
+        return "", []
+    # 4) accent: hero words only (<=3) — numbers, then proper nouns,
+    #    then the punch word. Everything else renders white.
+    accent = []
+    for w in words:
+        if re.match(r"^\$?\d", w) and len(accent) < 3 and w not in accent:
+            accent.append(w)
+    if not accent:
+        for w in words:
+            if w in proper_words and len(accent) < 2 and w not in accent:
+                accent.append(w)
+    if not accent:
+        accent = [words[-1]]
+    return " ".join(words), accent
+
+
+def make_overlay_text(analysis, max_words=5):
+    """Short punchy overlay, never the whole sentence.
+
+    Kept for backward compatibility; new code should use make_overlay()
+    so the accent color lands on hero words only.
+    """
+    return make_overlay(analysis, max_words)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -2477,20 +2547,32 @@ def _font_file_for(font_name):
     return fallback
 
 
-def _headline_entrance(kind, pw, ph, margin_v):
-    """ASS entrance tags for a headline preset (alignment 8 = top-center,
-    so the anchor Y is the style's MarginV)."""
-    xc, y = pw // 2, margin_v
+def _headline_entrance(kind, pw, ph, margin_v, alignment=8):
+    """ASS entrance tags for a headline preset.
+
+    alignment 8 = top-center (anchor Y = MarginV), 5 = middle-center,
+    2 = bottom-center. The anchor Y follows the alignment.
+    """
+    an = alignment
+    xc = pw // 2
+    if an == 5:
+        y = ph // 2
+    elif an == 2:
+        y = ph - margin_v
+    else:
+        y = margin_v
     if kind == "wipe_left":
-        return "{\\an8\\move(%d,%d,%d,%d,0,350)}" % (-pw // 2, y, xc, y)
+        return ("{\\an%d\\move(%d,%d,%d,%d,0,350)}"
+                % (an, -pw // 2, y, xc, y))
     if kind == "rise":
-        return "{\\an8\\move(%d,%d,%d,%d,0,350)}" % (xc, y + 90, xc, y)
+        return ("{\\an%d\\move(%d,%d,%d,%d,0,350)}"
+                % (an, xc, y + 90, xc, y))
     if kind == "pop":
-        return "{\\an8\\fscx125\\fscy125\\t(0,230,\\fscx100\\fscy100)}"
+        return "{\\an%d\\fscx125\\fscy125\\t(0,230,\\fscx100\\fscy100)}" % an
     if kind == "rise_fade":
-        return ("{\\an8\\fad(200,150)\\move(%d,%d,%d,%d,0,350)}"
-                % (xc, y + 90, xc, y))
-    return "{\\an8\\fad(250,150)}"
+        return ("{\\an%d\\fad(200,150)\\move(%d,%d,%d,%d,0,350)}"
+                % (an, xc, y + 90, xc, y))
+    return "{\\an%d\\fad(250,150)}" % an
 
 
 def _headline_style_line(pid, hp, ph):
@@ -2498,10 +2580,10 @@ def _headline_style_line(pid, hp, ph):
     size = max(28, int(ph * hp["size_frac"]))
     mv = int(ph * hp["margin_v_frac"])
     border = 4 if hp.get("pill") else (3 if hp.get("box") else 1)
-    return ("Style: HL_%s,%s,%d,%s,%s,&H00000000,%s,-1,0,0,0,100,100,0,0,"
-            "%d,%d,%d,8,60,60,%d,1"
-            % (pid, hp["font"], size, hp["primary"], hp["primary"],
-               hp["back_c"], border, hp["outline"], hp["shadow"], mv))
+    an = hp.get("alignment", 8)
+    return (f"Style: HL_{pid},{hp['font']},{size},{hp['primary']},{hp['primary']},"
+            f"&H00000000,{hp['back_c']},-1,0,0,0,100,100,0,0,"
+            f"{border},{hp['outline']},{hp['shadow']},{an},60,60,{mv},1")
 
 
 def build_srt(sentence_timings, path):
@@ -2879,19 +2961,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             pid = DEFAULT_HEADLINE_PRESET
         if hp.get("uppercase"):
             txt = txt.upper()
-        kwset = {str(k).lower() for k in (ov.get("keywords") or [])}
+        # Accent color: ONLY the hero words (accent_words, <=3) get it —
+        # everything else renders in the primary (white). Accenting every
+        # keyword turned whole headlines ALL RED (ugly user screenshots).
+        accset = {str(k).lower() for k in (ov.get("accent_words") or [])}
         accent = ov.get("accent") or hp["accent"]
         parts = []
         for w_ in txt.split():
             core = w_.strip(".,!?\"'").lower()
             safe = sanitize_ass_text(w_)
-            if core and core in kwset and accent != hp["primary"]:
+            if core and core in accset and accent != hp["primary"]:
                 parts.append("{\\c%s}%s{\\c%s}"
                              % (accent, safe, hp["primary"]))
             else:
                 parts.append(safe)
         ent = _headline_entrance(hp.get("entrance", "fade"), pw, ph,
-                                 int(ph * hp["margin_v_frac"]))
+                                 int(ph * hp["margin_v_frac"]),
+                                 hp.get("alignment", 8))
         lines.append(f"Dialogue: 1,{_ts_ass(ov['start'])},{_ts_ass(ov['end'])},"
                      f"HL_{pid},,0,0,0,,{ent}{' '.join(parts)}")
     with open(path, "w", encoding="utf-8") as f:

@@ -45,10 +45,11 @@ from .script_engine import (analyze_script, analyze_sentence,
 from .settings import Settings
 from .temp_manager import TempManager, ensure_free_space
 from .text_engine import (build_ass, build_srt, make_overlay_text,
+                          make_overlay,
                           headline_preset_for, headline_accent_for,
                           detect_niche)
 from .timeline_engine import Timeline
-from .voiceover import audio_duration, get_sentence_timings, synthesize_speech
+from .voiceover import audio_duration, get_sentence_timings, synthesize_speech, whisper_word_timings
 
 STAGES = [
     "Project validation",
@@ -377,7 +378,7 @@ class RenderEngine:
                 fmt=S.get("output_format", "16:9"),
                 res=S.get("output_resolution", "1080p"),
                 fps=S.fps,
-                template=S.get("caption_template", "tiktok_classic"),
+                template=S.get("caption_template", "spec_highlight"),
                 font_size=S.get("caption_font_size", 48),
                 output_video=out)
             self._edit_session_path = session_path
@@ -453,6 +454,13 @@ class RenderEngine:
         sents = [s.text for s in self.analysis.sentences]
         self.sentence_timings = get_sentence_timings(
             self.voice_path, sents, self.word_timings)
+        # Word animation needs word timings: if the TTS engine did not
+        # provide them (uploaded voiceover / pyttsx3 fallback), recover
+        # them with Whisper so captions still animate word-by-word
+        # instead of rendering as static lines.
+        if not self.word_timings:
+            self._msg("Recovering word timings for animated captions...")
+            self.word_timings = whisper_word_timings(self.voice_path)
         self._msg(f"Voice duration: {self.sentence_timings[-1]['end']:.1f}s")
 
     def _search_fn(self):
@@ -564,7 +572,7 @@ class RenderEngine:
                    locked=sc.locked if sc else False)
             if S.get("text_overlays", "auto") == "auto" and sc:
                 sa = analyze_sentence(sc.text)
-                ov = make_overlay_text(sa)
+                ov, accent_words = make_overlay(sa)
                 if ov:
                     hl = headline_preset_for(
                         sc.text, S.get("headline_style", "auto"))
@@ -574,7 +582,7 @@ class RenderEngine:
                                              "style": hl,
                                              "accent": headline_accent_for(
                                                  sc.text, S.get("headline_style", "auto")),
-                                             "keywords": list(sa.keywords)},
+                                             "accent_words": accent_words},
                            locked=sc.locked)
         self.timeline = tl
 
@@ -587,7 +595,7 @@ class RenderEngine:
         overlays = [{"text": c.label, "start": c.start, "end": c.end,
                      "style": c.payload.get("style"),
                      "accent": c.payload.get("accent"),
-                     "keywords": c.payload.get("keywords", [])}
+                     "accent_words": c.payload.get("accent_words", [])}
                     for c in self.timeline.by_track("text")]
         build_srt(self.sentence_timings, srt)
         build_ass(self.sentence_timings, self.word_timings, ass,
@@ -743,7 +751,7 @@ class RenderEngine:
         if not sc or getattr(sc, "locked", False) or not self.timeline:
             return
         sa = analyze_sentence(sc.text)
-        ov = make_overlay_text(sa)
+        ov, accent_words = make_overlay(sa)
         hl = headline_preset_for(
             sc.text, self.settings.get("headline_style", "auto"))
         ac = headline_accent_for(
@@ -753,7 +761,7 @@ class RenderEngine:
                 c.label = ov
                 c.payload["style"] = hl
                 c.payload["accent"] = ac
-                c.payload["keywords"] = list(sa.keywords)
+                c.payload["accent_words"] = accent_words
 
     def regenerate_sfx(self, scene_id):
         sc = self._scene(scene_id)

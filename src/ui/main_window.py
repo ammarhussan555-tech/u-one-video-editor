@@ -812,6 +812,7 @@ class MainWindow(QMainWindow):
             self._on_timeline_clip_menu)
         self.timeline_widget.clipSelected.connect(
             self._on_timeline_clip_selected)
+        self.timeline_widget.clipMoved.connect(self._on_timeline_clip_moved)
         self.timeline_widget.setFixedHeight(220)
         main.addWidget(self.timeline_widget)
 
@@ -1344,15 +1345,26 @@ class MainWindow(QMainWindow):
     def _toggle_cap_move_mode(self, on: bool):
         """Enable/disable caption drag mode on the preview.
 
-        Drag/wheel/double-click are handled by the main window event filter
-        on the video widget itself (identical on small preview and full
-        screen); the overlay label stays mouse-transparent.
+        Drag/wheel/double-click are handled BOTH by the overlay label
+        itself (_DragCaptionLabel, when it receives mouse events) AND by
+        the main window event filter on the video widget (fallback for
+        native video surfaces that swallow child-widget events). Belt
+        and suspenders: whichever path delivers the event, the caption
+        moves.
         """
         self._cap_move_mode = on
         self._cap_drag_start = None
         if self.video_widget is not None:
             self.video_widget.setCursor(
                 Qt.OpenHandCursor if on else Qt.ArrowCursor)
+        # In move mode the overlay label accepts mouse events directly
+        # (its own drag handlers); otherwise it stays transparent so
+        # clicks reach the video widget (caption editor).
+        ov = getattr(self, "caption_overlay", None)
+        if ov is not None:
+            ov.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
+            if on:
+                ov.setCursor(Qt.OpenHandCursor)
         if on:
             self.video_hint.setText(
                 "Move mode: caption drag karo (move) • wheel (chhota/bara) "
@@ -2783,6 +2795,16 @@ class MainWindow(QMainWindow):
         if clip is not None:
             self._log(f"Timeline: selected '{clip.label[:40]}' ({clip.track})")
 
+    def _on_timeline_clip_moved(self, clip_id):
+        """A timeline clip was drag-moved: snapshot + mark for re-render."""
+        if getattr(self, "project", None) is not None:
+            self.project.snapshot()
+        tl = getattr(self.project, "timeline", None)
+        clip = tl.get(clip_id) if tl is not None else None
+        if clip is not None:
+            self._log(f"Timeline: moved '{clip.label[:40]}' to "
+                      f"{clip.start:.1f}s — re-render to apply.")
+
     def _timeline_selected_clip(self):
         """Return the currently selected timeline clip, or None."""
         tl = getattr(self.project, "timeline", None)
@@ -3103,12 +3125,13 @@ class MainWindow(QMainWindow):
             self.project.snapshot()
             sc.text = text.strip()
             # Update the timeline overlay to match
-            from src.text_engine import make_overlay_text
+            from src.text_engine import make_overlay
             from src.script_engine import analyze_sentence
-            ov = make_overlay_text(analyze_sentence(sc.text))
+            ov, accent_words = make_overlay(analyze_sentence(sc.text))
             for c in self.pipeline.timeline.by_track("text"):
                 if c.payload.get("scene_id") == sid and not c.locked:
                     c.label = ov
+                    c.payload["accent_words"] = accent_words
             self.timeline_widget.update()
             self._show_scene(sid)
             self._log(f"Scene {sid+1} text updated. Re-render to apply.")

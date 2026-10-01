@@ -117,3 +117,26 @@ def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
         out.append({"text": s, "start": round(t, 3), "end": round(t + d, 3)})
         t += d
     return out
+
+
+def whisper_word_timings(audio_path):
+    """Best-effort word-level timings via faster-whisper.
+
+    Used when the TTS engine did not provide word boundaries (uploaded
+    voiceover, or pyttsx3 fallback) so captions still get CapCut-style
+    word-by-word animation instead of static lines.
+    Returns a list of {word, start, end} or None on any failure.
+    """
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(audio_path, word_timestamps=True)
+        words = []
+        for seg in segments:
+            for w in (seg.words or []):
+                words.append({"word": w.word.strip(),
+                              "start": round(w.start, 3),
+                              "end": round(w.end, 3)})
+        return words or None
+    except Exception:  # noqa: BLE001
+        return None

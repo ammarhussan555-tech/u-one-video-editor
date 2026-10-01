@@ -23,7 +23,7 @@ DEFAULTS: Dict[str, Any] = {
     "captions_enabled": True,
     "caption_font_size": 48,
     "caption_highlight": True,
-    "caption_template": "tiktok_classic",
+    "caption_template": "spec_highlight",
     "text_overlays": "auto",              # auto | off
     # media
     "media_preference": "ai_auto",        # ai_auto | video_only | image_only

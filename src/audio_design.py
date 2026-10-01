@@ -42,11 +42,37 @@ def _env(n, attack=0.02, decay_end=0.001):
     return env
 
 
-def sfx_whoosh(d=1.2):
+def _lowpass(x, cutoff_hz=1200.0):
+    """One-pole lowpass — kills harsh digital hiss, keeps airy body."""
+    a = 1.0 - np.exp(-2.0 * np.pi * cutoff_hz / SR)
+    y = np.empty_like(x)
+    acc = 0.0
+    for i, v in enumerate(x):
+        acc += a * (v - acc)
+        y[i] = acc
+    return y
+
+
+def _raised_cosine(n, peak_pos=0.55):
+    """Smooth swell envelope: gentle attack, natural decay, no clicks."""
+    t = np.linspace(0, 1, n)
+    env = np.where(t <= peak_pos,
+                   0.5 - 0.5 * np.cos(np.pi * t / peak_pos),
+                   0.5 + 0.5 * np.cos(np.pi * (t - peak_pos) / (1 - peak_pos)))
+    return env
+
+
+def sfx_whoosh(d=0.45):
+    """Soft airy transition sweep — subtle by design.
+
+    The old 1.2s raw-noise whoosh sounded harsh/synthetic ("ganda").
+    Real creator videos use a barely-noticeable airy sweep under the cut:
+    short, lowpassed (no hiss), smooth swell, quiet in the mix.
+    """
     n = int(SR * d)
-    x = _noise(d) * _env(n, 0.35, 0.05)
-    sweep = np.sin(2 * np.pi * np.linspace(200, 2500, n) * np.arange(n) / SR)
-    return 0.6 * x + 0.25 * sweep * _env(n, 0.3, 0.05)
+    x = _lowpass(_noise(d), cutoff_hz=1400.0)
+    x = x / (np.max(np.abs(x)) + 1e-9)
+    return 0.5 * x * _raised_cosine(n)
 
 
 def sfx_impact(d=1.0):
@@ -189,10 +215,19 @@ SFX_KEYWORDS = {
 
 
 def ensure_sfx_library(sfx_dir):
+    # v2 (2026-10-01): whoosh redesigned (soft/lowpassed/short). Bump the
+    # version so stale harsh whoosh.wav files from v1 are regenerated.
+    VERSION = "v2"
     os.makedirs(sfx_dir, exist_ok=True)
     paths = {}
     for name, fn in SFX_BUILDERS.items():
-        p = os.path.join(sfx_dir, f"{name}.wav")
+        p = os.path.join(sfx_dir, f"{name}_{VERSION}.wav")
+        old = os.path.join(sfx_dir, f"{name}.wav")
+        if os.path.exists(old):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
         if not os.path.exists(p):
             _write_wav(p, fn())
         paths[name] = p
@@ -252,7 +287,7 @@ def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
             # One SFX per beat — skip if a keyword hit is already near.
             if any(abs(e["time"] - at) < 0.6 for e in events):
                 continue
-            events.append({"time": at, "sfx": "whoosh", "gain_db": -14})
+            events.append({"time": at, "sfx": "whoosh", "gain_db": -20})
             recent = (recent + ["whoosh"])[-3:]
 
     # Density cap: ~10 cues/min (research quotes 8-12/min). Drop the
@@ -261,7 +296,7 @@ def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
         total_min = max(0.25, (float(timings[-1]["end"]) - float(timings[0]["start"])) / 60.0)
         cap = int(total_min * 10) + 2
         if len(events) > cap:
-            kw = [e for e in events if e["sfx"] != "whoosh" or e["gain_db"] != -14]
+            kw = [e for e in events if e["sfx"] != "whoosh" or e["gain_db"] != -20]
             tr = [e for e in events if e not in kw]
             keep_tr = tr[:max(0, cap - len(kw))]
             events = kw + keep_tr

@@ -14,13 +14,18 @@ class TimelineWidget(QWidget):
     sceneSelected = Signal(int)  # scene_id
     clipRightClicked = Signal(str)  # clip_id (for CapCut-style edit menu)
     clipSelected = Signal(str)  # clip_id (any left-click selection)
+    clipMoved = Signal(str)  # clip_id (after a drag-move finishes)
 
     def __init__(self):
         super().__init__()
         self.timeline = None
         self.selected_scene = None
         self.selected_clip_id = None
+        self._drag_clip = None
+        self._drag_start_x = 0.0
+        self._drag_orig = (0.0, 0.0)
         self.setMinimumHeight(250)
+        self.setMouseTracking(True)
 
     def set_timeline(self, tl):
         self.timeline = tl
@@ -88,8 +93,35 @@ class TimelineWidget(QWidget):
             self.selected_scene = sid
             self.sceneSelected.emit(sid)
         self.update()
+        # Begin a CapCut-style drag-move (left button, unlocked clip).
+        if ev.button() == Qt.LeftButton and not c.locked:
+            self._drag_clip = c
+            self._drag_start_x = ev.position().x()
+            self._drag_orig = (c.start, c.end)
+            self.setCursor(Qt.ClosedHandCursor)
         # NOTE: right-click menu is handled ONLY by contextMenuEvent below
         # (handling it here too would open the menu twice per click).
+
+    def mouseMoveEvent(self, ev):
+        c = self._drag_clip
+        if c is None or not self.timeline:
+            return
+        dur = max(0.01, self.timeline.duration())
+        dx_px = ev.position().x() - self._drag_start_x
+        dt = dx_px / max(1, self.width() - 80) * dur
+        new_start = max(0.0, self._drag_orig[0] + dt)
+        span = self._drag_orig[1] - self._drag_orig[0]
+        c.start = new_start
+        c.end = new_start + span
+        self.update()
+
+    def mouseReleaseEvent(self, ev):
+        if self._drag_clip is not None:
+            moved = self._drag_clip
+            self._drag_clip = None
+            self.setCursor(Qt.ArrowCursor)
+            self.clipMoved.emit(moved.id)
+            self.update()
 
     def contextMenuEvent(self, ev):
         # Right-click (or menu key) -> CapCut-style edit menu for this clip.
