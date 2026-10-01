@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QLabel, QPushButton, QComboBox, QCheckBox, QProgressBar,
     QFileDialog, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QGroupBox,
-    QFormLayout, QLineEdit, QSpinBox, QScrollArea, QFrame, QSlider)
+    QFormLayout, QLineEdit, QSpinBox, QScrollArea, QFrame, QSlider, QDialog)
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QPixmap
 # NOTE: QtMultimedia / QtMultimediaWidgets are imported lazily inside
@@ -93,6 +93,42 @@ class _DragCaptionLabel(QLabel):
             ev.accept()
         else:
             super().mouseDoubleClickEvent(ev)
+
+
+class _FullscreenDialog(QDialog):
+    """Frameless full-screen host for the preview video widget.
+
+    The video widget is reparented into this dialog's layout (margins 0),
+    so Qt's layout system forces it to fill the whole screen. This avoids
+    the fragile pattern of turning the QVideoWidget itself into a top-level
+    full-screen window, where the native video surface could stay stuck at
+    its old small size (tiny video in the corner of a black screen).
+    """
+
+    def __init__(self, owner):
+        super().__init__(owner, Qt.Window | Qt.FramelessWindowHint)
+        self._owner = owner
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.exit_btn = QPushButton("✕ Exit full screen (Esc)", self)
+        self.exit_btn.setStyleSheet(
+            "background:rgba(0,0,0,160);color:#fff;border-radius:8px;"
+            "padding:8px 14px;font-size:14px;")
+        self.exit_btn.clicked.connect(owner._exit_fullscreen)
+
+    def showEvent(self, ev):  # noqa: D102
+        super().showEvent(ev)
+        self.exit_btn.adjustSize()
+        self.exit_btn.move(20, 20)
+        self.exit_btn.raise_()
+
+    def keyPressEvent(self, ev):  # noqa: D102
+        if ev.key() == Qt.Key_Escape:
+            self._owner._exit_fullscreen()
+            ev.accept()
+        else:
+            super().keyPressEvent(ev)
 
 
 class PipelineWorker(QThread):
@@ -1007,7 +1043,9 @@ class MainWindow(QMainWindow):
         # dx_frac/dy_frac/user_scale in _caption_template_for_render().
         self._cap_pos = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
         self._cap_move_mode = False
+        self._cap_drag_start = None
         self._fs_active = False
+        self._fs_dialog = None
         cap_row = QHBoxLayout()
         self.caption_style_lbl = QLabel(
             CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE]["label"])
@@ -1224,6 +1262,8 @@ class MainWindow(QMainWindow):
             # Click on the video -> open the caption editor for the
             # caption shown at that moment.
             self.video_widget.installEventFilter(self)
+            # Mouse tracking so the event filter sees drags reliably.
+            self.video_widget.setMouseTracking(True)
             # Instant caption preview overlay (CapCut-style live styling).
             self._ensure_caption_overlay()
             return True
@@ -1301,12 +1341,17 @@ class MainWindow(QMainWindow):
         ov.setStyleSheet(self._caption_overlay_style())
 
     def _toggle_cap_move_mode(self, on: bool):
-        """Enable/disable caption drag mode on the preview."""
+        """Enable/disable caption drag mode on the preview.
+
+        Drag/wheel/double-click are handled by the main window event filter
+        on the video widget itself (identical on small preview and full
+        screen); the overlay label stays mouse-transparent.
+        """
         self._cap_move_mode = on
-        ov = getattr(self, "caption_overlay", None)
-        if ov is not None:
-            ov.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
-            ov.setCursor(Qt.OpenHandCursor if on else Qt.ArrowCursor)
+        self._cap_drag_start = None
+        if self.video_widget is not None:
+            self.video_widget.setCursor(
+                Qt.OpenHandCursor if on else Qt.ArrowCursor)
         if on:
             self.video_hint.setText(
                 "Move mode: caption drag karo (move) • wheel (chhota/bara) "
@@ -1317,6 +1362,14 @@ class MainWindow(QMainWindow):
 
     # -- full-screen preview (CapCut style) --
     def _toggle_fullscreen(self):
+        # ROOT CAUSE FIX (2026-10-01): the old code turned the QVideoWidget
+        # itself into a top-level full-screen window (setParent(None) +
+        # showFullScreen). On Windows the native video surface did not follow
+        # the new window size, so users saw a tiny video stuck in the corner
+        # of a black screen. Now the video widget is reparented into a
+        # dedicated frameless full-screen dialog whose layout (margins 0)
+        # forces it to fill the screen — the same well-tested layout path as
+        # the normal embedded preview.
         if self._fs_active:
             self._exit_fullscreen()
             return
@@ -1329,19 +1382,11 @@ class MainWindow(QMainWindow):
                           if self._fs_layout else 0)
         if self._fs_layout:
             self._fs_layout.removeWidget(vw)
-        vw.setParent(None)
-        vw.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-        vw.showFullScreen()
-        # floating exit hint (child of the fullscreen window)
-        from PySide6.QtWidgets import QPushButton as _PB
-        self._fs_exit_btn = _PB("✕ Exit full screen (Esc)", vw)
-        self._fs_exit_btn.setStyleSheet(
-            "background:rgba(0,0,0,160);color:#fff;border-radius:8px;"
-            "padding:8px 14px;font-size:14px;")
-        self._fs_exit_btn.adjustSize()
-        self._fs_exit_btn.move(20, 20)
-        self._fs_exit_btn.clicked.connect(self._exit_fullscreen)
-        self._fs_exit_btn.show()
+        dlg = _FullscreenDialog(self)
+        dlg.layout().addWidget(vw)
+        vw.show()
+        self._fs_dialog = dlg
+        dlg.showFullScreen()
         self._fs_active = True
         self._log("Full screen preview — Esc dabao wapas aane ke liye.")
 
@@ -1349,16 +1394,19 @@ class MainWindow(QMainWindow):
         if not self._fs_active or self.video_widget is None:
             return
         vw = self.video_widget
-        btn = getattr(self, "_fs_exit_btn", None)
-        if btn is not None:
-            btn.deleteLater()
-            self._fs_exit_btn = None
+        dlg = getattr(self, "_fs_dialog", None)
+        if dlg is not None:
+            dlay = dlg.layout()
+            if dlay is not None:
+                dlay.removeWidget(vw)
         vw.setParent(self._fs_parent)
-        vw.setWindowFlags(Qt.Widget)
         lay = getattr(self, "_fs_layout", None)
         if lay is not None:
             lay.insertWidget(getattr(self, "_fs_index", 1), vw)
         vw.show()
+        if dlg is not None:
+            dlg.deleteLater()
+        self._fs_dialog = None
         self._fs_active = False
         # overlay geometry follows the re-docked widget
         ov = getattr(self, "caption_overlay", None)
@@ -1710,20 +1758,65 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             pass
     def eventFilter(self, obj, event):
-        # Click on the video -> pause and open the caption editor
-        # for the caption visible at that moment.
+        # Pointer interaction on the video widget.
+        #
+        # ROOT CAUSE FIX (2026-10-01): caption dragging used to live on the
+        # overlay QLabel child. On Windows the QVideoWidget renders through a
+        # native video surface, and mouse events over it did not reliably
+        # reach the Qt child label on the small embedded preview (they did
+        # once the widget became a top-level full-screen window) — so drag
+        # worked in full screen but not on the small preview. All drag /
+        # wheel / double-click handling now lives HERE on the video widget
+        # itself, so it behaves identically in both modes. The overlay label
+        # stays permanently mouse-transparent (pure visual).
         if obj is self.video_widget:
             from PySide6.QtCore import QEvent
-            if event.type() == QEvent.MouseButtonPress:
-                # In caption move-mode the drag label eats the clicks.
-                if not self._cap_move_mode:
+            et = event.type()
+            if self._cap_move_mode:
+                if (et == QEvent.MouseButtonPress
+                        and event.button() == Qt.LeftButton):
+                    self._cap_drag_start = event.globalPosition().toPoint()
+                    self.video_widget.setCursor(Qt.ClosedHandCursor)
+                    return True
+                if (et == QEvent.MouseMove
+                        and self._cap_drag_start is not None):
+                    w = max(1, self.video_widget.width())
+                    h = max(1, self.video_widget.height())
+                    gp = event.globalPosition().toPoint()
+                    dx = (gp.x() - self._cap_drag_start.x()) / w
+                    dy = (gp.y() - self._cap_drag_start.y()) / h
+                    self._cap_drag_start = gp
+                    pos = self._cap_pos
+                    pos["dx"] = max(-0.45, min(0.45, pos["dx"] + dx))
+                    pos["dy"] = max(-0.45, min(0.45, pos["dy"] + dy))
+                    self._apply_cap_pos_to_overlay()
+                    return True
+                if et == QEvent.MouseButtonRelease:
+                    self._cap_drag_start = None
+                    self.video_widget.setCursor(Qt.OpenHandCursor)
+                    return True
+                if et == QEvent.MouseButtonDblClick:
+                    self._cap_pos.update(dx=0.0, dy=0.0, scale=1.0)
+                    self._apply_cap_pos_to_overlay()
+                    self._log("Caption position reset.")
+                    return True
+                if et == QEvent.Wheel:
+                    pos = self._cap_pos
+                    factor = (1.1 if event.angleDelta().y() > 0 else 1 / 1.1)
+                    pos["scale"] = max(0.5, min(2.5, pos["scale"] * factor))
+                    self._apply_cap_pos_to_overlay()
+                    return True
+            else:
+                if et == QEvent.MouseButtonPress:
+                    # Click on the video -> pause and open the caption
+                    # editor for the caption visible at that moment.
                     self._on_video_clicked()
-                return True
-            if event.type() == QEvent.KeyPress:
+                    return True
+            if et == QEvent.KeyPress:
                 if event.key() == Qt.Key_Escape and self._fs_active:
                     self._exit_fullscreen()
                     return True
-            if event.type() == QEvent.Resize:
+            if et == QEvent.Resize:
                 ov = getattr(self, "caption_overlay", None)
                 if ov is not None:
                     ov.setGeometry(self.video_widget.rect())

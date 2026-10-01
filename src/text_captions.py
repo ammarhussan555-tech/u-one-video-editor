@@ -1913,7 +1913,7 @@ def compose_template(style_id, preset_id='preset_classic',
 
 CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Classic', 'NEW', 'Hits', 'Word', 'Glow', 'Basic', 'Aesthetic', 'Monoline', 'Multiline', 'Highlight', 'B&W', 'Boxed']
 
-DEFAULT_CAPTION_TEMPLATE = "tiktok_classic"
+DEFAULT_CAPTION_TEMPLATE = "spec_highlight"
 
 
 # ---------------------------------------------------------------------------

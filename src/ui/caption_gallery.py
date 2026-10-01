@@ -141,6 +141,54 @@ def render_template_preview(key: str) -> bytes:
     outline_w = max(1, int(tmpl["outline"]))
     glow_c = _ass_to_rgb(tmpl.get("glow_color", tmpl["secondary"]))
 
+    # --- spec structural styles: draw what makes each one distinct ---
+    if hmode == "singleword":
+        # SPEC 1: exactly ONE big word at a time, centered.
+        word = "POWER" if tcase == "upper" else "Power"
+        bf = _load_font(tmpl["font"], 46, bool(tmpl["bold"]),
+                        bool(tmpl["italic"]))
+        bw = d.textlength(word, font=bf)
+        bx = (_CARD_W - bw) / 2
+        by = (_CARD_H - 46) / 2
+        d.text((bx, by), word, font=bf, fill=primary,
+               stroke_width=outline_w, stroke_fill=outline_c)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    if hmode == "wordbox_each":
+        # SPEC 3: EVERY word in its OWN black box, uppercase.
+        words = ["EVERY", "WORD", "HITS"] if tcase == "upper" else \
+            ["Every", "word", "hits"]
+        bf = _load_font(tmpl["font"], 30, bool(tmpl["bold"]),
+                        bool(tmpl["italic"]))
+        widths = [d.textlength(wd, font=bf) for wd in words]
+        total = sum(widths) + 16 * len(words)
+        x = (_CARD_W - total) / 2
+        yb = (_CARD_H - 30) / 2 - 6
+        for wd, ww in zip(words, widths):
+            d.rectangle([x, yb, x + ww + 16, yb + 42], fill=(0, 0, 0))
+            d.text((x + 8, yb + 6), wd, font=bf, fill=primary)
+            x += ww + 16 + 8
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    if tmpl.get("dual"):
+        # SPEC 8: primary line + genuine second-language line.
+        l1 = "THE TRUTH" if tcase == "upper" else "The truth"
+        l2 = "الحقيقة"
+        f1 = _load_font(tmpl["font"], 30, bool(tmpl["bold"]),
+                        bool(tmpl["italic"]))
+        f2 = _load_font("Noto Sans Arabic", 24, False, False)
+        w1 = d.textlength(l1, font=f1)
+        w2 = d.textlength(l2, font=f2)
+        d.text(((_CARD_W - w1) / 2, _CARD_H / 2 - 34), l1, font=f1,
+               fill=primary, stroke_width=outline_w, stroke_fill=outline_c)
+        d.text(((_CARD_W - w2) / 2, _CARD_H / 2 + 4), l2, font=f2,
+               fill=secondary, stroke_width=2, stroke_fill=outline_c)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
     def _draw_text(px, text, fill, hl_box=False, use_big=False, use_glow=False):
         fnt = big_font if use_big else font
         ty = y - (big_size - size) // 2 if use_big else y
@@ -281,7 +329,14 @@ class CaptionGalleryDialog(QDialog):
         self.setMinimumSize(760, 580)
         self.selected_key = current_key or "tiktok_classic"
         self._cards = {}
-        self._category = "All"
+        # The 8 approved SPEC styles lead: they are what Uzair approved
+        # one-by-one from the preview videos. This pseudo-category is the
+        # default tab so the rich styles are one click away instead of
+        # being buried among 100+ templates.
+        self._category = "★ Spec 1-8"
+        self._spec_keys = ["spec_word_sync", "spec_highlight", "spec_impact",
+                           "spec_aesthetic", "spec_minimal", "spec_dynamic",
+                           "spec_standard", "spec_dual"]
 
         lay = QVBoxLayout(self)
         # search row
@@ -298,13 +353,13 @@ class CaptionGalleryDialog(QDialog):
             from ..text_captions import CAPTION_TEMPLATE_CATEGORIES
         except Exception:
             CAPTION_TEMPLATE_CATEGORIES = []
-        cats = ["All"] + list(CAPTION_TEMPLATE_CATEGORIES)
+        cats = ["★ Spec 1-8", "All"] + list(CAPTION_TEMPLATE_CATEGORIES)
         tabrow = QHBoxLayout()
         tabrow.setSpacing(4)
         for cat in cats:
             b = QPushButton(cat)
             b.setCheckable(True)
-            b.setChecked(cat == "All")
+            b.setChecked(cat == self._category)
             b.setStyleSheet(
                 "QPushButton{background:#232326;color:#ccc;border:1px solid #333;"
                 "border-radius:10px;padding:4px 10px;}"
@@ -356,9 +411,15 @@ class CaptionGalleryDialog(QDialog):
         filt = (filt or "").lower()
         cols = 3
         r = c = 0
-        for key, tmpl in CAPTION_TEMPLATES.items():
+        if self._category == "★ Spec 1-8":
+            items = [(k, CAPTION_TEMPLATES[k]) for k in self._spec_keys
+                     if k in CAPTION_TEMPLATES]
+        else:
+            items = list(CAPTION_TEMPLATES.items())
+        for key, tmpl in items:
             label = tmpl["label"]
-            if self._category != "All" and tmpl.get("category") != self._category:
+            if (self._category not in ("All", "★ Spec 1-8")
+                    and tmpl.get("category") != self._category):
                 continue
             if filt and filt not in label.lower() and filt not in key.lower():
                 continue
