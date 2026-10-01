@@ -1698,7 +1698,218 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                      'alignment': 5, 'box': False,
                      'highlight_mode': 'word',
                      'anim': 'pop_soft', 'entrance': 'slideup', 'text_case': 'mixed'},
+ # --- SPEC ENGINE: CapCut 8 structural + 5 presets + 5 motions (2026-10-01) ---
+ # Full CaptionStyle configs per user spec. past/upcoming define the
+ # 3-state word machine fills (spec 1.3). Sizes are px @1080p expressed as
+ # size_scale relative to the base caption font size (engine multiplies by
+ # frameHeight/1080 per spec step 6.4).
+ 'spec_word_sync': {'label': 'SPEC 1 Word Sync',
+                    'category': 'Word',
+                    'desc': 'Spec style 1: ONE word at a time, middle screen, popIn 1.08',
+                    'font': 'Montserrat', 'size_scale': 2.29,
+                    'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+                    'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+                    'outline_c': '&H00000000', 'back_c': '&H00000000',
+                    'bold': -1, 'italic': 0, 'outline': 8, 'shadow': 0,
+                    'alignment': 5, 'box': False,
+                    'highlight_mode': 'singleword',
+                    'anim': 'popin', 'entrance': 'none', 'text_case': 'upper'},
+ 'spec_highlight': {'label': 'SPEC 2 Highlight',
+                    'category': 'Highlight',
+                    'desc': 'Spec style 2: full line stays, ONLY spoken word turns yellow + 1.12 pop',
+                    'font': 'Montserrat', 'size_scale': 1.83,
+                    'primary': '&H00FFFFFF', 'secondary': '&H002FF3FE',
+                    'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+                    'outline_c': '&H00000000', 'back_c': '&H00000000',
+                    'bold': -1, 'italic': 0, 'outline': 6, 'shadow': 1,
+                    'alignment': 2, 'margin_v_frac': 0.22, 'box': False,
+                    'highlight_mode': 'word',
+                    'anim': 'pop12', 'entrance': 'slideup', 'text_case': 'mixed'},
+ 'spec_impact': {'label': 'SPEC 3 Uppercase Impact',
+                 'category': 'Hits',
+                 'desc': 'Spec style 3: EVERY word ALL CAPS in its OWN black box, slam entry',
+                 'font': 'Anton', 'size_scale': 2.5,
+                 'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+                 'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+                 'outline_c': '&H00000000', 'back_c': '&H00000000',
+                 'bold': -1, 'italic': 0, 'outline': 10, 'shadow': 0,
+                 'alignment': 5, 'margin_v_frac': 0.25, 'box': True,
+                 'box_opacity': 0.85, 'box_pad': 14,
+                 'highlight_mode': 'wordbox_each',
+                 'anim': 'slamin', 'entrance': 'none', 'text_case': 'upper'},
+ 'spec_aesthetic': {'label': 'SPEC 4 Aesthetic',
+                    'category': 'Aesthetic',
+                    'desc': 'Spec style 4: soft serif, no outline, no box, gentle fade-up',
+                    'font': 'Playfair Display', 'size_scale': 1.33,
+                    'primary': '&H00E6EFF5', 'secondary': '&H00E6EFF5',
+                    'past': '&H00E6EFF5', 'upcoming': '&H00E6EFF5',
+                    'outline_c': '&H00000000', 'back_c': '&H66000000',
+                    'bold': 0, 'italic': 0, 'outline': 0, 'shadow': 1,
+                    'spacing': 2,
+                    'alignment': 2, 'margin_v_frac': 0.15, 'box': False,
+                    'highlight_mode': 'word',
+                    'anim': 'none', 'entrance': 'fadeup', 'text_case': 'mixed'},
+ 'spec_minimal': {'label': 'SPEC 5 Minimal',
+                  'category': 'Basic',
+                  'desc': 'Spec style 5: static-looking, low contrast, only 0.2s fade',
+                  'font': 'Inter', 'size_scale': 1.17,
+                  'primary': '&H00E0E0E0', 'secondary': '&H00E0E0E0',
+                  'past': '&H00E0E0E0', 'upcoming': '&H00E0E0E0',
+                  'outline_c': '&H00000000', 'back_c': '&H00000000',
+                  'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 0,
+                  'alignment': 2, 'margin_v_frac': 0.10, 'box': False,
+                  'highlight_mode': 'word',
+                  'anim': 'none', 'entrance': 'fade02', 'text_case': 'mixed'},
+ 'spec_dynamic': {'label': 'SPEC 6 Dynamic Animated',
+                  'category': 'Animated',
+                  'desc': 'Spec style 6: entry cycles slideUp/bounceIn/slideLeft per chunk',
+                  'font': 'Montserrat', 'size_scale': 1.83,
+                  'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+                  'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+                  'outline_c': '&H00000000', 'back_c': '&H00000000',
+                  'bold': -1, 'italic': 0, 'outline': 6, 'shadow': 0,
+                  'alignment': 2, 'margin_v_frac': 0.20, 'box': False,
+                  'highlight_mode': 'word',
+                  'anim': 'pop106',
+                  'entrance_cycle': ['rise300', 'bouncein', 'slideleft'],
+                  'text_case': 'mixed'},
+ 'spec_standard': {'label': 'SPEC 7 Standard Subtitles',
+                   'category': 'Basic',
+                   'desc': 'Spec style 7: plain bottom subtitles, no animation',
+                   'font': 'Open Sans', 'size_scale': 1.0,
+                   'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+                   'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+                   'outline_c': '&H00000000', 'back_c': '&H00000000',
+                   'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 0,
+                   'alignment': 2, 'margin_v_frac': 0.08, 'box': False,
+                   'highlight_mode': 'word',
+                   'anim': 'none', 'entrance': 'fade01', 'text_case': 'mixed',
+                   # app layer: chunk with max 7 words / 2 lines for this style
+                   'chunk_max_words': 7},
+ 'spec_dual': {'label': 'SPEC 8 Dual-Language',
+               'category': 'Hits',
+               'desc': 'Spec style 8: two independent tracks, primary + genuine translation',
+               'font': 'Montserrat', 'size_scale': 1.33,
+               'primary': '&H00FFFFFF', 'secondary': '&H0007C1FF',
+               'past': '&H00FFFFFF', 'upcoming': '&H00FFFFFF',
+               'outline_c': '&H00000000', 'back_c': '&H00000000',
+               'bold': -1, 'italic': 0, 'outline': 6, 'shadow': 0,
+               'alignment': 2, 'margin_v_frac': 0.22, 'box': False,
+               'highlight_mode': 'word',
+               'anim': 'pop12', 'entrance': 'fadein', 'text_case': 'mixed',
+               'dual': True,
+               'secondary_cfg': {'font': 'Noto Sans Arabic', 'size_scale': 0.92,
+                                'fill': '&H00D0D0D0', 'outline': 3,
+                                'margin_v_frac': 0.12}},
 }
+
+
+# ---------------------------------------------------------------------------
+# Spec step: 5 visual presets (overrides, combinable with any structural
+# style) + 5 composable motion animations.
+# A preset/motion is a dict of CaptionStyle fields that override the
+# structural style's. compose_template() merges style <- preset <- motion.
+# ---------------------------------------------------------------------------
+CAPTION_PRESETS = {
+    'preset_classic': {
+        'label': 'Classic',
+        'desc': 'The structural style exactly as designed (no override)',
+    },
+    'preset_glow': {
+        'label': 'Glow',
+        'desc': 'Neon cyan (#00E5FF) glow on the spoken word',
+        'highlight_mode': 'wordglow',
+        'glow_color': '&H00FFE500',  # #00E5FF in ASS BBGGRR
+        'anim': 'pop',
+    },
+    'preset_monoline': {
+        'label': 'Monoline',
+        'desc': 'Hollow outline text (transparent fill, colored outline)',
+        'monoline': True,
+        'box': False,
+    },
+    'preset_textbox': {
+        'label': 'Text Box',
+        'desc': 'Solid box behind the caption line',
+        'box': True,
+        'box_opacity': 0.85,
+        'box_pad': 14,
+    },
+    'preset_trending': {
+        'label': 'Trending Yellow-White',
+        'desc': 'Spoken word + your keyword list in yellow, rest white',
+        'secondary': '&H002FF3FE',  # #FEF32F yellow in ASS BBGGRR
+        'keywords': [],  # filled from the picker UI
+    },
+}
+
+CAPTION_MOTIONS = {
+    'motion_default': {
+        'label': 'Style default',
+        'desc': 'The structural style\u2019s own animation (no override)',
+    },
+    'motion_bounce': {
+        'label': 'Single Line Bounce',
+        'desc': 'Whole line bounces in, word pops 1.3x',
+        'entrance': 'bouncein',
+        'anim': 'bounce_single',
+    },
+    'motion_negrow': {
+        'label': 'Negative Grow',
+        'desc': 'Spoken word slams in big and stays big',
+        'anim': 'negrow',
+    },
+    'motion_flip3d': {
+        'label': 'Flip 3D',
+        'desc': 'Spoken word flips in on the Y axis',
+        'anim': 'flip',
+    },
+    'motion_typewriter': {
+        'label': 'Typewriter',
+        'desc': 'Words appear with a block cursor, no scaling',
+        'anim': 'none',
+        'entrance': 'none',
+        'cursor': '\u258c',
+    },
+    'motion_karaoke': {
+        'label': 'Karaoke sweep',
+        'desc': 'Smooth color sweep across each word as spoken',
+        'highlight_mode': 'karaoke',
+        'karaoke_smooth': True,
+    },
+}
+
+
+def compose_template(style_id, preset_id='preset_classic',
+                     motion_id='motion_default', keywords=None):
+    """Merge structural style + visual preset + motion into one template.
+
+    Returns a NEW dict (the style library is never mutated). Priority:
+    style < preset < motion. keywords: user word list for the Trending
+    preset (also usable standalone). Structural highlight engines that
+    own their layout ('wordbox_each') keep it: preset/motion
+    highlight_mode overrides are skipped for them.
+    """
+    base = CAPTION_TEMPLATES[style_id]
+    t = dict(base)
+    preset = CAPTION_PRESETS.get(preset_id, {})
+    motion = CAPTION_MOTIONS.get(motion_id, {})
+    structural = base.get('highlight_mode') == 'wordbox_each'
+    for ov in (preset, motion):
+        for k, v in ov.items():
+            if k in ('label', 'desc'):
+                continue
+            if structural and k == 'highlight_mode':
+                continue
+            t[k] = v
+    if keywords:
+        t['keywords'] = list(keywords)
+    t['label'] = '%s + %s + %s' % (
+        base.get('label', style_id),
+        CAPTION_PRESETS.get(preset_id, {}).get('label', preset_id),
+        CAPTION_MOTIONS.get(motion_id, {}).get('label', motion_id))
+    t['composed_from'] = (style_id, preset_id, motion_id)
+    return t
 
 CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Classic', 'NEW', 'Hits', 'Word', 'Glow', 'Basic', 'Aesthetic', 'Monoline', 'Multiline', 'Highlight', 'B&W', 'Boxed']
 
@@ -1721,6 +1932,61 @@ def make_overlay_text(analysis, max_words=5):
         if k.lower() not in [x.lower() for x in parts]:
             parts.append(k)
     return " ".join(parts[:max_words]).upper()
+
+
+# ---------------------------------------------------------------------------
+# SPEC DATA MODEL — CapCut auto-caption engine (Step 1 of user spec).
+#
+# Words come from Whisper/faster-whisper with word_timestamps=True:
+#   { word: str, start: float (sec, 3 decimals), end: float,
+#     confidence: float }
+# chunk_words() groups them per the spec's chunking rule. word_state_at()
+# implements the 3-state machine (active/past/upcoming) that drives fill
+# color, scale and glow per style config.
+# ---------------------------------------------------------------------------
+_SENTENCE_END = frozenset(".!?")
+
+def chunk_words(words, max_words=4, max_dur=2.5, gap_break=0.4):
+    """Group word-timestamp dicts into caption chunks.
+
+    Break a chunk at: sentence punctuation (. ! ?), gap between words >
+    gap_break seconds, or chunk duration > max_dur seconds. Caps chunk at
+    max_words words (3-4 for 9:16 shorts, 7 for 16:9 landscape).
+    Returns [{ words: [...], start: float, end: float }, ...].
+    """
+    chunks = []
+    cur = []
+    for w in words:
+        if cur:
+            prev = cur[-1]
+            gap = w["start"] - prev["end"]
+            dur = w["end"] - cur[0]["start"]
+            if (len(cur) >= max_words or gap > gap_break
+                    or dur > max_dur
+                    or prev["word"][-1:] in _SENTENCE_END):
+                chunks.append({"words": list(cur),
+                               "start": cur[0]["start"],
+                               "end": cur[-1]["end"]})
+                cur = []
+        cur.append(w)
+    if cur:
+        chunks.append({"words": list(cur),
+                       "start": cur[0]["start"],
+                       "end": cur[-1]["end"]})
+    return chunks
+
+
+def word_state_at(word, t):
+    """3-state machine for one word at frame time t.
+
+    Returns "active" (t within [start, end]), "past" (t > end) or
+    "upcoming" (t < start).
+    """
+    if t < word["start"]:
+        return "upcoming"
+    if t > word["end"]:
+        return "past"
+    return "active"
 
 
 def _ts_srt(sec):
@@ -1768,6 +2034,19 @@ def _word_anim_open(anim, sec, pri, tmpl):
         # gentler 118% pop for minimal/clean styles
         return (c_open + "\\t(0,150,\\fscx118\\fscy118)"
                 "\\t(150,350,\\fscx100\\fscy100)}", c_close)
+    if anim == "popin":
+        # spec popIn: fast 108% punch in 80ms (back-ease approximated with
+        # accel<1 fast-start), holds — for word-by-word sync
+        return (c_open + "\\t(0,80,0.7,\\fscx108\\fscy108)}", c_close)
+    if anim == "pop12":
+        # spec highlight active: scaleTo 1.12 in 120ms, spring-ish settle,
+        # reverts to 100% exactly at word end
+        return (c_open + "\\t(0,120,0.8,\\fscx112\\fscy112)"
+                "\\t(120,300,\\fscx100\\fscy100)}", c_close)
+    if anim == "pop106":
+        # spec dynamic active: scaleTo 1.06 in 150ms, reverts at word end
+        return (c_open + "\\t(0,150,0.75,\\fscx106\\fscy106)"
+                "\\t(150,300,\\fscx100\\fscy100)}", c_close)
     if anim == "bounce":
         # pop -> slight undershoot -> settle (k clamps to [0,1], so bounce
         # needs chained \t; accel 0.6 = fast start, ease out)
@@ -1824,6 +2103,8 @@ def _wordglow_anim_open(anim, tmpl, sec, pri):
     glow_c = tmpl.get("glow_color", sec)
     bo = tmpl.get("outline", 2)
     oc = tmpl["outline_c"]
+    if anim == "bounce_single":
+        anim = "bounce"  # motion alias: single-line bounce == glow bounce
     base_open = "{\\c%s\\bord4\\3c%s" % (sec, glow_c)
     base_close = "{\\c%s\\bord%d\\3c%s}" % (pri, bo, oc)
     if anim == "pop":
@@ -1874,14 +2155,53 @@ def _wordbig_anim_open(anim, tmpl, sec, pri):
             "{\\fs%d\\c%s}" % (cap_size, pri))
 
 
-def _entrance_tags(entrance, alignment, pw, ph):
+def _entrance_tags(entrance, alignment, pw, ph, mv=60):
     """Line-entrance animation tags (prepended to the event text).
 
     Uses ONLY \\fad and \\move so it never conflicts with the word-level
-    \\t(\\fscx/\\fscy/\\1c) transforms.
+    \\t(\\fscx/\\fscy/\\1c) transforms. mv = style MarginV (px).
     """
     if entrance == "fadein":
         return "{\\fad(180,0)}"
+    if entrance == "fade02":
+        # spec minimal: plain 0.2s linear fade, no motion
+        return "{\\fad(200,0)}"
+    if entrance == "fade01":
+        # spec standard subtitles: max 0.1s fade (or instant)
+        return "{\\fad(100,0)}"
+    if entrance == "rise300":
+        # spec dynamic slideUp: 300ms spring-ish rise + fade
+        if alignment == 8:
+            x, y = pw // 2, mv
+        elif alignment == 5:
+            x, y = pw // 2, ph // 2
+        else:
+            x, y = pw // 2, ph - mv
+        return "{\\move(%d,%d,%d,%d,0,300)\\fad(300,0)}" % (x, y + 60, x, y)
+    if entrance == "slideleft":
+        # spec dynamic slideLeft: slide in from the right + fade, 300ms
+        if alignment == 8:
+            x, y = pw // 2, mv
+        elif alignment == 5:
+            x, y = pw // 2, ph // 2
+        else:
+            x, y = pw // 2, ph - mv
+        return "{\\move(%d,%d,%d,%d,0,300)\\fad(300,0)}" % (x + 90, y, x, y)
+    if entrance == "bouncein":
+        # spec dynamic bounceIn: overshoot 118% then settle, 300ms.
+        # Uses \\fscx like word anims; only on the chunk's first word-event,
+        # so the whole line bounces in once per chunk.
+        return "{\\fad(300,0)\\t(0,180,\\fscx118\\fscy118)" \
+               "\\t(180,300,\\fscx100\\fscy100)}"
+    if entrance == "fadeup":
+        # spec aesthetic fadeUp: gentle rise 40px + fade, 350ms, easeOut
+        if alignment == 8:
+            x, y = pw // 2, mv
+        elif alignment == 5:
+            x, y = pw // 2, ph // 2
+        else:
+            x, y = pw // 2, ph - mv
+        return "{\\move(%d,%d,%d,%d,0,350)\\fad(350,0)}" % (x, y + 40, x, y)
     if entrance == "slideup":
         # resting anchor depends on alignment; \\move positions the anchor.
         # \\an2 (bottom-center): anchor = (pw/2, ph - MarginV); MarginV = 60.
@@ -1897,6 +2217,26 @@ def _entrance_tags(entrance, alignment, pw, ph):
     return ""
 
 
+def _font_file_for(font_name):
+    """Best bundled TTF for a font family name (used for PIL measuring)."""
+    try:
+        from .app_paths import fonts_dir
+    except Exception:
+        return None
+    d = fonts_dir()
+    if not d:
+        return None
+    norm = re.sub(r"[^a-z]", "", (font_name or "").lower())
+    fallback = None
+    for p in sorted(d.glob("*.ttf")):
+        pn = re.sub(r"[^a-z]", "", p.stem.lower())
+        if pn.startswith(norm) or norm in pn:
+            if any(k in pn for k in ("extrabold", "black", "bold")):
+                return p
+            fallback = fallback or p
+    return fallback
+
+
 def build_srt(sentence_timings, path):
     with open(path, "w", encoding="utf-8") as f:
         for i, s in enumerate(sentence_timings, 1):
@@ -1905,18 +2245,35 @@ def build_srt(sentence_timings, path):
 
 
 def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True,
-              overlays=None, play_res=(1920, 1080), template=None):
+              overlays=None, play_res=(1920, 1080), template=None,
+              secondary_track=None):
     """Build the ASS file: bottom captions + optional top overlays.
 
     overlays: list of dicts {text, start, end}. They use the "Top" style
     (alignment 8 = top-center) so no drawtext filter is ever needed.
     template: key from CAPTION_TEMPLATES (CapCut-style caption look).
+    secondary_track: for dual-language templates, list of dicts
+    {text, start, end} with GENUINE second-language text (never a copy of
+    the primary). Rendered with the "Cap2" style at its own y position.
     """
-    tmpl = CAPTION_TEMPLATES.get(template or DEFAULT_CAPTION_TEMPLATE,
-                                 CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE])
+    # template may be a key into CAPTION_TEMPLATES or an already-composed
+    # dict from compose_template(style, preset, motion)
+    if isinstance(template, dict):
+        tmpl = template
+    else:
+        tmpl = CAPTION_TEMPLATES.get(template or DEFAULT_CAPTION_TEMPLATE,
+                                     CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE])
     pw, ph = play_res
     cap_size = max(24, int(ph * font_size / 1080 * tmpl["size_scale"]))
     top_size = max(30, int(ph / 20))
+    # monoline preset: hollow outline — transparent fill, outline takes the
+    # text color. Alpha persists through {\c} overrides in events.
+    h_primary, h_outline_c, h_outline = (tmpl["primary"], tmpl["outline_c"],
+                                         tmpl["outline"])
+    if tmpl.get("monoline"):
+        h_primary = "&HFF" + tmpl["primary"][4:]
+        h_outline_c = tmpl["primary"]
+        h_outline = max(tmpl["outline"], 3)
     # BorderStyle: 3 = opaque box (Hormozi), 4 = rounded box (pill),
     # else 1 = outline.
     if tmpl.get("pill"):
@@ -1925,6 +2282,15 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
         border_style = 3
     else:
         border_style = 1
+    tmpl["_cap_size"] = cap_size  # for wordbig static fallback sizing
+    # spec styles can pin the caption line to an exact y fraction
+    # (e.g. y=0.78 -> MarginV = 0.22 * frame height); default keeps 60px.
+    mv = int(ph * tmpl["margin_v_frac"]) if "margin_v_frac" in tmpl else 60
+    # CapBox: opaque per-word box style (spec style 3). BorderStyle=3 draws
+    # the box from BackColour; Outline pads it (spec paddingY 12).
+    box_op = tmpl.get("box_opacity", 0.85)
+    box_back = "&H%02X000000" % int(round(255 * (1 - box_op)))
+    box_pad = tmpl.get("box_pad", 14)
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: %d
@@ -1932,20 +2298,42 @@ PlayResY: %d
 WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,%s,%d,%s,%s,%s,%s,%d,%d,0,0,100,100,0,0,%d,%d,%d,%d,40,40,60,1
+Style: Cap,%s,%d,%s,%s,%s,%s,%d,%d,0,0,100,100,%d,0,%d,%d,%d,%d,40,40,%d,1
+Style: CapBox,%s,%d,%s,%s,%s,%s,%d,%d,0,0,100,100,%d,0,3,%d,0,5,40,40,%d,1
 Style: Top,Arial,%d,&H00FFFFFF,&H000019FF,&H90000000,&H90000000,-1,0,0,0,100,100,0,0,1,3,1,8,60,60,60,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""" % (pw, ph, tmpl["font"], cap_size, tmpl["primary"], tmpl["secondary"],
-       tmpl["outline_c"], tmpl["back_c"], tmpl["bold"], tmpl["italic"],
-       border_style, tmpl["outline"], tmpl["shadow"], tmpl["alignment"],
+""" % (pw, ph, tmpl["font"], cap_size, h_primary, tmpl["secondary"],
+       h_outline_c, tmpl["back_c"], tmpl["bold"], tmpl["italic"],
+       tmpl.get("spacing", 0),
+       border_style, h_outline, tmpl["shadow"], tmpl["alignment"], mv,
+       tmpl["font"], cap_size, tmpl["primary"], tmpl["secondary"],
+       tmpl["outline_c"], box_back, tmpl["bold"], tmpl["italic"],
+       tmpl.get("spacing", 0),
+       box_pad, mv,
        top_size)
+    # spec style 8 dual-language: second independent track ("Cap2" style)
+    # with its own font/size/y. Genuine translation input required —
+    # never duplicate the primary line.
+    if tmpl.get("dual"):
+        sc = tmpl.get("secondary_cfg", {})
+        sec_size = int(ph * font_size / 1080 * sc.get("size_scale", 0.92))
+        sec_mv = int(ph * sc.get("margin_v_frac", 0.12))
+        cap2 = ("Style: Cap2,%s,%d,%s,%s,&H00000000,&H00000000,0,0,0,0,"
+                "100,100,0,0,1,%d,0,2,40,40,%d,1\n" % (
+                    sc.get("font", "Montserrat"), sec_size,
+                    sc.get("fill", "&H00D0D0D0"), sc.get("fill", "&H00D0D0D0"),
+                    sc.get("outline", 3), sec_mv))
+        header = header.replace("[Events]",
+                                cap2 + "[Events]")
     lines = []
     hmode = tmpl.get("highlight_mode", "karaoke")
     anim = tmpl.get("anim", "pop")
     entrance = tmpl.get("entrance", "slideup")
+    # spec dynamic: entry animation cycles per chunk index
+    # (e.g. ['rise300','bouncein','slideleft'])
+    entrance_cycle = tmpl.get("entrance_cycle")
     tcase = tmpl.get("text_case")
-    tmpl["_cap_size"] = cap_size  # for wordbig static fallback sizing
 
     def _case(w: str) -> str:
         if tcase == "upper":
@@ -1966,9 +2354,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # word-event's own start, so each word pops exactly when spoken.
         sec = tmpl["secondary"]
         pri = tmpl["primary"]
+        # spec 3-state machine: past/upcoming words get their own fills
+        # (default = primary when the style does not define them)
+        past_c = tmpl.get("past", pri)
+        up_c = tmpl.get("upcoming", pri)
+        # trending preset: user keyword list — these words render in the
+        # active (secondary) color in every state, not just when spoken
+        kw_set = set(k.strip().lower()
+                     for k in (tmpl.get("keywords") or []) if k.strip())
+        # typewriter motion: block cursor after the spoken word
+        cursor = tmpl.get("cursor", "")
         words = list(word_timings)
         wi = 0
-        for s in sentence_timings:
+        for ci, s in enumerate(sentence_timings):
+            if entrance_cycle:
+                ent_name = entrance_cycle[ci % len(entrance_cycle)]
+            else:
+                ent_name = entrance
             seg = []
             while wi < len(words) and words[wi]["end"] <= s["end"] + 0.05:
                 seg.append(words[wi])
@@ -1976,7 +2378,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not seg:
                 w0 = _case(s["text"])
                 safe = sanitize_ass_text(w0)
-                ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
                     f"Cap,,0,0,0,,{ent}{safe}")
@@ -1991,7 +2393,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if we <= ws:
                     we = ws + 0.01
                 # entrance animation only on the first word-event of the line
-                ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph) if i == 0 else ""
+                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph, mv) if i == 0 else ""
                 if hmode == "wordbox":
                     wopen, wclose = _wordbox_anim_open(anim, tmpl, sec, pri)
                 elif hmode == "wordbig":
@@ -2005,8 +2407,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     safe = sanitize_ass_text(sw_)
                     if j == i:
                         parts.append("%s%s%s" % (wopen, safe, wclose))
+                        if cursor:
+                            parts[-1] += "{\\c%s}%s" % (sec, cursor)
+                    elif j < i:
+                        # past: spoken already (keywords stay highlighted)
+                        kc = sec if sw_.lower() in kw_set else past_c
+                        parts.append("{\\c%s}%s{\\c%s}" % (kc, safe, pri))
                     else:
-                        parts.append(safe)
+                        # upcoming: not yet spoken
+                        kc = sec if sw_.lower() in kw_set else up_c
+                        parts.append("{\\c%s}%s{\\c%s}" % (kc, safe, pri))
                 txt = " ".join(parts)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
@@ -2067,6 +2477,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             lines.append(
                 f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
                 f"Cap,,0,0,0,,{safe}")
+    elif highlight and word_timings and hmode == "wordbox_each":
+        # Spec style 3 UPPERCASE IMPACT: EVERY word gets its OWN black box.
+        # Box+word slam in at word.start (scale 1.25 -> 1.0 in 100ms,
+        # easeOut); words stay visible once spoken. PIL measures each word
+        # so the \pos boxes sit inline, centered as one line.
+        y = int(ph * (1 - tmpl.get("margin_v_frac", 0.25)))
+        try:
+            from PIL import ImageFont as _IF
+            _fp = _font_file_for(tmpl["font"])
+            _measure = _IF.truetype(str(_fp), cap_size) if _fp else None
+        except Exception:
+            _measure = None
+        for s in sentence_timings:
+            seg = [w for w in word_timings
+                   if w["end"] > s["start"] and w["start"] < s["end"]]
+            if not seg:
+                continue
+            disp = [_case(w["word"]) for w in seg]
+            if _measure:
+                widths = [_measure.getlength(t) for t in disp]
+                space = _measure.getlength(" ")
+            else:
+                widths = [cap_size * 0.6 * len(t) for t in disp]
+                space = cap_size * 0.6
+            total = sum(widths) + space * (len(disp) - 1)
+            x = pw / 2 - total / 2
+            for k, w in enumerate(seg):
+                cx = int(x + widths[k] / 2)
+                x += widths[k] + space
+                ws, we = w["start"], w["end"]
+                if k + 1 < len(seg):
+                    we = seg[k + 1]["start"]
+                else:
+                    we = max(we, s["end"])
+                if we <= ws:
+                    we = ws + 0.01
+                safe = sanitize_ass_text(disp[k])
+                tag = ("{\\an5\\pos(%d,%d)\\fscx125\\fscy125"
+                       "\\t(0,100,0.6,\\fscx100\\fscy100)}" % (cx, y))
+                lines.append(
+                    f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
+                    f"CapBox,,0,0,0,,{tag}{safe}")
     elif highlight and word_timings:
         # karaoke-style per-word highlight
         k_tag = "\\kf" if tmpl.get("karaoke_smooth") else "\\k"
@@ -2088,6 +2540,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for s in sentence_timings:
             safe = sanitize_ass_text(s["text"])
             lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{safe}")
+    # spec style 8: secondary track events (independent text + timings,
+    # Cap2 style). Static per spec (no word animation on secondary).
+    if tmpl.get("dual") and secondary_track:
+        for t2 in secondary_track:
+            safe2 = sanitize_ass_text(t2["text"])
+            lines.append(f"Dialogue: 0,{_ts_ass(t2['start'])},{_ts_ass(t2['end'])},"
+                         f"Cap2,,0,0,0,,{safe2}")
     for ov in overlays or []:
         txt = sanitize_ass_text(ov["text"])
         if not txt.strip():
