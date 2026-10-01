@@ -1449,9 +1449,258 @@ CAPTION_TEMPLATES = {'tiktok_classic': {'label': 'TikTok Classic',
                  'box': False,
                  'highlight_mode': 'word',
                       'anim': 'pop', 'entrance': 'slideup',
-                 'text_case': 'mixed'}}
+                 'text_case': 'mixed'},
+ # --- Genspark/CapCut full-structure pack (2026-10-01) ---
+ # 1. Main Caption Types & Layout Styles (8 structural)
+ 'word_sync': {'label': 'Word Sync',
+               'category': 'Word',
+               'desc': 'Word-by-Word Sync: one word at a time, synced to speech — viral shorts',
+               'font': 'Anton', 'size_scale': 1.3,
+               'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',
+               'outline_c': '&H00000000', 'back_c': '&H00000000',
+               'bold': 0, 'italic': 0, 'outline': 4, 'shadow': 1,
+               'alignment': 5, 'box': False,
+               'highlight_mode': 'singleword',
+               'anim': 'pop', 'entrance': 'fadein', 'text_case': 'upper'},
+ 'highlight_pro': {'label': 'Highlight Pro',
+                   'category': 'Highlight',
+                   'desc': 'Highlight Captions: full line stays, spoken word changes color + pops',
+                   'font': 'Montserrat', 'size_scale': 1.0,
+                   'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',
+                   'outline_c': '&H90000000', 'back_c': '&H90000000',
+                   'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'word',
+                   'anim': 'pop', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'uppercase_impact': {'label': 'Uppercase Impact',
+                      'category': 'Hits',
+                      'desc': 'Uppercase Impact: auto ALL CAPS, gym/motivational punch',
+                      'font': 'Anton', 'size_scale': 1.15,
+                      'primary': '&H00FFFFFF', 'secondary': '&H0000FFFF',
+                      'outline_c': '&H00000000', 'back_c': '&H00000000',
+                      'bold': 0, 'italic': 0, 'outline': 4, 'shadow': 2,
+                      'alignment': 2, 'box': False,
+                      'highlight_mode': 'wordbig',
+                      'anim': 'negrow', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'aesthetic_soft': {'label': 'Aesthetic Soft',
+                    'category': 'Aesthetic',
+                    'desc': 'Aesthetic Captions: minimalist thin font, soft pastel — lifestyle/vlogs',
+                    'font': 'Outfit', 'size_scale': 0.85,
+                    'primary': '&H00F5F0EB', 'secondary': '&H00E8B4D0',
+                    'outline_c': '&H80000000', 'back_c': '&H80000000',
+                    'bold': 0, 'italic': 0, 'outline': 1, 'shadow': 0,
+                    'alignment': 2, 'box': False,
+                    'highlight_mode': 'word',
+                    'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'lower'},
+ 'minimal_clean': {'label': 'Minimal Clean',
+                   'category': 'Basic',
+                   'desc': 'Minimal Captions: low-contrast simple subtitles, information only',
+                   'font': 'Outfit', 'size_scale': 0.75,
+                   'primary': '&H00D8D8D8', 'secondary': '&H00FFFFFF',
+                   'outline_c': '&H60000000', 'back_c': '&H60000000',
+                   'bold': 0, 'italic': 0, 'outline': 1, 'shadow': 0,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'word',
+                   'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'mixed'},
+ 'dynamic_rise': {'label': 'Dynamic Rise',
+                  'category': 'NEW',
+                  'desc': 'Dynamic Animated: captions rise from bottom with bounce — attention grab',
+                  'font': 'Poppins', 'size_scale': 1.05,
+                  'primary': '&H00FFFFFF', 'secondary': '&H0000FF00',
+                  'outline_c': '&H90000000', 'back_c': '&H90000000',
+                  'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+                  'alignment': 2, 'box': False,
+                  'highlight_mode': 'word',
+                  'anim': 'bounce', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'standard_subs': {'label': 'Standard Subs',
+                   'category': 'Classic',
+                   'desc': 'Standard Subtitles: plain two-line movie subtitles, no animation',
+                   'font': 'Arial', 'size_scale': 0.8,
+                   'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+                   'outline_c': '&HFF000000', 'back_c': '&HFF000000',
+                   'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 1,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'standard',
+                   'anim': 'none', 'entrance': 'none', 'text_case': 'mixed'},
+ 'dual_language': {'label': 'Dual Language',
+                   'category': 'Multiline',
+                   'desc': 'Dual-Language: English + second line together (Urdu/translation)',
+                   'font': 'Poppins', 'size_scale': 0.9,
+                   'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',
+                   'outline_c': '&H90000000', 'back_c': '&H90000000',
+                   'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'dual',
+                   'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'mixed'},
+ # 2. Built-in Preset Styles (visual looks)
+ 'classic_plain': {'label': 'Classic Plain',
+                   'category': 'Classic',
+                   'desc': 'Classic: white text, light black outline',
+                   'font': 'Arial', 'size_scale': 0.9,
+                   'primary': '&H00FFFFFF', 'secondary': '&H00FFFF00',
+                   'outline_c': '&H80000000', 'back_c': '&H80000000',
+                   'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'word',
+                   'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'mixed'},
+ 'glow_neon_pro': {'label': 'Neon Glow Pro',
+                   'category': 'Glow',
+                   'desc': 'Glow: neon light glow around text',
+                   'font': 'Bebas Neue', 'size_scale': 1.1,
+                   'primary': '&H00FFFFFF', 'secondary': '&H00FF00FF',
+                   'outline_c': '&H80000000', 'back_c': '&H80000000',
+                   'glow_color': '&H00FF00FF',
+                   'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 0,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'wordglow',
+                   'anim': 'pop', 'entrance': 'fadein', 'text_case': 'upper'},
+ 'monoline_thin': {'label': 'Monoline Thin',
+                   'category': 'Monoline',
+                   'desc': 'Monoline: thin outline only, no fill — vlog style',
+                   'font': 'Bebas Neue', 'size_scale': 1.1,
+                   'primary': '&H00000000', 'secondary': '&H0000D7FF',
+                   'outline_c': '&H00FFFFFF', 'back_c': '&H00000000',
+                   'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 0,
+                   'alignment': 2, 'box': False,
+                   'highlight_mode': 'word',
+                   'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'upper'},
+ 'textbox_black': {'label': 'Textbox Black',
+                   'category': 'Boxed',
+                   'desc': 'Text Box: solid black box behind text, readable on any background',
+                   'font': 'Montserrat', 'size_scale': 0.95,
+                   'primary': '&H00FFFFFF', 'secondary': '&H0000FFFF',
+                   'outline_c': '&HFF000000', 'back_c': '&HFF000000',
+                   'bold': -1, 'italic': 0, 'outline': 0, 'shadow': 0,
+                   'alignment': 2, 'box': True,
+                   'highlight_mode': 'word',
+                   'anim': 'pop', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'textbox_yellow': {'label': 'Textbox Yellow',
+                    'category': 'Boxed',
+                    'desc': 'Text Box: solid yellow box, black text',
+                    'font': 'Montserrat', 'size_scale': 0.95,
+                    'primary': '&H00000000', 'secondary': '&H000000FF',
+                    'outline_c': '&H0000FFFF', 'back_c': '&H0000FFFF',
+                    'bold': -1, 'italic': 0, 'outline': 0, 'shadow': 0,
+                    'alignment': 2, 'box': True,
+                    'highlight_mode': 'word',
+                    'anim': 'pop', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'textbox_red': {'label': 'Textbox Red',
+                 'category': 'Boxed',
+                 'desc': 'Text Box: solid red box, white text — breaking news',
+                 'font': 'Anton', 'size_scale': 1.0,
+                 'primary': '&H00FFFFFF', 'secondary': '&H00000000',
+                 'outline_c': '&H000000FF', 'back_c': '&H000000FF',
+                 'bold': 0, 'italic': 0, 'outline': 0, 'shadow': 0,
+                 'alignment': 2, 'box': True,
+                 'highlight_mode': 'word',
+                 'anim': 'pop', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'trending_yellow_white': {'label': 'Trending YW',
+                           'category': 'Trending',
+                           'desc': 'Trending Combo: white words, keywords auto-yellow — most famous preset',
+                           'font': 'Montserrat', 'size_scale': 1.0,
+                           'primary': '&H00FFFFFF', 'secondary': '&H0000FFFF',
+                           'outline_c': '&H90000000', 'back_c': '&H90000000',
+                           'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+                           'alignment': 2, 'box': False,
+                           'highlight_mode': 'word',
+                           'anim': 'pop', 'entrance': 'slideup', 'text_case': 'mixed'},
+ # 3. Viral Caption Animations (motion styles)
+ 'anim_single_bounce': {'label': 'Single Bounce',
+                        'category': 'NEW',
+                        'desc': 'Single Line Bounce: word pops bigger then bounces on arrival',
+                        'font': 'Anton', 'size_scale': 1.1,
+                        'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',
+                        'outline_c': '&H00000000', 'back_c': '&H00000000',
+                        'bold': 0, 'italic': 0, 'outline': 4, 'shadow': 1,
+                        'alignment': 2, 'box': False,
+                        'highlight_mode': 'wordbig',
+                        'anim': 'bounce', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'anim_negative_grow': {'label': 'Negative Grow',
+                        'category': 'NEW',
+                        'desc': 'Negative Grow: spoken word grows big mid-sentence',
+                        'font': 'Anton', 'size_scale': 1.0,
+                        'primary': '&H00FFFFFF', 'secondary': '&H0000FFFF',
+                        'outline_c': '&H00000000', 'back_c': '&H00000000',
+                        'bold': 0, 'italic': 0, 'outline': 4, 'shadow': 1,
+                        'alignment': 2, 'box': False,
+                        'highlight_mode': 'wordbig',
+                        'anim': 'negrow', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'anim_flip_3d': {'label': 'Flip 3D',
+                  'category': 'NEW',
+                  'desc': 'Flip 6 (3D): text flips in with 3D perspective rotation',
+                  'font': 'Bebas Neue', 'size_scale': 1.15,
+                  'primary': '&H00FFFFFF', 'secondary': '&H00FF00FF',
+                  'outline_c': '&H90000000', 'back_c': '&H90000000',
+                  'bold': 0, 'italic': 0, 'outline': 3, 'shadow': 1,
+                  'alignment': 2, 'box': False,
+                  'highlight_mode': 'word',
+                  'anim': 'flip', 'entrance': 'fadein', 'text_case': 'upper'},
+ 'anim_typewriter_pro': {'label': 'Typewriter Pro',
+                         'category': 'Word',
+                         'desc': 'Typewriter: captions type out live character by character',
+                         'font': 'Courier Prime', 'size_scale': 0.95,
+                         'primary': '&H0000FF00', 'secondary': '&H0000FF00',
+                         'outline_c': '&HFF000000', 'back_c': '&HFF000000',
+                         'bold': -1, 'italic': 0, 'outline': 1, 'shadow': 0,
+                         'alignment': 2, 'box': False,
+                         'highlight_mode': 'typewriter',
+                         'anim': 'none', 'entrance': 'none', 'text_case': 'mixed'},
+ 'anim_karaoke_smooth': {'label': 'Karaoke Smooth',
+                         'category': 'Word',
+                         'desc': 'Karaoke: color sweeps left-to-right like song lyrics',
+                         'font': 'Poppins', 'size_scale': 1.0,
+                         'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',
+                         'outline_c': '&H90000000', 'back_c': '&H90000000',
+                         'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+                         'alignment': 2, 'box': False,
+                         'highlight_mode': 'karaoke', 'karaoke_smooth': True,
+                         'anim': 'none', 'entrance': 'fadein', 'text_case': 'mixed'},
+ # extra variety: B&W, Hits, Multiline
+ 'bw_bold': {'label': 'B&W Bold',
+             'category': 'B&W',
+             'desc': 'Black & white bold condensed — newspaper punch',
+             'font': 'Anton', 'size_scale': 1.1,
+             'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+             'outline_c': '&HFF000000', 'back_c': '&HFF000000',
+             'bold': 0, 'italic': 0, 'outline': 3, 'shadow': 0,
+             'alignment': 2, 'box': False,
+             'highlight_mode': 'wordbox',
+             'box_color': '&HFF000000',
+             'anim': 'pop', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'bw_invert': {'label': 'B&W Invert',
+               'category': 'B&W',
+               'desc': 'Inverted: black text on white box',
+               'font': 'Montserrat', 'size_scale': 1.0,
+               'primary': '&H00000000', 'secondary': '&H00000000',
+               'outline_c': '&H00FFFFFF', 'back_c': '&H00FFFFFF',
+               'bold': -1, 'italic': 0, 'outline': 0, 'shadow': 0,
+               'alignment': 2, 'box': True,
+               'highlight_mode': 'word',
+               'anim': 'pop_soft', 'entrance': 'fadein', 'text_case': 'upper'},
+ 'hits_fire': {'label': 'Hits Fire',
+               'category': 'Hits',
+               'desc': 'Fire hits style: orange glow hype captions',
+               'font': 'Bangers', 'size_scale': 1.2,
+               'primary': '&H00FFFFFF', 'secondary': '&H000080FF',
+               'outline_c': '&H90000000', 'back_c': '&H90000000',
+               'glow_color': '&H000080FF',
+               'bold': 0, 'italic': 0, 'outline': 3, 'shadow': 1,
+               'alignment': 2, 'box': False,
+               'highlight_mode': 'wordglow',
+               'anim': 'bounce', 'entrance': 'slideup', 'text_case': 'upper'},
+ 'multiline_stack': {'label': 'Multiline Stack',
+                     'category': 'Multiline',
+                     'desc': 'Stacked two-line captions, centered',
+                     'font': 'Outfit', 'size_scale': 0.9,
+                     'primary': '&H00FFFFFF', 'secondary': '&H0000FFFF',
+                     'outline_c': '&H90000000', 'back_c': '&H90000000',
+                     'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+                     'alignment': 5, 'box': False,
+                     'highlight_mode': 'word',
+                     'anim': 'pop_soft', 'entrance': 'slideup', 'text_case': 'mixed'},
+}
 
-CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Glow', 'Aesthetic', 'Highlight', 'Word', 'Frame', 'Monoline', 'Basic']
+CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Classic', 'NEW', 'Hits', 'Word', 'Glow', 'Basic', 'Aesthetic', 'Monoline', 'Multiline', 'Highlight', 'B&W', 'Boxed']
 
 DEFAULT_CAPTION_TEMPLATE = "tiktok_classic"
 
@@ -1529,6 +1778,18 @@ def _word_anim_open(anim, sec, pri, tmpl):
         # rotational wobble via \frz (chained \move does NOT work in libass)
         return (c_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
                 "\\t(120,180,\\frz0)}", c_close)
+    if anim == "flip":
+        # Flip 6 (3D): rotate around Y axis from -90 to 0 (CapCut 3D flip)
+        # \fry is transformable in \t
+        return (c_open + "\\fry-90\\t(0,250,\\fry0)}", c_close)
+    if anim == "negrow":
+        # Negative Grow: spoken word grows much bigger and stays big
+        return (c_open + "\\t(0,180,0.6,\\fscx165\\fscy165)"
+                "\\t(180,320,\\fscx150\\fscy150)}", c_close)
+    if anim == "bounce_single":
+        # Single Line Bounce: whole line bounces on entrance
+        return (c_open + "\\t(0,150,0.5,\\fscx130\\fscy130)"
+                "\\t(150,300,\\fscx100\\fscy100)}", c_close)
     # "none" or unknown: static color swap (old behaviour)
     return (c_open + "}", c_close)
 
@@ -1550,6 +1811,11 @@ def _wordbox_anim_open(anim, tmpl, sec, pri):
     if anim == "shake":
         return (base_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
                 "\\t(120,180,\\frz0)}", base_close)
+    if anim == "flip":
+        return (base_open + "\\fry-90\\t(0,250,\\fry0)}", base_close)
+    if anim == "negrow":
+        return (base_open + "\\t(0,180,0.6,\\fscx160\\fscy160)"
+                "\\t(180,320,\\fscx145\\fscy145)}", base_close)
     return (base_open + "}", base_close)
 
 
@@ -1570,6 +1836,11 @@ def _wordglow_anim_open(anim, tmpl, sec, pri):
     if anim == "shake":
         return (base_open + "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)"
                 "\\t(120,180,\\frz0)}", base_close)
+    if anim == "flip":
+        return (base_open + "\\fry-90\\t(0,250,\\fry0)}", base_close)
+    if anim == "negrow":
+        return (base_open + "\\t(0,180,0.6,\\fscx160\\fscy160)"
+                "\\t(180,320,\\fscx145\\fscy145)}", base_close)
     return (base_open + "}", base_close)
 
 
@@ -1588,6 +1859,13 @@ def _wordbig_anim_open(anim, tmpl, sec, pri):
     if anim == "shake":
         return ("{\\c%s\\fscx120\\fscy120"
                 "\\t(0,60,\\frz-3)\\t(60,120,\\frz3)\\t(120,180,\\frz0)}" % sec,
+                "{\\c%s\\fscx100\\fscy100}" % pri)
+    if anim == "flip":
+        return ("{\\c%s\\fscx120\\fscy120\\fry-90\\t(0,250,\\fry0)}" % sec,
+                "{\\c%s\\fscx100\\fscy100}" % pri)
+    if anim in ("negrow", "bounce_single"):
+        return ("{\\c%s\\t(0,180,0.6,\\fscx175\\fscy175)"
+                "\\t(180,320,\\fscx150\\fscy150)}" % sec,
                 "{\\c%s\\fscx100\\fscy100}" % pri)
     # static fallback (old behaviour): instant \fs size jump
     cap_size = tmpl.get("_cap_size", 48)
@@ -1750,6 +2028,45 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(cs)},{_ts_ass(ce)},"
                     f"Cap,,0,0,0,,{safe}")
+    elif highlight and word_timings and hmode == "singleword":
+        # Word-by-Word Sync (CapCut viral shorts): only ONE word on screen
+        # at a time, synced to speech, with kinetic pop.
+        sec = tmpl["secondary"]
+        pri = tmpl["primary"]
+        for w in word_timings:
+            ws, we = w["start"], w["end"]
+            if we <= ws:
+                we = ws + 0.2
+            wopen, wclose = _word_anim_open(anim, sec, pri, tmpl)
+            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+            safe = sanitize_ass_text(_case(w["word"]))
+            lines.append(
+                f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
+                f"Cap,,0,0,0,,{ent}{wopen}{safe}{wclose}")
+    elif highlight and word_timings and hmode == "dual":
+        # Dual-Language Captions: original line + second line below.
+        # Second line reuses the sentence text (user's translation/Urdu can
+        # replace it); rendered smaller via \fs.
+        dual_size = max(18, int(cap_size * 0.62))
+        for s in sentence_timings:
+            safe = sanitize_ass_text(_case(s["text"]))
+            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+            # main line
+            lines.append(
+                f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
+                f"Cap,,0,0,0,,{ent}{safe}")
+            # second language line (smaller, secondary color)
+            lines.append(
+                f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
+                f"Cap,,0,0,0,,{{\\fs{dual_size}\\c{tmpl['secondary']}}}"
+                f"{safe}{{\\c{tmpl['primary']}}}")
+    elif highlight and word_timings and hmode == "standard":
+        # Standard Subtitles: plain two-line text, no highlight, no anim.
+        for s in sentence_timings:
+            safe = sanitize_ass_text(_case(s["text"]))
+            lines.append(
+                f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
+                f"Cap,,0,0,0,,{safe}")
     elif highlight and word_timings:
         # karaoke-style per-word highlight
         k_tag = "\\kf" if tmpl.get("karaoke_smooth") else "\\k"
