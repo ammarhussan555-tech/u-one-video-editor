@@ -217,10 +217,18 @@ class _TemplateCard(QWidget):
             hm = tmpl.get("highlight_mode", "")
             if hm == "typewriter":
                 badge_txt = "⌨ typewriter"
-            elif anim in ("pop", "bounce", "shake"):
+            elif hm == "singleword":
+                badge_txt = "▶ word sync"
+            elif hm == "dual":
+                badge_txt = "🌐 dual"
+            elif hm == "karaoke":
+                badge_txt = "🎤 karaoke"
+            elif anim in ("pop", "bounce", "shake", "flip", "negrow"):
                 badge_txt = "▶ " + anim
             elif anim == "pop_soft":
                 badge_txt = "▶ soft pop"
+            elif anim == "bounce_single":
+                badge_txt = "▶ bounce"
             else:
                 badge_txt = ""
             if badge_txt:
