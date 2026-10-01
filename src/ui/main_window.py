@@ -1019,10 +1019,10 @@ class MainWindow(QMainWindow):
         for key, label in headline_preset_labels():
             self.cb_headline_style.addItem(label, key)
         self.cb_headline_style.setToolTip(
-            "Main text (headline) style: researched from 250 YouTube videos "
-            "(500k+ views). Default = Creator Impact: huge Anton caps, white "
-            "with red keyword, no box, pops in. Auto = red breaking bar when "
-            "the scene is urgent.")
+            "Main text style (Genspark broadcast standard): white Montserrat "
+            "Bold in a black box, red accent only for crisis words. Auto = "
+            "red breaking bar when the scene is urgent; Viral Creator = the "
+            "huge boxless style from the 250-video research.")
         _hl_row = QHBoxLayout()
         _hl_row.addWidget(self.chk_text_overlays)
         _hl_row.addWidget(self.cb_headline_style, 1)

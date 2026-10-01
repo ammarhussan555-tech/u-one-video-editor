@@ -47,7 +47,7 @@ from .temp_manager import TempManager, ensure_free_space
 from .text_engine import (build_ass, build_srt, make_overlay_text,
                           make_overlay,
                           headline_preset_for, headline_accent_for,
-                          detect_niche)
+                          detect_niche, select_main_text, story_box_color)
 from .timeline_engine import Timeline
 from .voiceover import audio_duration, get_sentence_timings, synthesize_speech, whisper_word_timings
 
@@ -126,6 +126,9 @@ class RenderEngine:
         self.ffmpeg_commands: list = []
         self.assets: Dict[int, Asset] = {}
         self.sfx_library: dict = {}
+        # Main-text engine context (pop-in budget, words/minute ceiling,
+        # cross-scene dedupe) — lives for the whole render.
+        self._mt_context: dict = {}
         self.out_w = 0
         self.out_h = 0
         self._final_path = ""
@@ -555,6 +558,25 @@ class RenderEngine:
         self.scene_results = results
         self._msg(f"Resumed: {len(results)} previously rendered segments kept.")
 
+    def _scene_word_timings(self, scene_start, scene_end):
+        """Word timings converted to scene-relative seconds for the
+        Genspark main-text engine (appear 100-300ms BEFORE the hero word).
+
+        voice-absolute == video-absolute everywhere in this engine, so
+        subtracting the scene start is exact. Returns [] when no timings
+        are available (scene cut alignment is used instead).
+        """
+        out = []
+        for w in self.word_timings or []:
+            ws = w.get("start")
+            if ws is None:
+                continue
+            if scene_start - 0.25 <= ws <= scene_end:
+                out.append({"word": w.get("word", ""),
+                            "start": max(0.0, ws - scene_start),
+                            "end": max(0.0, (w.get("end") or ws) - scene_start)})
+        return out
+
     def _build_timeline(self, preview: bool):
         S = self.settings
         tl = Timeline()
@@ -572,18 +594,34 @@ class RenderEngine:
                    locked=sc.locked if sc else False)
             if S.get("text_overlays", "auto") == "auto" and sc:
                 sa = analyze_sentence(sc.text)
-                ov, accent_words = make_overlay(sa)
-                if ov:
+                dur = max(1.0, t["end"] - t["start"])
+                recent = self._mt_context.setdefault("recent", [])
+                cards = select_main_text(
+                    sc.text, duration=dur,
+                    word_timings=self._scene_word_timings(t["start"], t["end"]),
+                    recent_texts=recent,
+                    keywords=sa.keywords, phrases=sa.phrases,
+                    context=self._mt_context)
+                recent.extend(c["text"] for c in cards)
+                del recent[:-8]
+                if cards:
                     hl = headline_preset_for(
                         sc.text, S.get("headline_style", "auto"))
-                    tl.add("text", t["start"] + 0.3,
-                           min(t["end"], t["start"] + 3.2), kind="text",
-                           label=ov, payload={"scene_id": sc.id,
-                                             "style": hl,
-                                             "accent": headline_accent_for(
-                                                 sc.text, S.get("headline_style", "auto")),
-                                             "accent_words": accent_words},
-                           locked=sc.locked)
+                    box_c = story_box_color(sc.text)
+                    for card in cards:
+                        tl.add("text", t["start"] + card["appear"],
+                               t["start"] + card["appear"] + card["hold"],
+                               kind="text", label=card["text"],
+                               payload={"scene_id": sc.id,
+                                         "style": hl,
+                                         "accent": card["accent"],
+                                         "accent_words": card["accent_words"],
+                                         "hl_type": card["type"],
+                                         "enter_ms": card["enter_ms"],
+                                         "exit_ms": card["exit_ms"],
+                                         "entrance": card["entrance"],
+                                         "box_c": box_c},
+                               locked=sc.locked)
         self.timeline = tl
 
     def _build_captions(self, w: int, h: int, preview: bool):
@@ -595,7 +633,12 @@ class RenderEngine:
         overlays = [{"text": c.label, "start": c.start, "end": c.end,
                      "style": c.payload.get("style"),
                      "accent": c.payload.get("accent"),
-                     "accent_words": c.payload.get("accent_words", [])}
+                     "accent_words": c.payload.get("accent_words", []),
+                     "hl_type": c.payload.get("hl_type", "STAT"),
+                     "enter_ms": c.payload.get("enter_ms", 200),
+                     "exit_ms": c.payload.get("exit_ms", 150),
+                     "entrance": c.payload.get("entrance", "fade"),
+                     "box_c": c.payload.get("box_c")}
                     for c in self.timeline.by_track("text")]
         build_srt(self.sentence_timings, srt)
         build_ass(self.sentence_timings, self.word_timings, ass,
@@ -750,18 +793,40 @@ class RenderEngine:
         sc = self._scene(scene_id)
         if not sc or getattr(sc, "locked", False) or not self.timeline:
             return
+        st = next((t for t in self.scene_timings
+                   if t["scene_id"] == scene_id), None)
+        if not st:
+            return
         sa = analyze_sentence(sc.text)
-        ov, accent_words = make_overlay(sa)
+        dur = max(1.0, st["end"] - st["start"])
+        recent = self._mt_context.setdefault("recent", [])
+        cards = select_main_text(
+            sc.text, duration=dur,
+            word_timings=self._scene_word_timings(st["start"], st["end"]),
+            recent_texts=recent,
+            keywords=sa.keywords, phrases=sa.phrases,
+            context=self._mt_context)
         hl = headline_preset_for(
             sc.text, self.settings.get("headline_style", "auto"))
-        ac = headline_accent_for(
-            sc.text, self.settings.get("headline_style", "auto"))
-        for c in self.timeline.by_track("text"):
-            if c.payload.get("scene_id") == scene_id and not c.locked:
-                c.label = ov
-                c.payload["style"] = hl
-                c.payload["accent"] = ac
-                c.payload["accent_words"] = accent_words
+        box_c = story_box_color(sc.text)
+        tl = self.timeline
+        for c in [c for c in tl.by_track("text")
+                  if c.payload.get("scene_id") == scene_id and not c.locked]:
+            tl.remove(c.id)
+        for card in cards:
+            tl.add("text", st["start"] + card["appear"],
+                   st["start"] + card["appear"] + card["hold"],
+                   kind="text", label=card["text"],
+                   payload={"scene_id": sc.id,
+                             "style": hl,
+                             "accent": card["accent"],
+                             "accent_words": card["accent_words"],
+                             "hl_type": card["type"],
+                             "enter_ms": card["enter_ms"],
+                             "exit_ms": card["exit_ms"],
+                             "entrance": card["entrance"],
+                             "box_c": box_c},
+                   locked=sc.locked)
 
     def regenerate_sfx(self, scene_id):
         sc = self._scene(scene_id)

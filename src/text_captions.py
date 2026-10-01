@@ -1917,133 +1917,834 @@ DEFAULT_CAPTION_TEMPLATE = "spec_highlight"
 
 
 # ---------------------------------------------------------------------------
-# HEADLINE PRESETS — "main text" overlay styles.
+# MAIN-TEXT ENGINE — Genspark-validated (2026-10-01).
 #
-# REDESIGNED 2026-10-01 from the 250-video main-text research
-# (~/workspace/research/main_text_250.md): 168 rows with verified on-screen
-# text, every video 500k+ views and <1 year old, individual creators.
-# Ranked findings driving these presets:
-#   - ALL CAPS: 127/168 (76%) -> every preset uppercase=True
-#   - Heavy/black weight 61%; top fonts Anton (45), Archivo Black (26),
-#     Oswald (9) -> Anton/Archivo/Oswald presets lead
-#   - White #FFFFFF fill 73% -> white primary everywhere
-#   - Red = universal accent (25), then yellow (13)
-#   - NO box beats box ~2:1 (97 vs 47) -> default is boxless; box only for
-#     breaking/broadcast bars and Johnny-Harris-style pills
-#   - Thick black stroke/outline replaces boxes for 30% -> outline 6-8
-#   - Size HUGE (~15%+ of frame height): 48% -> size_frac 0.07-0.085 default
-#   - Position: left (73), center (68), bottom (60) -> center/left default
-#   - Animation: snappy pop/scale-in + hard cuts, NEVER slow fades
-#     (verified: Ali Abdaal pop/scale; news stings hard slide/wipe)
-#   - On-screen headline = SHORTER, PUNCHIER hook than the video title
-#     (make_overlay_text already caps at 5 words)
-#   - House-style lock-in: creators run ONE fixed template -> strong default
+# Spec: ~/workspace/research/main_text_genspark_spec.md (authoritative).
+# Seven types (STAT/NAME/DATE/KEYWORD/QUOTE/CHAPTER/OUTCOME), tiered
+# selection with a scene-worthiness gate, broadcast styling (Montserrat
+# Bold, white default, black box 50-85%), and narration-synced animation
+# (appear 100-300ms BEFORE the spoken word, hold = 0.3*wc+0.5 clamped to
+# [1.5, 4.0]s, exit fade 150-200ms always shorter than the entrance).
 #
-# Colors are ASS &HAABBGGRR. size_frac is a fraction of the play height.
-# entrance: pop | wipe_left | rise | (fade removed per research)
-# All fonts bundled in assets/fonts/.
+# Public API (stable for text_engine.py and the UI):
+#   select_main_text(...) -> list of card dicts      (primary entry point)
+#   classify_main_text(scene_text, ...) -> (type, text) or (None, "")
+#   make_overlay(analysis, max_words=12) -> (text, accent_words)
+#   make_overlay_text(analysis, max_words=12) -> text
+#   headline_preset_for(scene_text, override="auto") -> preset id
+#   headline_accent_for(scene_text, override="auto") -> ASS color
+#   headline_preset_labels() -> [(id, label), ...]
+#   detect_niche(text) -> niche id
+#   story_box_color(scene_text) -> ASS BackColour for the story type
 # ---------------------------------------------------------------------------
+
+#: The seven main-text types (§1).
+MAIN_TEXT_TYPES = ("STAT", "NAME", "DATE", "KEYWORD", "QUOTE", "CHAPTER", "OUTCOME")
+
+# ASS colours, &HAABBGGRR.
+_MT_WHITE = "&H00FFFFFF"   # #FFFFFF — default fill
+_MT_YELLOW = "&H0000CCFF"  # #FFCC00 — fallback when white won't separate
+_MT_RED = "&H000000FF"     # #FF0000 — crisis/casualty/negative ONLY
+_MT_DRED = "&H000000DD"    # #DD0000 — crisis alt
+_MT_CYAN = "&H00FFD400"    # #00D4FF — highly technical topics
+_MT_GOLD = "&H0000D7FF"    # #FFD700 — chapter alt / positive
+_MT_LGREEN = "&H0090EE90"  # light green — positive/record
+
+
+def _box_back(opacity):
+    """ASS BackColour for a black box at the given opacity (0..1)."""
+    return "&H%02X000000" % int(round(255 * (1 - max(0.0, min(1.0, opacity)))))
+
+
+# Per-type style at 1080p (Genspark §3 table). entrances ≤250ms, exits
+# strictly shorter than entrances (§4). y_frac is the anchor for \an8/\an9.
+MAIN_TEXT_STYLE = {
+    "STAT":    dict(size=64, sub=44, box_op=0.60, pad_lr=25, pad_tb=15,
+                    align=8, y_frac=0.30, enter_ms=180, exit_ms=120,
+                    entrance="fade", case="upper"),
+    "NAME":    dict(size=54, sub=36, box_op=0.65, pad_lr=22, pad_tb=12,
+                    align=8, y_frac=0.32, enter_ms=200, exit_ms=150,
+                    entrance="slide", case="title"),
+    "DATE":    dict(size=50, sub=36, box_op=0.55, pad_lr=16, pad_tb=10,
+                    align=9, y_frac=0.20, enter_ms=180, exit_ms=120,
+                    entrance="fade", case="upper"),
+    "KEYWORD": dict(size=50, sub=36, box_op=0.65, pad_lr=20, pad_tb=12,
+                    align=5, y_frac=0.40, enter_ms=200, exit_ms=150,
+                    entrance="fade", case="upper"),
+    "QUOTE":   dict(size=56, sub=32, box_op=0.70, pad_lr=28, pad_tb=18,
+                    align=5, y_frac=0.45, enter_ms=250, exit_ms=200,
+                    entrance="fade", case="verbatim"),
+    "CHAPTER": dict(size=68, sub=38, box_op=0.78, pad_lr=34, pad_tb=22,
+                    align=5, y_frac=0.32, enter_ms=250, exit_ms=200,
+                    entrance="slide", case="upper"),
+    "OUTCOME": dict(size=52, sub=36, box_op=0.65, pad_lr=22, pad_tb=14,
+                    align=5, y_frac=0.42, enter_ms=200, exit_ms=150,
+                    entrance="fade", case="upper"),
+}
+
+# Narration lead per type: entrance begins this many seconds BEFORE the
+# spoken hero word (§4 sync). Stats get the longest lead (heaviest load).
+_MT_LEAD = {"STAT": 0.30, "NAME": 0.12, "DATE": 0.20, "KEYWORD": 0.20,
+            "QUOTE": 0.25, "CHAPTER": 0.20, "OUTCOME": 0.20}
+
+# ---------------------------------------------------------------------------
+# Negative filters (§5).
+# ---------------------------------------------------------------------------
+
+# §5a filler / discourse markers — never heroes, never overlays alone.
+_MAIN_FILLERS = frozenset((
+    "instead rather however moreover furthermore nevertheless therefore thus hence "
+    "also just even still yet very really quite somewhat essentially basically often "
+    "usually sometimes always never ever much many more most such like well now today "
+    "here there every any some each other another these those this that its their our "
+    "your his her my own same new old big small large great good bad high low long "
+    "short meanwhile already though although because since while when where which that "
+    "both few several various certain in other words"
+).split())
+
+# Back-compat alias: the old HEADLINE_FILLERS name still resolves.
+HEADLINE_FILLERS = _MAIN_FILLERS
+
+# §5b generic verbs — never heroes.
+_GENERIC_VERBS = frozenset((
+    "is are was were be been being has have had do does did will would can could "
+    "should may might must make made take took get got go went come came say said "
+    "says tell told know knew think thought see saw look seemed become feel try "
+    "used use want need help"
+).split())
+
+# §5c superlatives that need data — never shown isolated.
+_SUPERLATIVES = frozenset(
+    "amazing shocking historic unprecedented incredible unbelievable insane".split())
+
+# §5c vague timeframes — replaced by concrete ones, never shown.
+_VAGUE_TIME = frozenset("soon later eventually someday".split())
+
+# §5c attribution phrases — never shown alone (only paired with a statement).
+_ATTRIBUTION_RES = (
+    re.compile(r"\b(?:officials?|sources?|reports?|experts?|analysts?)\s+say\b", re.I),
+    re.compile(r"\baccording to (?:reports|sources|officials)\b", re.I),
+)
+
+# §5c standalone pronouns — never shown alone.
+_PRONOUNS = frozenset(
+    "it he she they him her them we you i me us".split())
+
+# Words that license the RED accent: crisis / casualty / negative (§3).
+_CRISIS_WORDS = frozenset((
+    "dead death deaths died kill killed killing casualty casualties collapse collapsed "
+    "collapsing crash crashed crashing decline declined loss losses lost disaster "
+    "emergency attack attacked war recession bankrupt bankruptcy layoffs layoff fired "
+    "outbreak victims victim fatal destroyed destruction crisis threat danger warning "
+    "plunge plunged plunges soar nosedive tumble".split()))
+
+# Strong emotional verbs that may join a STAT card as the red hero (§7 Ex 2).
+_EMOTION_WORDS = _CRISIS_WORDS | frozenset(
+    "surge surges soaring skyrocket skyrockets warns".split())
+
+# Technical-topic hints: KEYWORD cards get the cyan accent on these.
+_TECH_HINTS = frozenset((
+    "ai quantum neural fiscal deficit gdp gdpr crypto blockchain semiconductor chip "
+    "algorithm genome vaccine mrna inflation recession tariff quantum entanglement "
+    "nuclear fusion reactor cpr".split()))
+
+# Words stripped from overlay edges during compression (never content).
+_STOP_EDGE = frozenset(
+    "a an the to for of on at by with from as in into over under and or but".split())
+
+# Weak generic words — dropped from the END so the punch lands last.
+_WEAK_ENDINGS = frozenset(
+    "region area zone people thing things stuff part side way kind sort".split())
+
+
+def _is_filler(w):
+    """True for filler/discourse words that must never anchor main text."""
+    return (w or "").strip(".,!?\"'").lower() in _MAIN_FILLERS
+
+
+def _content_words(text):
+    """Words that carry meaning: not filler, verbs, pronouns or stopwords."""
+    out = []
+    for w in re.findall(r"[A-Za-z']+", text or ""):
+        wl = w.lower()
+        if (wl not in _MAIN_FILLERS and wl not in _GENERIC_VERBS
+                and wl not in _PRONOUNS and wl not in _STOP_EDGE
+                and len(w) > 2):
+            out.append(w)
+    return out
+
+
+def _norm_text(t):
+    return re.sub(r"\s+", " ", (t or "").strip(" .,!?\"'").lower())
+
+
+# ---------------------------------------------------------------------------
+# Candidate extraction — one candidate per Tier-1 entity (§2 Step 1).
+# ---------------------------------------------------------------------------
+
+_NUM_RE = re.compile(
+    r"\$?\d[\d,]*\.?\d*"
+    r"(?:\s*(?:trillion|billion|million|thousand|percent|%|tons?|tonnes?|feet|ft|"
+    r"miles?|km|°F|°C|degrees?))?"
+    r"(?=\s|$|[.,;:!?\"'])", re.IGNORECASE)
+_YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+_MONTHS = ("January|February|March|April|May|June|July|August|September|October|"
+           "November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec")
+_DATE_RES = (
+    re.compile(r"\b(?:%s)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b" % _MONTHS, re.I),
+    re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"),
+    re.compile(r"\bfor the past \d+\s+(?:months?|years?|days?|weeks?)\b", re.I),
+    re.compile(r"\bin \d+\s+(?:hours?|days?|weeks?|months?|years?)\b", re.I),
+    re.compile(r"\bsince the \d{4}s\b", re.I),
+)
+_DEADLINE_RE = re.compile(
+    r"\b(?:deadline|scheduled|set for|due|expires?|launch(?:es|ed)?)\b", re.I)
+_NAME_RE = re.compile(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,2})\b")
+_ACRONYM_RE = re.compile(r"\b([A-Z]{2,6})\b")
+_ROLE_RE = re.compile(
+    r"\b(?:the|a|an)\s+(CEO|witness|doctor|officer|official|expert|analyst|"
+    r"spokesperson|founder|president|minister|chairman|governor|mayor)\b", re.I)
+_QUOTE_RES = (
+    re.compile(r"[\"“”]([^\"“”]{10,90})[\"“”]"),
+    re.compile(r"\bquote,?\s+(.+?)\s*,?\s+end quote\b", re.I),
+)
+_CHAPTER_RE = re.compile(
+    r"\b(?:number|chapter|step|part)\s+(\d+|one|two|three|four|five|six|seven|"
+    r"eight|nine|ten)\b", re.I)
+_OUTCOME_RES = (
+    re.compile(r"\b(?:could|would|may|might|will)\s+"
+               r"(?:affect|trigger|cause|lead to|mean|change|reshape|threaten|put)"
+               r"[^.,;!?]{0,70}", re.I),
+    re.compile(r"\b(?:first|biggest|largest|worst|deadliest|highest|lowest)\s+"
+               r"(?:such\s+)?[^.,;!?]{1,50}?\s+in\s+\d+\s+years\b", re.I),
+)
+_INCIDENTAL_RE = re.compile(
+    r"\b(?:in|for|within|just|about|around)\s+\$?\d[\d,]*\.?\d*\s*"
+    r"(?:seconds?|minutes?|hours?|days?|weeks?)\b", re.I)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                 "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                 "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+                 "fifteen": 15, "sixteen": 16, "seventeen": 17,
+                 "eighteen": 18, "nineteen": 19, "twenty": 20}
+
+
+def _magnitude(num_text):
+    """Rough magnitude for the magnitude tie-break (bigger number wins)."""
+    t = (num_text or "").lower().replace(",", "").replace("$", "")
+    m = re.search(r"\d+\.?\d*", t)
+    v = float(m.group(0)) if m else 0.0
+    for unit, mult in (("trillion", 1e12), ("billion", 1e9), ("million", 1e6),
+                       ("thousand", 1e3)):
+        if unit in t:
+            v *= mult
+            break
+    return v
+
+
+def _extract_candidates(text, keywords=(), phrases=()):
+    """Extract Tier-1 entity candidates from scene text.
+
+    Returns a list of dicts: raw, type, tier, sub (in-tier rank), start,
+    hero, magnitude, incidental, deadline. Overlapping spans are claimed
+    by the earliest extractor (dates/stats/quotes first).
+    """
+    cands = []
+    used = []  # (start, end) spans already claimed
+
+    def _claim(s, e):
+        for a, b in used:
+            if s < b and e > a:
+                return False
+        used.append((s, e))
+        return True
+
+    # -- QUOTE (explicit markers = auto-qualify, Tier 1) --
+    for rx in _QUOTE_RES:
+        for m in rx.finditer(text):
+            q = " ".join(m.group(1).split())
+            words = q.split()
+            if 2 <= len(words) <= 15 and _claim(m.start(), m.end()):
+                cands.append({"raw": q, "type": "QUOTE", "tier": 1, "sub": 1,
+                              "start": m.start(), "hero": "",
+                              "magnitude": 0.0, "incidental": False,
+                              "deadline": False})
+
+    # -- DATE (Tier 2; deadline/event dates get the news-priority override) --
+    for rx in _DATE_RES:
+        for m in rx.finditer(text):
+            d = " ".join(m.group(0).split())
+            if _claim(m.start(), m.end()):
+                window = text[max(0, m.start() - 40):m.end() + 20]
+                is_deadline = bool(_DEADLINE_RE.search(window)) \
+                    or d.lower().startswith("by ")
+                cands.append({"raw": d, "type": "DATE",
+                              "tier": 1 if is_deadline else 2, "sub": 0,
+                              "start": m.start(), "hero": "",
+                              "magnitude": 0.0, "incidental": False,
+                              "deadline": is_deadline})
+
+    # -- STAT (number + unit, Tier 1) --
+    for m in _NUM_RE.finditer(text):
+        raw = " ".join(m.group(0).split())
+        if not re.search(r"\d", raw):
+            continue
+        if _YEAR_RE.fullmatch(raw):
+            # Bare 4-digit years are DATE-flavoured stats ("since 2019").
+            if _claim(m.start(), m.end()):
+                cands.append({"raw": raw, "type": "STAT", "tier": 1,
+                              "sub": 3, "start": m.start(), "hero": raw,
+                              "magnitude": _magnitude(raw),
+                              "incidental": False, "deadline": False})
+            continue
+        has_unit = bool(re.search(
+            r"billion|million|thousand|percent|%|tons?|tonnes?|feet|\bft\b|"
+            r"miles?|\bkm\b|°F|°C|degrees?|\$", raw, re.I))
+        if _claim(m.start(), m.end()):
+            window = text[max(0, m.start() - 12):m.end() + 4]
+            incidental = bool(_INCIDENTAL_RE.search(window))
+            cands.append({"raw": raw, "type": "STAT",
+                          "tier": 3 if incidental else 1,
+                          "sub": 0 if has_unit else 3,
+                          "start": m.start(), "hero": raw,
+                          "magnitude": _magnitude(raw),
+                          "incidental": incidental, "deadline": False})
+    # number-words ("three miles" -> "3 MILES")
+    for w, v in _NUMBER_WORDS.items():
+        for m in re.finditer(r"\b%s\s+(miles?|km|feet|\bft\b|tons?|percent|%%)\b"
+                             % w, text, re.I):
+            unit = m.group(1).upper()
+            raw = "%d %s" % (v, unit)
+            if _claim(m.start(), m.end()):
+                cands.append({"raw": raw, "type": "STAT", "tier": 1,
+                              "sub": 0, "start": m.start(), "hero": raw,
+                              "magnitude": float(v),
+                              "incidental": False, "deadline": False})
+
+    # -- NAME (proper nouns, Tier 1; role IDs, Tier 3) --
+    for m in _NAME_RE.finditer(text):
+        name = " ".join(m.group(1).split())
+        if (name.split()[0].lower() in _MAIN_FILLERS
+                or name.lower() in _STOP_EDGE
+                or re.fullmatch(_MONTHS, name.split()[0], re.I)):
+            continue
+        if m.start() == 0 and " " not in name:
+            continue  # sentence-initial single capitalised word: not an entity
+        if _claim(m.start(), m.end()):
+            parts = name.split()
+            hero = parts[-1]  # surname / last token
+            cands.append({"raw": name, "type": "NAME", "tier": 1, "sub": 2,
+                          "start": m.start(), "hero": hero,
+                          "magnitude": 0.0, "incidental": False,
+                          "deadline": False})
+    for m in _ROLE_RE.finditer(text):
+        role = m.group(1).capitalize()
+        if _claim(m.start(), m.end()):
+            cands.append({"raw": role, "type": "NAME", "tier": 3, "sub": 1,
+                          "start": m.start(), "hero": role,
+                          "magnitude": 0.0, "incidental": False,
+                          "deadline": False})
+
+    # -- KEYWORD (technical/unfamiliar terms ONLY if in the voiceover) --
+    techy = set()
+    low = text.lower()
+    for kw in list(keywords) + list(phrases):
+        kl = (kw or "").lower().strip()
+        if not kl or _is_filler(kl) or kl in _GENERIC_VERBS:
+            continue
+        if (re.fullmatch(r"[A-Z]{2,6}", kw or "")
+                or any(h in kl for h in _TECH_HINTS)
+                or kl in _TECH_HINTS):
+            techy.add(kw)
+    for m in _ACRONYM_RE.finditer(text):
+        ac = m.group(1)
+        if ac.lower() not in _MAIN_FILLERS and _claim(m.start(), m.end()):
+            techy.add(ac)
+    for kw in sorted(techy, key=lambda k: text.lower().find(k.lower())):
+        idx = text.lower().find(kw.lower())
+        cands.append({"raw": kw, "type": "KEYWORD", "tier": 2, "sub": 1,
+                      "start": idx if idx >= 0 else 0, "hero": kw,
+                      "magnitude": 0.0, "incidental": False,
+                      "deadline": False})
+
+    # -- CHAPTER (list-item openers, Tier 3) --
+    for m in _CHAPTER_RE.finditer(text):
+        n = m.group(1)
+        num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+               "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}.get(
+                   n.lower(), n)
+        label_words = [w for w in _content_words(text)[:2]]
+        label = "#%s %s" % (num, " ".join(label_words).upper())
+        if _claim(m.start(), m.end()):
+            cands.append({"raw": label.strip(), "type": "CHAPTER", "tier": 3,
+                          "sub": 0, "start": m.start(), "hero": "#%s" % num,
+                          "magnitude": 0.0, "incidental": False,
+                          "deadline": False})
+
+    # -- OUTCOME (the "so what", Tier 2) --
+    for rx in _OUTCOME_RES:
+        for m in rx.finditer(text):
+            oc = " ".join(m.group(0).split())
+            if len(oc.split()) >= 3 and _claim(m.start(), m.end()):
+                cands.append({"raw": oc, "type": "OUTCOME", "tier": 2,
+                              "sub": 2, "start": m.start(), "hero": "",
+                              "magnitude": 0.0, "incidental": False,
+                              "deadline": False})
+
+    # Secondary stats drop to Tier 3 (only the defining stat stays Tier 1).
+    seen_stat = False
+    for c in sorted(cands, key=lambda c: (c["tier"], c["sub"],
+                                         -c["magnitude"], c["start"])):
+        if c["type"] == "STAT" and c["tier"] == 1:
+            if seen_stat:
+                c["tier"] = 3
+                c["sub"] = 2
+            seen_stat = True
+    return cands
+
+
+# ---------------------------------------------------------------------------
+# Compression (§2 Step 2) and case rules (§2 Step 3).
+# ---------------------------------------------------------------------------
+
+def _compress_words(words, max_words):
+    """Strip edge stopwords/fillers/weak verbs, drop weak endings, hard-cap."""
+    i, j = 0, len(words)
+    while i < j and (words[i].lower() in _STOP_EDGE
+                     or _is_filler(words[i])
+                     or words[i].lower() in _GENERIC_VERBS):
+        i += 1
+    while j > i and (words[j - 1].lower() in _STOP_EDGE
+                     or _is_filler(words[j - 1])
+                     or words[j - 1].lower() in _WEAK_ENDINGS):
+        j -= 1
+    words = words[i:j]
+    while len(words) > max_words and words[-1].lower() in (
+            _WEAK_ENDINGS | _STOP_EDGE):
+        words.pop()
+    return words[:max_words]
+
+
+def _apply_case(text, case):
+    if case == "upper":
+        return text.upper()
+    if case == "title":
+        out = []
+        for w in text.split():
+            if re.fullmatch(r"[A-Z]{2,6}", w):
+                out.append(w)  # keep acronyms as-is
+            else:
+                out.append(w[:1].upper() + w[1:].lower())
+        return " ".join(out)
+    return text  # verbatim
+
+
+def _crisis_in(text):
+    toks = set(re.findall(r"[a-z]+", (text or "").lower()))
+    return bool(toks & _CRISIS_WORDS)
+
+
+def _adopt_emotion_word(scene_text, start, words, max_words, case):
+    """For a STAT card, adopt the first emotional word spoken near the stat
+    (§7 Ex 2: "$68 BILLION COLLAPSED"). Returns the cased word or None."""
+    disp = {w.strip(".,!?\"'").lower() for w in words}
+    window = scene_text[start:start + 90]
+    for w in re.findall(r"[A-Za-z']+", window):
+        wl = w.lower()
+        if wl in disp or _is_filler(w) or wl in _STOP_EDGE:
+            continue
+        if wl in _EMOTION_WORDS and len(words) < max_words:
+            return _apply_case(w, case)
+    return None
+
+
+def _card_accent(card_text, ctype, scene_text):
+    """Accent colour + hero words for a finished card.
+
+    White default; RED only for crisis/casualty/negative; CYAN for highly
+    technical KEYWORD cards. Accent lands on 1-3 hero words max — never
+    every word (the all-red bug).
+    """
+    crisis = _crisis_in(card_text) or _crisis_in(scene_text)
+    if crisis:
+        heroes = [w for w in card_text.split()
+                  if w.strip(".,!?\"'").lower() in _EMOTION_WORDS][:3]
+        if not heroes:
+            heroes = card_text.split()[:1]
+        return _MT_RED, heroes
+    if ctype == "KEYWORD":
+        return _MT_CYAN, card_text.split()[:2]
+    return _MT_WHITE, []
+
+
+# ---------------------------------------------------------------------------
+# Selection pipeline (§2): gate -> tiers -> density -> compression -> cards.
+# ---------------------------------------------------------------------------
+
+def _max_cards(duration):
+    if duration <= 6:
+        return 1
+    if duration <= 12:
+        return 2
+    return 3
+
+
+# Narrative display order for multi-card scenes: identity -> impact -> meaning.
+_NARRATIVE_ORDER = {"NAME": 0, "DATE": 1, "STAT": 2, "KEYWORD": 3,
+                    "OUTCOME": 4, "QUOTE": 5, "CHAPTER": 6}
+
+
+def _repetition_count(candidate_text, scene_text):
+    pat = r"\b" + re.escape(_norm_text(candidate_text)) + r"\b"
+    return len(re.findall(pat, _norm_text(scene_text)))
+
+
+def _hero_word_time(hero, word_timings):
+    """Start time of the hero word in scene-relative word timings."""
+    if not word_timings or not hero:
+        return None
+    hl = hero.strip(".,!?\"'").lower()
+    for w in word_timings:
+        if (w.get("word", "").strip(".,!?\"'").lower() == hl
+                and w.get("start") is not None):
+            return float(w["start"])
+    # fallback: first content word of the card
+    return None
+
+
+def select_main_text(scene_text, duration=6.0, word_timings=None,
+                     recent_texts=(), keywords=(), phrases=(),
+                     context=None, max_words=12):
+    """Genspark-validated main-text selection for one scene.
+
+    scene_text: 1-3 sentences of narration.
+    duration: scene length in seconds (drives card density).
+    word_timings: [{word, start, end}] with start/end RELATIVE TO THE
+        SCENE START (or None) — used to appear 100-300ms before the hero.
+    recent_texts: overlay texts shown in the last ~3s (dedupe).
+    keywords/phrases: from analyze_sentence (KEYWORD extraction).
+    context: caller-kept dict across scenes for pop-in budget and the
+        60-80 words/minute ceiling. Keys used: pops, pop_t, words_used,
+        seconds_used.
+    Returns a list of card dicts: text, accent_words, accent (ASS color),
+    type, tier, appear (s, scene-relative), hold (s), enter_ms, exit_ms,
+    entrance, hero_word.
+    """
+    text = (scene_text or "").strip()
+    if not text:
+        return []
+    if context is None:
+        context = {}
+    duration = max(1.0, float(duration or 6.0))
+
+    cands = _extract_candidates(text, keywords=keywords, phrases=phrases)
+    # Step 0 — scene-worthiness gate: no Tier-1 entity -> NOTHING.
+    if not cands:
+        return []
+
+    # Repetition boost: a Tier-1 entity spoken >=3x auto-wins its tier.
+    for c in cands:
+        c["boost"] = (c["tier"] == 1
+                      and _repetition_count(c["raw"], text) >= 3)
+
+    # Priority order: tier, in-tier rank, repetition boost, magnitude,
+    # then earliest in the scene (narrative dominance).
+    cands.sort(key=lambda c: (0 if c["boost"] else c["tier"], c["sub"],
+                              -c["magnitude"], c["start"]))
+
+    # Density: how many cards fit this scene.
+    want = _max_cards(duration)
+    recent = {_norm_text(r) for r in recent_texts if r}
+    picked = []
+    for c in cands:
+        if len(picked) >= want:
+            break
+        if _norm_text(c["raw"]) in recent:
+            continue  # dedupe: never repeat a recent overlay
+        picked.append(c)
+    if not picked:
+        return []
+
+    # 60-80 overlay words/minute ceiling.
+    words_used = float(context.get("words_used", 0.0))
+    seconds_used = float(context.get("seconds_used", 0.0))
+    if seconds_used >= 10:
+        projected = (words_used + sum(len(p["raw"].split())
+                                      for p in picked)) / (seconds_used / 60.0)
+        if projected > 80:
+            return []
+
+    # Narrative display order for multi-card scenes.
+    picked.sort(key=lambda c: (_NARRATIVE_ORDER.get(c["type"], 9),
+                               c["start"]))
+
+    cards = []
+    prev_end = 0.0
+    for idx, c in enumerate(picked):
+        ts = MAIN_TEXT_STYLE[c["type"]]
+        if c["type"] == "QUOTE":
+            # Quotes are verbatim — compress only by the hard cap.
+            words = c["raw"].split()[:max_words]
+        else:
+            words = _compress_words(c["raw"].split(), max_words)
+        if not words:
+            continue
+        # Structural ban: overlay must not be ONLY filler/stopwords.
+        if all(_is_filler(w) or w.lower() in _STOP_EDGE for w in words):
+            continue
+        display = _apply_case(" ".join(words), ts["case"])
+
+        # A STAT card adopts the emotional hero word spoken near it
+        # ("$68 BILLION" + red "COLLAPSED" — §7 Ex 2).
+        accent_color, accent_words = _card_accent(display, c["type"], text)
+        if c["type"] == "STAT":
+            adopted = _adopt_emotion_word(text, c["start"], words,
+                                          max_words, ts["case"])
+            if adopted and all(adopted.lower() != w.lower() for w in words):
+                words.append(adopted)
+                display = _apply_case(" ".join(words), ts["case"])
+                accent_color, accent_words = _MT_RED, [adopted]
+
+        wc = len(display.split())
+        hold = min(4.0, max(1.5, 0.3 * wc + 0.5))
+
+        # Appearance: 100-300ms BEFORE the spoken hero word; on scene cuts
+        # (no timings) align with the cut plus a small offset.
+        hero = c["hero"] or (words[0] if words else "")
+        hero_t = _hero_word_time(hero, word_timings)
+        if hero_t is None and words:
+            hero_t = _hero_word_time(words[0], word_timings)
+        lead = _MT_LEAD.get(c["type"], 0.20)
+        appear = max(0.0, hero_t - lead) if hero_t is not None else 0.15
+
+        # Sequencing: 2nd/3rd cards start 0.5-1s after the previous card
+        # began, with a 100-200ms text-to-text overlap.
+        if idx > 0:
+            appear = max(appear, prev_end - 0.15, cards[0]["appear"] + 0.5)
+        # Never overflow the scene; shrink the hold before dropping.
+        if appear + hold > duration - 0.1:
+            hold = max(1.0, duration - 0.1 - appear)
+            if appear + 1.0 > duration - 0.1 and idx > 0:
+                continue  # doesn't fit: drop the extra card
+        prev_end = appear + hold
+
+        enter_ms = ts["enter_ms"]
+        exit_ms = ts["exit_ms"]
+        entrance = ts["entrance"]
+        # Pop-in is reserved for high-impact stats / breaking news, max
+        # 1-2 per 30s of video (spec HARD RULE).
+        if c["type"] == "STAT" and (_crisis_in(display) or _crisis_in(text)):
+            pops = int(context.get("pops", 0))
+            video_t = float(context.get("video_t", 0.0))
+            last_pop = float(context.get("last_pop_t", -100.0))
+            if pops < 2 or video_t - last_pop >= 30:
+                entrance, enter_ms, exit_ms = "pop", 150, 100
+                context["pops"] = pops + 1
+                context["last_pop_t"] = video_t
+
+        # Accent words must exist in the display text (case-insensitive).
+        disp_low = {w.strip(".,!?\"'").lower() for w in display.split()}
+        accent_words = [w for w in accent_words
+                        if w.strip(".,!?\"'").lower() in disp_low][:3]
+
+        cards.append({
+            "text": display,
+            "accent_words": accent_words,
+            "accent": accent_color,
+            "type": c["type"],
+            "tier": c["tier"],
+            "appear": round(appear, 3),
+            "hold": round(hold, 3),
+            "enter_ms": enter_ms,
+            "exit_ms": exit_ms,
+            "entrance": entrance,
+            "hero_word": hero,
+        })
+        recent.add(_norm_text(display))
+
+    # Book-keeping for the words/minute ceiling and pop budget.
+    context["words_used"] = words_used + sum(len(cd["text"].split())
+                                             for cd in cards)
+    context["seconds_used"] = seconds_used + duration
+    context["video_t"] = float(context.get("video_t", 0.0)) + duration
+    return cards
+
+
+def classify_main_text(scene_text, keywords=(), phrases=()):
+    """Type + text of the single winning candidate (or (None, ""))."""
+    cards = select_main_text(scene_text, duration=6.0, keywords=keywords,
+                             phrases=phrases)
+    if not cards:
+        return None, ""
+    return cards[0]["type"], cards[0]["text"]
+
+
+def make_overlay(analysis, max_words=12):
+    """Select on-screen headline text AND the hero words for accent color.
+
+    Genspark-validated: seven types, tiered priority, filler/negative
+    filters, white default with red-only-for-crisis accents.
+    Returns (display_text, accent_words). ("", []) when the scene is not
+    text-worthy — silence is correct.
+    """
+    text = (getattr(analysis, "text", "") or "").strip()
+    if not text:
+        return "", []
+    cards = select_main_text(
+        text, duration=6.0,
+        keywords=getattr(analysis, "keywords", None) or (),
+        phrases=getattr(analysis, "phrases", None) or (),
+        max_words=max_words)
+    if not cards:
+        return "", []
+    return cards[0]["text"], cards[0]["accent_words"]
+
+
+def make_overlay_text(analysis, max_words=12):
+    """Short punchy overlay, never the whole sentence.
+
+    Kept for backward compatibility; new code should use select_main_text()
+    (or make_overlay() for the accent words).
+    """
+    return make_overlay(analysis, max_words)[0]
+
+
+# ---------------------------------------------------------------------------
+# House templates + story-type colour coding (§3, §6: one template per video).
+# ---------------------------------------------------------------------------
+
 HEADLINE_PRESETS = {
-    "creator": {
-        "label": "Creator Impact",
-        "desc": "Research #1 style: huge Anton caps, white, red keyword, thick black outline, no box, pops in",
-        "font": "Anton", "size_frac": 0.080,
-        "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
-        "box": False, "pill": False, "back_c": "&H00000000",
-        "outline": 7, "shadow": 2,
-        "alignment": 5, "margin_v_frac": 0.0,
-        "entrance": "pop", "uppercase": True,
+    "broadcast": {
+        "label": "Broadcast News",
+        "desc": "Genspark standard: Montserrat Bold, white, black box, fast fade",
+        "font": "Montserrat", "primary": _MT_WHITE, "accent": _MT_WHITE,
+        "box": True, "pill": False, "outline": 1, "shadow": 1,
+        "entrance": "fade", "size_mult": 1.0,
     },
-    "archivo": {
-        "label": "Archivo Punch",
-        "desc": "Archivo Black caps, white, yellow keyword, thick outline, no box, pops in",
-        "font": "Archivo Black", "size_frac": 0.075,
-        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
-        "box": False, "pill": False, "back_c": "&H00000000",
-        "outline": 7, "shadow": 2,
-        "alignment": 5, "margin_v_frac": 0.0,
-        "entrance": "pop", "uppercase": True,
-    },
-    "oswald": {
-        "label": "Oswald Cond.",
-        "desc": "Condensed Oswald caps, white, red keyword, outline, no box, pops in",
-        "font": "Oswald", "size_frac": 0.075,
-        "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
-        "box": False, "pill": False, "back_c": "&H00000000",
-        "outline": 6, "shadow": 2,
-        "alignment": 5, "margin_v_frac": 0.0,
-        "entrance": "pop", "uppercase": True,
+    "viral": {
+        "label": "Viral Creator",
+        "desc": "Research style: huge Anton caps, thick black outline, no box, pop-in",
+        "font": "Anton", "primary": _MT_WHITE, "accent": "&H0000EAFF",
+        "box": False, "pill": False, "outline": 4, "shadow": 2,
+        "entrance": "pop", "size_mult": 2.0,
     },
     "breaking": {
         "label": "Breaking Bar",
-        "desc": "Red breaking-news bar, condensed bold white, wipes in from the left",
-        "font": "Anton", "size_frac": 0.055,
-        "primary": "&H00FFFFFF", "accent": "&H00FFFFFF",
-        "box": True, "pill": False, "back_c": "&H002E10C8",  # #C8102E red
-        "outline": 2, "shadow": 0,
-        "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "wipe_left", "uppercase": True,
+        "desc": "Red breaking-news box, bold white, fast fade",
+        "font": "Montserrat", "primary": _MT_WHITE, "accent": _MT_WHITE,
+        "box": True, "pill": False, "outline": 1, "shadow": 1,
+        "entrance": "fade", "size_mult": 1.0,
     },
-    "viral": {
-        "label": "Viral Title",
-        "desc": "Huge condensed title, thick outline, pops in with scale",
-        "font": "Bebas Neue", "size_frac": 0.075,
-        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
-        "box": False, "pill": False, "back_c": "&H00000000",
-        "outline": 7, "shadow": 2,
-        "alignment": 5, "margin_v_frac": 0.0,
-        "entrance": "pop", "uppercase": True,
-    },
-    "pill": {
-        "label": "Creator Pill",
-        "desc": "Rounded black pill, bold white caps, yellow keyword accents, pops in",
-        "font": "Poppins", "size_frac": 0.045,
-        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
-        "box": False, "pill": True, "back_c": "&H40000000",  # black @75%
-        "outline": 0, "shadow": 1,
-        "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "pop", "uppercase": True,
-    },
-    "broadcast": {
-        "label": "Broadcast Lower",
-        "desc": "Navy translucent bar, extra-bold white, gold keyword accents",
-        "font": "Montserrat", "size_frac": 0.042,
-        "primary": "&H00FFFFFF", "accent": "&H002CC7FF",  # gold #FFC72C
-        "box": True, "pill": False, "back_c": "&H26331D0B",  # #0B1D33 @85%
-        "outline": 1, "shadow": 1,
-        "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "wipe_left", "uppercase": True,
-    },
-    "minimal": {
-        "label": "Clean Minimal",
-        "desc": "No box, bold white caps with soft shadow, quick pop-in",
-        "font": "Montserrat", "size_frac": 0.045,
-        "primary": "&H00FFFFFF", "accent": "&H00FFF97D",  # cyan #7DF9FF
-        "box": False, "pill": False, "back_c": "&H00000000",
-        "outline": 0, "shadow": 2,
-        "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "pop", "uppercase": True,
-    },
+    # Legacy aliases for settings saved by older builds.
+    "creator": {"alias_of": "broadcast"},
+    "archivo": {"alias_of": "viral"},
+    "oswald": {"alias_of": "viral"},
+    "pill": {"alias_of": "broadcast"},
+    "minimal": {"alias_of": "broadcast"},
 }
 
-DEFAULT_HEADLINE_PRESET = "creator"
+DEFAULT_HEADLINE_PRESET = "broadcast"
+
+
+def _resolve_preset(pid):
+    """Follow legacy aliases; unknown ids fall back to the default."""
+    seen = set()
+    while isinstance(pid, str) and pid not in seen:
+        seen.add(pid)
+        hp = HEADLINE_PRESETS.get(pid)
+        if not hp:
+            return DEFAULT_HEADLINE_PRESET
+        nxt = hp.get("alias_of")
+        if not nxt:
+            return pid
+        pid = nxt
+    return DEFAULT_HEADLINE_PRESET
+
+
+# Scene text that forces the breaking style (auto mode).
+BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
+                     "just in", "developing", "explosion", "attack")
+
+
+def headline_preset_for(scene_text, override="auto"):
+    """Pick a headline preset id: explicit override, else breaking when the
+    scene text carries urgency, else the Genspark broadcast house template
+    (one house template per video — §6)."""
+    if override and override != "auto":
+        return _resolve_preset(override)
+    low = (scene_text or "").lower()
+    if any(k in low for k in BREAKING_KEYWORDS):
+        return "breaking"
+    return DEFAULT_HEADLINE_PRESET
+
+
+def headline_accent_for(scene_text, override="auto"):
+    """House accent colour (ASS &HAABBGGRR). Per-card accents come from
+    select_main_text(); this is the template-level default."""
+    pid = headline_preset_for(scene_text, override)
+    return HEADLINE_PRESETS[pid].get("accent", _MT_WHITE)
+
+
+def caption_template_labels():
+    """Ordered (key, label) pairs for UI dropdowns."""
+    return [(k, v["label"]) for k, v in CAPTION_TEMPLATES.items()]
+
+
+def headline_preset_labels():
+    """Ordered (key, label) pairs for the main-text style dropdown."""
+    return [("auto", "Auto (Genspark broadcast standard)"),
+            ("broadcast", HEADLINE_PRESETS["broadcast"]["label"]),
+            ("viral", HEADLINE_PRESETS["viral"]["label"]),
+            ("breaking", HEADLINE_PRESETS["breaking"]["label"])]
+
 
 # ---------------------------------------------------------------------------
-# NICHE-AWARE HEADLINES — from the user's 17-video deep-watch
-# (~/workspace/research/user_videos_17.md) + the 250-video study.
-#
-# What the 17 videos teach, per niche:
-#   - KAUN SA TEXT: har beat ka sab se quotable NUMBER / DATE / NAME / TERM
-#     bara text banta hai ("voice explains, text anchors"). Listicles mein
-#     ~85-90% points textified, explainers ~40-65%.
-#   - KAUN SA COLOR: white fill default; YELLOW/GOLD = universal accent
-#     (numbers, bars, ID labels); RED = urgency/keyword accent.
-#   - KAHAN: center = bare headlines; bottom-third = labels/chyrons;
-#     bottom-right = countdown headers.
-#   - NICHE TWISTS: military (Military Blue) = yellow ID labels + red
-#     urgency + huge condensed stat headlines; finance (Cole Mercer) =
-#     gold money accents + big numbers; health listicles (Survival Roots)
-#     = yellow countdown bars; tech = bold condensed.
+# Story-type colour coding (§3): box colour follows the story, not the type.
+# ---------------------------------------------------------------------------
+
+_STORY_KEYWORDS = {
+    "breaking": ("breaking", "urgent", "alert", "emergency", "just in",
+                 "developing", "explosion"),
+    "negative": ("crash", "crashed", "recession", "layoff", "bankrupt",
+                 "market crash", "job losses", "plunge", "tumble", "collapse",
+                 "killed", "dead", "deaths"),
+    "technical": ("ai", "quantum", "neural", "algorithm", "semiconductor",
+                  "genome", "fusion", "breakthrough", "software", "robot"),
+    "weather": ("hurricane", "storm", "flood", "tornado", "earthquake",
+                "heatwave", "blizzard", "wildfire", "drought"),
+    "positive": ("record", "breakthrough", "milestone", "win", "won",
+                 "success", "recovered", "first"),
+}
+
+
+def story_box_color(scene_text):
+    """ASS BackColour for the headline box, by story type (§3).
+
+    Breaking -> red #8B0000 @70%; economic/negative -> dark red #CC0000 @70%;
+    technical -> black @70%; weather -> dark gray #444444 @65%;
+    positive/record -> black @60%; standard news -> black @60% (default).
+    """
+    low = (scene_text or "").lower()
+    for kw in _STORY_KEYWORDS["breaking"]:
+        if kw in low:
+            return "&H4C00008B"
+    for kw in _STORY_KEYWORDS["negative"]:
+        if kw in low:
+            return "&H4C0000CC"
+    for kw in _STORY_KEYWORDS["technical"]:
+        if re.search(r"\b" + re.escape(kw) + r"\b", low):
+            return "&H4C000000"
+    for kw in _STORY_KEYWORDS["weather"]:
+        if kw in low:
+            return "&H59444444"
+    for kw in _STORY_KEYWORDS["positive"]:
+        if re.search(r"\b" + re.escape(kw) + r"\b", low):
+            return "&H66000000"
+    return "&H66000000"  # standard news: black @60%
+
+
+# ---------------------------------------------------------------------------
+# Niche detection (kept for API compatibility; story-type colour coding in
+# story_box_color() drives the broadcast look now).
 # ---------------------------------------------------------------------------
 
 NICHE_KEYWORDS = {
@@ -2066,18 +2767,6 @@ NICHE_KEYWORDS = {
                 "medieval", "battle", "dynasty", "historical"),
 }
 
-# niche -> (headline preset, accent ASS color, why)
-NICHE_HEADLINES = {
-    "finance":  ("archivo",  "&H002CC7FF", "gold money accents + big numbers"),
-    "military": ("creator",  "&H0000EAFF", "yellow ID labels + red urgency"),
-    "health":   ("creator",  "&H0000EAFF", "yellow countdown bars"),
-    "tech":     ("oswald",   "&H0000EAFF", "bold condensed + yellow"),
-    "sports":   ("creator",  "&H0000EAFF", "yellow highlight"),
-    "crime":    ("creator",  "&H002828FF", "red urgency"),
-    "history":  ("oswald",   "&H002CC7FF", "gold era accents"),
-    "general":  ("creator",  "&H002828FF", "white + red keyword (research #1)"),
-}
-
 
 def detect_niche(text):
     """Keyword-based niche detection for headline styling.
@@ -2094,148 +2783,6 @@ def detect_niche(text):
         if hits > best_hits:
             best, best_hits = niche, hits
     return best
-
-
-# Scene text that forces the breaking style (auto mode).
-BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
-                     "just in", "developing", "explosion", "attack")
-
-
-def headline_preset_for(scene_text, override="auto"):
-    """Pick a headline preset id: explicit override, else breaking when the
-    scene text carries urgency, else the niche's researched style."""
-    if override and override != "auto" and override in HEADLINE_PRESETS:
-        return override
-    low = (scene_text or "").lower()
-    if any(k in low for k in BREAKING_KEYWORDS):
-        return "breaking"
-    niche = detect_niche(scene_text)
-    preset = NICHE_HEADLINES.get(niche, NICHE_HEADLINES["general"])[0]
-    return preset if preset in HEADLINE_PRESETS else DEFAULT_HEADLINE_PRESET
-
-
-def headline_accent_for(scene_text, override="auto"):
-    """Niche accent color (ASS &HAABBGGRR) for the headline keywords."""
-    if override and override != "auto" and override in HEADLINE_PRESETS:
-        return HEADLINE_PRESETS[override]["accent"]
-    low = (scene_text or "").lower()
-    if any(k in low for k in BREAKING_KEYWORDS):
-        return HEADLINE_PRESETS["breaking"]["accent"]
-    niche = detect_niche(scene_text)
-    return NICHE_HEADLINES.get(niche, NICHE_HEADLINES["general"])[1]
-
-
-def caption_template_labels():
-    """Ordered (key, label) pairs for UI dropdowns."""
-    return [(k, v["label"]) for k, v in CAPTION_TEMPLATES.items()]
-
-
-def headline_preset_labels():
-    """Ordered (key, label) pairs for the main-text style dropdown."""
-    return [("auto", "Auto (niche style + breaking when urgent)")] + [
-        (k, v["label"]) for k, v in HEADLINE_PRESETS.items()]
-
-
-# Words that make headlines look cheap — never shown as main text.
-# (Fixes "INSTEAD RESEARCHERS..." — transition fillers picked as headlines.)
-HEADLINE_FILLERS = frozenset(
-    "instead rather however moreover furthermore nevertheless therefore thus "
-    "hence also just even still yet very really quite somewhat often usually "
-    "sometimes always never ever much many more most such like well now today "
-    "here there every any some each other another these those this that its "
-    "their our your his her my".split())
-
-# Weak generic words — dropped from the END of a headline so the punch
-# word lands last ("...EARTHQUAKES" not "...EARTHQUAKES REGION").
-WEAK_ENDINGS = frozenset(
-    "region area zone people thing things stuff part side way kind sort".split())
-
-
-def _is_filler(w):
-    return (w or "").lower() in HEADLINE_FILLERS
-
-
-def make_overlay(analysis, max_words=5):
-    """Select on-screen headline text AND the hero words for accent color.
-
-    Text-worthiness rule (from the 17-video deep-watch): the single most
-    quotable NUMBER / DATE / NAME / TERM per beat gets the big text —
-    "voice explains, text anchors". So number-bearing phrases win over
-    generic keywords.
-
-    Returns (display_text, accent_words). accent_words (<=3) is the subset
-    of display words rendered in the accent color — everything else stays
-    white, like the researched creator videos. (Accent-on-every-word made
-    headlines render ALL RED — the ugly screenshots.)
-    """
-    text = (getattr(analysis, "text", "") or "").strip()
-    if not text:
-        return "", []
-    # 1) number spans: $40, 68B, 48,000 tons, 90%, 2026, 3.5 million ...
-    num_words = []
-    for m in re.finditer(
-            r"\$?\d[\d,]*\.?\d*(?:\s*(?:billion|million|thousand|b\b|m\b|k\b|%|percent|tons?|tonnes?))?"
-            r"|\b(?:19|20)\d{2}\b", text, re.IGNORECASE):
-        for w in m.group(0).strip().split():
-            wu = w.upper()
-            if wu not in num_words:
-                num_words.append(wu)
-    # 2) proper nouns (original capitalization, fillers excluded)
-    proper_words = []
-    for m in re.finditer(r"\b([A-Z][a-zA-Z']*)\b", text):
-        w, wu = m.group(1), m.group(1).upper()
-        if wu not in proper_words and not _is_filler(w) and len(w) > 2:
-            proper_words.append(wu)
-    # 3) build display words: numbers -> proper nouns -> phrases -> keywords
-    words = []
-
-    def _add(w):
-        wu = (w or "").upper()
-        if (wu and wu not in words and not _is_filler(wu)
-                and len(words) < max_words):
-            words.append(wu)
-
-    for w in num_words:
-        _add(w)
-    for w in proper_words:
-        _add(w)
-    for p in getattr(analysis, "phrases", None) or []:
-        for w in p.split():
-            _add(w)
-    for k in getattr(analysis, "keywords", None) or []:
-        _add(k)
-    if not words:
-        for w in re.findall(r"[A-Za-z']+", text):
-            if len(w) > 3:
-                _add(w)
-    words = words[:max_words]
-    # drop weak trailing words so the punch lands last
-    while len(words) > 2 and words[-1].lower() in WEAK_ENDINGS:
-        words.pop()
-    if not words:
-        return "", []
-    # 4) accent: hero words only (<=3) — numbers, then proper nouns,
-    #    then the punch word. Everything else renders white.
-    accent = []
-    for w in words:
-        if re.match(r"^\$?\d", w) and len(accent) < 3 and w not in accent:
-            accent.append(w)
-    if not accent:
-        for w in words:
-            if w in proper_words and len(accent) < 2 and w not in accent:
-                accent.append(w)
-    if not accent:
-        accent = [words[-1]]
-    return " ".join(words), accent
-
-
-def make_overlay_text(analysis, max_words=5):
-    """Short punchy overlay, never the whole sentence.
-
-    Kept for backward compatibility; new code should use make_overlay()
-    so the accent color lands on hero words only.
-    """
-    return make_overlay(analysis, max_words)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -2547,43 +3094,53 @@ def _font_file_for(font_name):
     return fallback
 
 
-def _headline_entrance(kind, pw, ph, margin_v, alignment=8):
-    """ASS entrance tags for a headline preset.
+def _headline_entrance(entrance, pw, ph, margin_v, alignment=8,
+                      enter_ms=200, exit_ms=150):
+    """ASS entrance + exit tags for a main-text card (Genspark §4).
 
-    alignment 8 = top-center (anchor Y = MarginV), 5 = middle-center,
-    2 = bottom-center. The anchor Y follows the alignment.
+    Entrances run 150-250ms; the exit fade is ALWAYS shorter than the
+    entrance. `entrance` is one of: fade (default), slide, pop.
     """
+    enter_ms = int(enter_ms)
+    # Hard rule: exit fade strictly shorter than the entrance.
+    exit_ms = min(int(exit_ms), max(80, enter_ms - 30))
     an = alignment
     xc = pw // 2
-    if an == 5:
-        y = ph // 2
-    elif an == 2:
-        y = ph - margin_v
-    else:
-        y = margin_v
-    if kind == "wipe_left":
-        return ("{\\an%d\\move(%d,%d,%d,%d,0,350)}"
-                % (an, -pw // 2, y, xc, y))
-    if kind == "rise":
-        return ("{\\an%d\\move(%d,%d,%d,%d,0,350)}"
-                % (an, xc, y + 90, xc, y))
-    if kind == "pop":
-        return "{\\an%d\\fscx125\\fscy125\\t(0,230,\\fscx100\\fscy100)}" % an
-    if kind == "rise_fade":
-        return ("{\\an%d\\fad(200,150)\\move(%d,%d,%d,%d,0,350)}"
-                % (an, xc, y + 90, xc, y))
-    return "{\\an%d\\fad(250,150)}" % an
+    y = ph // 2 if an == 5 else (ph - margin_v if an == 2 else margin_v)
+    if entrance == "slide":
+        if an in (5, 2):
+            mv = "\\move(%d,%d,%d,%d,0,%d)" % (xc, y + 60, xc, y, enter_ms)
+        else:
+            mv = "\\move(%d,%d,%d,%d,0,%d)" % (-pw // 4, y, xc, y, enter_ms)
+        return "{\\an%d\\fad(0,%d)%s}" % (an, exit_ms, mv)
+    if entrance == "pop":
+        return ("{\\an%d\\fad(%d,%d)\\fscx120\\fscy120"
+                "\\t(0,%d,\\fscx100\\fscy100)}"
+                % (an, enter_ms, exit_ms, enter_ms))
+    return "{\\an%d\\fad(%d,%d)}" % (an, enter_ms, exit_ms)
 
 
-def _headline_style_line(pid, hp, ph):
-    """One V4+ Style line for a headline preset."""
-    size = max(28, int(ph * hp["size_frac"]))
-    mv = int(ph * hp["margin_v_frac"])
-    border = 4 if hp.get("pill") else (3 if hp.get("box") else 1)
-    an = hp.get("alignment", 8)
-    return (f"Style: HL_{pid},{hp['font']},{size},{hp['primary']},{hp['primary']},"
-            f"&H00000000,{hp['back_c']},-1,0,0,0,100,100,0,0,"
-            f"{border},{hp['outline']},{hp['shadow']},{an},60,60,{mv},1")
+def _headline_style_line(pid, hp, ph, hl_type="STAT", box_c=None, name=None):
+    """One V4+ Style line for a headline preset + main-text type.
+
+    Style name: `name`, or HL_<pid>_<type>. Size follows the per-type
+    MAIN_TEXT_STYLE table at 1080p, scaled by the play resolution and the
+    preset's size_mult. Box colour comes from story_box_color() (story
+    type), not from the text type (§3).
+    """
+    ts = MAIN_TEXT_STYLE.get(hl_type, MAIN_TEXT_STYLE["STAT"])
+    size = max(28, int(ts["size"] * (ph / 1080.0) * hp.get("size_mult", 1.0)))
+    an = ts["align"]
+    mv = int(ph * ts["y_frac"]) if an in (8, 9) else 0
+    box = hp.get("box", True)
+    border = 3 if box else max(1, hp.get("outline", 1))
+    outline = hp.get("outline", 1)
+    shadow = hp.get("shadow", 1)
+    back_c = box_c or _box_back(ts["box_op"])
+    sname = name or "HL_%s_%s" % (pid, hl_type)
+    return (f"Style: {sname},{hp['font']},{size},{hp['primary']},{hp['primary']},"
+            f"&H00000000,{back_c},-1,0,0,0,100,100,0,0,"
+            f"{border},{outline},{shadow},{an},40,40,{mv},1")
 
 
 def build_srt(sentence_timings, path):
@@ -2694,19 +3251,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
        tmpl.get("spacing", 0),
        box_pad, mv,
        top_size)
-    # Headline preset styles (one V4+ Style per preset actually used by the
-    # overlays). The legacy plain "Top" style stays for compatibility.
+    # Headline preset styles: one V4+ Style per unique
+    # (preset, main-text type, story box colour) combo actually used by the
+    # overlays. The legacy plain "Top" style stays for compatibility.
     _used_hl = []
     for _ov in overlays or []:
         _pid = _ov.get("style") or DEFAULT_HEADLINE_PRESET
         if _pid not in HEADLINE_PRESETS:
             _pid = DEFAULT_HEADLINE_PRESET
-        if _pid not in _used_hl:
-            _used_hl.append(_pid)
+        _key = (_pid, _ov.get("hl_type") or "STAT", _ov.get("box_c"))
+        if _key not in _used_hl:
+            _used_hl.append(_key)
     _hl_lines = "".join(
-        _headline_style_line(_pid, HEADLINE_PRESETS[_pid], ph) + "\n"
-        for _pid in _used_hl)
+        _headline_style_line(_pid, HEADLINE_PRESETS[_pid], ph,
+                             hl_type=_htype, box_c=_boxc,
+                             name="HL_%s_%s_%d" % (_pid, _htype, i)) + "\n"
+        for i, (_pid, _htype, _boxc) in enumerate(_used_hl))
     header = header.replace("[Events]", _hl_lines + "[Events]")
+    _hl_style_names = {"%s|%s|%s" % (pid, ht, bc): "HL_%s_%s_%d" % (pid, ht, i)
+                       for i, (pid, ht, bc) in enumerate(_used_hl)}
     # spec style 8 dual-language: second independent track ("Cap2" style)
     # with its own font/size/y. Genuine translation input required —
     # never duplicate the primary line.
@@ -2956,11 +3519,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not txt.strip():
             continue
         pid = ov.get("style") or DEFAULT_HEADLINE_PRESET
-        hp = HEADLINE_PRESETS.get(pid, HEADLINE_PRESETS[DEFAULT_HEADLINE_PRESET])
         if pid not in HEADLINE_PRESETS:
             pid = DEFAULT_HEADLINE_PRESET
-        if hp.get("uppercase"):
-            txt = txt.upper()
+        hp = HEADLINE_PRESETS[pid]
+        # Case follows the main-text type (§2 Step 3): stats upper, names
+        # title, quotes verbatim. select_main_text() already applies it;
+        # raw callers should pass cased text.
         # Accent color: ONLY the hero words (accent_words, <=3) get it —
         # everything else renders in the primary (white). Accenting every
         # keyword turned whole headlines ALL RED (ugly user screenshots).
@@ -2975,11 +3539,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                              % (accent, safe, hp["primary"]))
             else:
                 parts.append(safe)
-        ent = _headline_entrance(hp.get("entrance", "fade"), pw, ph,
-                                 int(ph * hp["margin_v_frac"]),
-                                 hp.get("alignment", 8))
+        _htype = ov.get("hl_type") or "STAT"
+        _boxc = ov.get("box_c")
+        _sname = _hl_style_names.get("%s|%s|%s" % (pid, _htype, _boxc),
+                                    "HL_%s_%s" % (pid, _htype))
+        _ts = MAIN_TEXT_STYLE.get(_htype, MAIN_TEXT_STYLE["STAT"])
+        _mv = int(ph * _ts["y_frac"])
+        # Middle-center cards keep their y fraction via \pos (MarginV only
+        # anchors top/bottom alignments).
+        _pos = ""
+        if _ts["align"] == 5 and abs(_ts["y_frac"] - 0.5) > 0.02:
+            _pos = "{\\pos(%d,%d)}" % (pw // 2, int(ph * _ts["y_frac"]))
+        ent = _headline_entrance(ov.get("entrance", _ts["entrance"]), pw, ph,
+                                 _mv, _ts["align"],
+                                 enter_ms=ov.get("enter_ms", _ts["enter_ms"]),
+                                 exit_ms=ov.get("exit_ms", _ts["exit_ms"]))
         lines.append(f"Dialogue: 1,{_ts_ass(ov['start'])},{_ts_ass(ov['end'])},"
-                     f"HL_{pid},,0,0,0,,{ent}{' '.join(parts)}")
+                     f"{_sname},,0,0,0,,{_pos}{ent}{' '.join(parts)}")
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(lines) + "\n")
     return path
