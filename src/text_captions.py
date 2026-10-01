@@ -2028,6 +2028,74 @@ HEADLINE_PRESETS = {
 
 DEFAULT_HEADLINE_PRESET = "creator"
 
+# ---------------------------------------------------------------------------
+# NICHE-AWARE HEADLINES — from the user's 17-video deep-watch
+# (~/workspace/research/user_videos_17.md) + the 250-video study.
+#
+# What the 17 videos teach, per niche:
+#   - KAUN SA TEXT: har beat ka sab se quotable NUMBER / DATE / NAME / TERM
+#     bara text banta hai ("voice explains, text anchors"). Listicles mein
+#     ~85-90% points textified, explainers ~40-65%.
+#   - KAUN SA COLOR: white fill default; YELLOW/GOLD = universal accent
+#     (numbers, bars, ID labels); RED = urgency/keyword accent.
+#   - KAHAN: center = bare headlines; bottom-third = labels/chyrons;
+#     bottom-right = countdown headers.
+#   - NICHE TWISTS: military (Military Blue) = yellow ID labels + red
+#     urgency + huge condensed stat headlines; finance (Cole Mercer) =
+#     gold money accents + big numbers; health listicles (Survival Roots)
+#     = yellow countdown bars; tech = bold condensed.
+# ---------------------------------------------------------------------------
+
+NICHE_KEYWORDS = {
+    "finance": ("money", "dollar", "stock", "market", "fed", "bank", "invest",
+                "crypto", "bitcoin", "billion", "million", "economy", "debt",
+                "inflation", "savings", "trading", "wall street"),
+    "military": ("war", "drone", "missile", "army", "military", "strike",
+                 "convoy", "weapon", "troops", "ukraine", "russia", "attack",
+                 "battle", "tank", "navy", "airforce"),
+    "health": ("health", "doctor", "disease", "supplement", "muscle", "diet",
+               "cancer", "vitamin", "protein", "iron", "shampoo", "spine",
+               "exercise", "medical"),
+    "tech": ("ai", "tech", "phone", "speaker", "software", "robot", "app",
+             "breakthrough", "invention", "digital", "chip", "jbl"),
+    "sports": ("game", "match", "player", "goal", "team", "season", "coach",
+               "league", "championship", "score"),
+    "crime": ("murder", "police", "crime", "suspect", "arrest", "killer",
+              "victim", "court", "prison", "investigation"),
+    "history": ("ancient", "empire", "century", "war", "king", "civilization",
+                "medieval", "battle", "dynasty", "historical"),
+}
+
+# niche -> (headline preset, accent ASS color, why)
+NICHE_HEADLINES = {
+    "finance":  ("archivo",  "&H002CC7FF", "gold money accents + big numbers"),
+    "military": ("creator",  "&H0000EAFF", "yellow ID labels + red urgency"),
+    "health":   ("creator",  "&H0000EAFF", "yellow countdown bars"),
+    "tech":     ("oswald",   "&H0000EAFF", "bold condensed + yellow"),
+    "sports":   ("creator",  "&H0000EAFF", "yellow highlight"),
+    "crime":    ("creator",  "&H002828FF", "red urgency"),
+    "history":  ("oswald",   "&H002CC7FF", "gold era accents"),
+    "general":  ("creator",  "&H002828FF", "white + red keyword (research #1)"),
+}
+
+
+def detect_niche(text):
+    """Keyword-based niche detection for headline styling.
+
+    Word-boundary matching throughout: without it "king" fires inside
+    "breaking" and "ai" fires inside "said" (the same bug class fixed in
+    audio_design._kw_hit).
+    """
+    low = (text or "").lower()
+    best, best_hits = "general", 0
+    for niche, kws in NICHE_KEYWORDS.items():
+        hits = sum(1 for k in kws
+                   if re.search(r"\b" + re.escape(k) + r"\b", low))
+        if hits > best_hits:
+            best, best_hits = niche, hits
+    return best
+
+
 # Scene text that forces the breaking style (auto mode).
 BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
                      "just in", "developing", "explosion", "attack")
@@ -2035,13 +2103,26 @@ BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
 
 def headline_preset_for(scene_text, override="auto"):
     """Pick a headline preset id: explicit override, else breaking when the
-    scene text carries urgency, else the default broadcast style."""
+    scene text carries urgency, else the niche's researched style."""
     if override and override != "auto" and override in HEADLINE_PRESETS:
         return override
     low = (scene_text or "").lower()
     if any(k in low for k in BREAKING_KEYWORDS):
         return "breaking"
-    return DEFAULT_HEADLINE_PRESET
+    niche = detect_niche(scene_text)
+    preset = NICHE_HEADLINES.get(niche, NICHE_HEADLINES["general"])[0]
+    return preset if preset in HEADLINE_PRESETS else DEFAULT_HEADLINE_PRESET
+
+
+def headline_accent_for(scene_text, override="auto"):
+    """Niche accent color (ASS &HAABBGGRR) for the headline keywords."""
+    if override and override != "auto" and override in HEADLINE_PRESETS:
+        return HEADLINE_PRESETS[override]["accent"]
+    low = (scene_text or "").lower()
+    if any(k in low for k in BREAKING_KEYWORDS):
+        return HEADLINE_PRESETS["breaking"]["accent"]
+    niche = detect_niche(scene_text)
+    return NICHE_HEADLINES.get(niche, NICHE_HEADLINES["general"])[1]
 
 
 def caption_template_labels():
@@ -2056,12 +2137,31 @@ def headline_preset_labels():
 
 
 def make_overlay_text(analysis, max_words=5):
-    """Short punchy overlay, never the whole sentence."""
+    """Short punchy overlay, never the whole sentence.
+
+    Text-worthiness rule (from the 17-video deep-watch): the single most
+    quotable NUMBER / DATE / NAME / TERM per beat gets the big text —
+    "voice explains, text anchors". So number-bearing phrases win over
+    generic keywords.
+    """
+    text = getattr(analysis, "text", "") or ""
+    # 1) number spans: $40, 68B, 48,000 tons, 90%, 2026, 3.5 million ...
+    num_spans = []
+    for m in re.finditer(
+            r"\$?\d[\d,]*\.?\d*(?:\s*(?:billion|million|thousand|b\b|m\b|k\b|%|percent|tons?|tonnes?))?"
+            r"|\b(?:19|20)\d{2}\b", text, re.IGNORECASE):
+        num_spans.append(m.group(0).strip())
     parts = []
+    for ns in num_spans:
+        for w in ns.split():
+            if w.lower() not in [x.lower() for x in parts]:
+                parts.append(w)
+    # 2) phrases (often carry the NAME/TERM)
     for p in analysis.phrases or []:
         for w in p.split():
             if w.lower() not in [x.lower() for x in parts]:
                 parts.append(w)
+    # 3) keywords fill the rest
     for k in analysis.keywords or []:
         if k.lower() not in [x.lower() for x in parts]:
             parts.append(k)
@@ -2780,13 +2880,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if hp.get("uppercase"):
             txt = txt.upper()
         kwset = {str(k).lower() for k in (ov.get("keywords") or [])}
+        accent = ov.get("accent") or hp["accent"]
         parts = []
         for w_ in txt.split():
             core = w_.strip(".,!?\"'").lower()
             safe = sanitize_ass_text(w_)
-            if core and core in kwset and hp["accent"] != hp["primary"]:
+            if core and core in kwset and accent != hp["primary"]:
                 parts.append("{\\c%s}%s{\\c%s}"
-                             % (hp["accent"], safe, hp["primary"]))
+                             % (accent, safe, hp["primary"]))
             else:
                 parts.append(safe)
         ent = _headline_entrance(hp.get("entrance", "fade"), pw, ph,

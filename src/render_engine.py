@@ -45,7 +45,8 @@ from .script_engine import (analyze_script, analyze_sentence,
 from .settings import Settings
 from .temp_manager import TempManager, ensure_free_space
 from .text_engine import (build_ass, build_srt, make_overlay_text,
-                          headline_preset_for)
+                          headline_preset_for, headline_accent_for,
+                          detect_niche)
 from .timeline_engine import Timeline
 from .voiceover import audio_duration, get_sentence_timings, synthesize_speech
 
@@ -571,6 +572,8 @@ class RenderEngine:
                            min(t["end"], t["start"] + 3.2), kind="text",
                            label=ov, payload={"scene_id": sc.id,
                                              "style": hl,
+                                             "accent": headline_accent_for(
+                                                 sc.text, S.get("headline_style", "auto")),
                                              "keywords": list(sa.keywords)},
                            locked=sc.locked)
         self.timeline = tl
@@ -583,6 +586,7 @@ class RenderEngine:
         ass = os.path.join(self.audio_dir, "captions.ass")
         overlays = [{"text": c.label, "start": c.start, "end": c.end,
                      "style": c.payload.get("style"),
+                     "accent": c.payload.get("accent"),
                      "keywords": c.payload.get("keywords", [])}
                     for c in self.timeline.by_track("text")]
         build_srt(self.sentence_timings, srt)
@@ -742,10 +746,13 @@ class RenderEngine:
         ov = make_overlay_text(sa)
         hl = headline_preset_for(
             sc.text, self.settings.get("headline_style", "auto"))
+        ac = headline_accent_for(
+            sc.text, self.settings.get("headline_style", "auto"))
         for c in self.timeline.by_track("text"):
             if c.payload.get("scene_id") == scene_id and not c.locked:
                 c.label = ov
                 c.payload["style"] = hl
+                c.payload["accent"] = ac
                 c.payload["keywords"] = list(sa.keywords)
 
     def regenerate_sfx(self, scene_id):
