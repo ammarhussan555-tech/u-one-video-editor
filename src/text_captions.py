@@ -1917,19 +1917,63 @@ DEFAULT_CAPTION_TEMPLATE = "spec_highlight"
 
 
 # ---------------------------------------------------------------------------
-# HEADLINE PRESETS — "main text" overlay styles (2026-10-01).
-# Researched from broadcast + YouTube news conventions (BBC/CNN-style lower
-# thirds, breaking-news bars, viral Shorts titles, Pakistani news tickers):
-# heavy condensed or extra-bold sans, high-contrast box treatments,
-# red = breaking, navy/gold = regular broadcast, and wipe/slide/pop
-# entrances instead of a static fade. One family per graphic; hierarchy
-# through weight + box, not extra fonts. All fonts are bundled in
-# assets/fonts/.
+# HEADLINE PRESETS — "main text" overlay styles.
+#
+# REDESIGNED 2026-10-01 from the 250-video main-text research
+# (~/workspace/research/main_text_250.md): 168 rows with verified on-screen
+# text, every video 500k+ views and <1 year old, individual creators.
+# Ranked findings driving these presets:
+#   - ALL CAPS: 127/168 (76%) -> every preset uppercase=True
+#   - Heavy/black weight 61%; top fonts Anton (45), Archivo Black (26),
+#     Oswald (9) -> Anton/Archivo/Oswald presets lead
+#   - White #FFFFFF fill 73% -> white primary everywhere
+#   - Red = universal accent (25), then yellow (13)
+#   - NO box beats box ~2:1 (97 vs 47) -> default is boxless; box only for
+#     breaking/broadcast bars and Johnny-Harris-style pills
+#   - Thick black stroke/outline replaces boxes for 30% -> outline 6-8
+#   - Size HUGE (~15%+ of frame height): 48% -> size_frac 0.07-0.085 default
+#   - Position: left (73), center (68), bottom (60) -> center/left default
+#   - Animation: snappy pop/scale-in + hard cuts, NEVER slow fades
+#     (verified: Ali Abdaal pop/scale; news stings hard slide/wipe)
+#   - On-screen headline = SHORTER, PUNCHIER hook than the video title
+#     (make_overlay_text already caps at 5 words)
+#   - House-style lock-in: creators run ONE fixed template -> strong default
 #
 # Colors are ASS &HAABBGGRR. size_frac is a fraction of the play height.
-# entrance: wipe_left | rise | pop | fade | rise_fade
+# entrance: pop | wipe_left | rise | (fade removed per research)
+# All fonts bundled in assets/fonts/.
 # ---------------------------------------------------------------------------
 HEADLINE_PRESETS = {
+    "creator": {
+        "label": "Creator Impact",
+        "desc": "Research #1 style: huge Anton caps, white, red keyword, thick black outline, no box, pops in",
+        "font": "Anton", "size_frac": 0.080,
+        "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
+        "box": False, "pill": False, "back_c": "&H00000000",
+        "outline": 7, "shadow": 2,
+        "alignment": 8, "margin_v_frac": 0.10,
+        "entrance": "pop", "uppercase": True,
+    },
+    "archivo": {
+        "label": "Archivo Punch",
+        "desc": "Archivo Black caps, white, yellow keyword, thick outline, no box, pops in",
+        "font": "Archivo Black", "size_frac": 0.075,
+        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
+        "box": False, "pill": False, "back_c": "&H00000000",
+        "outline": 7, "shadow": 2,
+        "alignment": 8, "margin_v_frac": 0.10,
+        "entrance": "pop", "uppercase": True,
+    },
+    "oswald": {
+        "label": "Oswald Cond.",
+        "desc": "Condensed Oswald caps, white, red keyword, outline, no box, pops in",
+        "font": "Oswald", "size_frac": 0.075,
+        "primary": "&H00FFFFFF", "accent": "&H002828FF",  # red #FF2828
+        "box": False, "pill": False, "back_c": "&H00000000",
+        "outline": 6, "shadow": 2,
+        "alignment": 8, "margin_v_frac": 0.10,
+        "entrance": "pop", "uppercase": True,
+    },
     "breaking": {
         "label": "Breaking Bar",
         "desc": "Red breaking-news bar, condensed bold white, wipes in from the left",
@@ -1937,16 +1981,6 @@ HEADLINE_PRESETS = {
         "primary": "&H00FFFFFF", "accent": "&H00FFFFFF",
         "box": True, "pill": False, "back_c": "&H002E10C8",  # #C8102E red
         "outline": 2, "shadow": 0,
-        "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "wipe_left", "uppercase": True,
-    },
-    "broadcast": {
-        "label": "Broadcast Lower",
-        "desc": "Navy translucent bar, extra-bold white, gold keyword accents",
-        "font": "Montserrat", "size_frac": 0.042,
-        "primary": "&H00FFFFFF", "accent": "&H002CC7FF",  # gold #FFC72C
-        "box": True, "pill": False, "back_c": "&H26331D0B",  # #0B1D33 @85%
-        "outline": 1, "shadow": 1,
         "alignment": 8, "margin_v_frac": 0.055,
         "entrance": "wipe_left", "uppercase": True,
     },
@@ -1962,27 +1996,37 @@ HEADLINE_PRESETS = {
     },
     "pill": {
         "label": "Creator Pill",
-        "desc": "Rounded black pill, bold white, yellow keyword accents, rises in",
-        "font": "Poppins", "size_frac": 0.040,
+        "desc": "Rounded black pill, bold white caps, yellow keyword accents, pops in",
+        "font": "Poppins", "size_frac": 0.045,
         "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
         "box": False, "pill": True, "back_c": "&H40000000",  # black @75%
         "outline": 0, "shadow": 1,
         "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "rise_fade", "uppercase": False,
+        "entrance": "pop", "uppercase": True,
+    },
+    "broadcast": {
+        "label": "Broadcast Lower",
+        "desc": "Navy translucent bar, extra-bold white, gold keyword accents",
+        "font": "Montserrat", "size_frac": 0.042,
+        "primary": "&H00FFFFFF", "accent": "&H002CC7FF",  # gold #FFC72C
+        "box": True, "pill": False, "back_c": "&H26331D0B",  # #0B1D33 @85%
+        "outline": 1, "shadow": 1,
+        "alignment": 8, "margin_v_frac": 0.055,
+        "entrance": "wipe_left", "uppercase": True,
     },
     "minimal": {
         "label": "Clean Minimal",
-        "desc": "No box, bold white with soft shadow, gentle fade",
-        "font": "Montserrat", "size_frac": 0.038,
+        "desc": "No box, bold white caps with soft shadow, quick pop-in",
+        "font": "Montserrat", "size_frac": 0.045,
         "primary": "&H00FFFFFF", "accent": "&H00FFF97D",  # cyan #7DF9FF
         "box": False, "pill": False, "back_c": "&H00000000",
         "outline": 0, "shadow": 2,
         "alignment": 8, "margin_v_frac": 0.055,
-        "entrance": "fade", "uppercase": False,
+        "entrance": "pop", "uppercase": True,
     },
 }
 
-DEFAULT_HEADLINE_PRESET = "broadcast"
+DEFAULT_HEADLINE_PRESET = "creator"
 
 # Scene text that forces the breaking style (auto mode).
 BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
@@ -2373,10 +2417,11 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
     """Build the ASS file: bottom captions + optional top overlays.
 
     overlays: list of dicts {text, start, end, style?, keywords?}.
-    style: a HEADLINE_PRESETS id (breaking / broadcast / viral / pill /
-    minimal) — researched broadcast/YouTube news headline looks with real
-    entrance animations (wipe/slide/pop), box treatments and keyword
-    accent colors. Falls back to the default broadcast style.
+    style: a HEADLINE_PRESETS id (creator / archivo / oswald / breaking /
+    viral / pill / broadcast / minimal) — redesigned 2026-10-01 from the
+    250-video main-text research: huge heavy caps, white fill, red/yellow
+    keyword accents, no box by default, snappy pop entrances. Falls back
+    to the default creator style.
     template: key from CAPTION_TEMPLATES (CapCut-style caption look).
     secondary_track: for dual-language templates, list of dicts
     {text, start, end} with GENUINE second-language text (never a copy of

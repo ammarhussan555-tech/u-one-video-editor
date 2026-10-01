@@ -208,13 +208,22 @@ def _kw_hit(text, kw):
     return kw in text
 
 
-def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0):
+def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
+              transition_whoosh=True):
     """Contextual placement only: keyword match per scene, never on every scene.
 
     Variety rules (2026-10-01): the same effect is never placed on two
     scenes in a row — among the keyword hits we prefer effects not used
     recently, and ties are broken with a seeded RNG so a render is
     reproducible but not monotonous.
+
+    Transition whooshes (2026-10-01, from the 200-video SFX research,
+    ~/workspace/research/sfx_200.md): the #1 convention across ~89 sources
+    is a whoosh/swoosh on scene/segment transitions — peak transient lands
+    exactly on the cut frame with ~2 frames of pre-roll (~0.08s at 24fps).
+    One SFX per beat: a transition whoosh is skipped when a keyword SFX
+    already lands within 0.6s of the cut. Total density is capped at ~10
+    cues/minute (research: 8-12/min).
     """
     import random
     rng = random.Random(seed)
@@ -232,6 +241,32 @@ def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0):
             at = t["start"] + min(0.4, (t["end"] - t["start"]) * 0.2)
             events.append({"time": round(at, 3), "sfx": sfx, "gain_db": -10})
         recent = (recent + chosen)[-3:]
+
+    if transition_whoosh and len(timings) > 1:
+        # Whoosh under each scene cut: start ~2 frames before the cut so the
+        # peak transient lands exactly on the cut frame (research #1).
+        PRE_ROLL = 0.08
+        for t in timings[1:]:
+            cut = float(t["start"])
+            at = round(max(0.0, cut - PRE_ROLL), 3)
+            # One SFX per beat — skip if a keyword hit is already near.
+            if any(abs(e["time"] - at) < 0.6 for e in events):
+                continue
+            events.append({"time": at, "sfx": "whoosh", "gain_db": -14})
+            recent = (recent + ["whoosh"])[-3:]
+
+    # Density cap: ~10 cues/min (research quotes 8-12/min). Drop the
+    # quietest transition whooshes first if we overshoot.
+    if timings:
+        total_min = max(0.25, (float(timings[-1]["end"]) - float(timings[0]["start"])) / 60.0)
+        cap = int(total_min * 10) + 2
+        if len(events) > cap:
+            kw = [e for e in events if e["sfx"] != "whoosh" or e["gain_db"] != -14]
+            tr = [e for e in events if e not in kw]
+            keep_tr = tr[:max(0, cap - len(kw))]
+            events = kw + keep_tr
+
+    events.sort(key=lambda e: e["time"])
     return events
 
 
