@@ -13,10 +13,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget, QLineEdit,
+    QScrollArea, QVBoxLayout, QWidget, QLineEdit, QListWidget,
+    QListWidgetItem,
 )
 
-from ..text_captions import CAPTION_TEMPLATES
+from ..text_captions import (
+    CAPTION_TEMPLATES, CAPTION_PRESETS, CAPTION_MOTIONS, compose_template,
+)
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -223,7 +226,7 @@ class _TemplateCard(QWidget):
                 badge_txt = "🌐 dual"
             elif hm == "karaoke":
                 badge_txt = "🎤 karaoke"
-            elif anim in ("pop", "bounce", "shake", "flip", "negrow"):
+            elif anim in ("pop", "bounce", "shake", "flip", "negrow", "popin", "pop12"):
                 badge_txt = "▶ " + anim
             elif anim == "pop_soft":
                 badge_txt = "▶ soft pop"
@@ -379,4 +382,114 @@ class CaptionGalleryDialog(QDialog):
 
     def accept_with(self, key: str):
         self.selected_key = key
+        self.accept()
+
+
+class CaptionComposerDialog(QDialog):
+    """Spec step 6.5: three-part caption picker.
+
+    Structural style (1-8) x visual preset (1-5) x motion animation (1-5)
+    compose into one template via compose_template(). The result is a
+    plain dict that build_ass() accepts directly.
+    """
+
+    SPEC_ORDER = ["spec_word_sync", "spec_highlight", "spec_impact",
+                  "spec_aesthetic", "spec_minimal", "spec_dynamic",
+                  "spec_standard", "spec_dual"]
+
+    def __init__(self, composition=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Compose Caption Style")
+        self.setMinimumSize(640, 520)
+        self.composed = None
+        self.composition = composition or ("spec_highlight", "preset_classic",
+                                           "motion_default", [])
+
+        lay = QVBoxLayout(self)
+
+        lay.addWidget(QLabel("<b>1. Structural style</b> (layout + timing)"))
+        self.style_list = QListWidget()
+        for key in self.SPEC_ORDER:
+            tmpl = CAPTION_TEMPLATES.get(key)
+            if not tmpl:
+                continue
+            QListWidgetItem("%s - %s" % (tmpl["label"], tmpl.get("desc", "")),
+                            self.style_list).setData(Qt.UserRole, key)
+        lay.addWidget(self.style_list, 2)
+
+        lay.addWidget(QLabel("<b>2. Visual preset</b> (look override)"))
+        self.preset_list = QListWidget()
+        for key, p in CAPTION_PRESETS.items():
+            QListWidgetItem("%s - %s" % (p["label"], p.get("desc", "")),
+                            self.preset_list).setData(Qt.UserRole, key)
+        lay.addWidget(self.preset_list, 1)
+
+        lay.addWidget(QLabel("<b>3. Motion animation</b> (movement override)"))
+        self.motion_list = QListWidget()
+        for key, m in CAPTION_MOTIONS.items():
+            QListWidgetItem("%s - %s" % (m["label"], m.get("desc", "")),
+                            self.motion_list).setData(Qt.UserRole, key)
+        lay.addWidget(self.motion_list, 1)
+
+        kwrow = QHBoxLayout()
+        kwrow.addWidget(QLabel("Keywords (Trending preset, comma separated):"))
+        self.kw_edit = QLineEdit()
+        self.kw_edit.setPlaceholderText("e.g. breaking, exclusive, live")
+        kwrow.addWidget(self.kw_edit, 1)
+        lay.addLayout(kwrow)
+
+        self.result_lbl = QLabel()
+        self.result_lbl.setWordWrap(True)
+        lay.addWidget(self.result_lbl)
+
+        for lst in (self.style_list, self.preset_list, self.motion_list):
+            lst.itemSelectionChanged.connect(self._refresh_result)
+
+        self._preselect()
+        self._refresh_result()
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        use = QPushButton("Use This Style")
+        use.setDefault(True)
+        use.clicked.connect(self._on_use)
+        btns.addWidget(cancel)
+        btns.addWidget(use)
+        lay.addLayout(btns)
+        self.setStyleSheet("QDialog{background:#141416;}")
+
+    def _select_key(self, lst: QListWidget, key: str):
+        for i in range(lst.count()):
+            if lst.item(i).data(Qt.UserRole) == key:
+                lst.setCurrentRow(i)
+                return
+        lst.setCurrentRow(0)
+
+    def _preselect(self):
+        style, preset, motion, kw = self.composition
+        self._select_key(self.style_list, style)
+        self._select_key(self.preset_list, preset)
+        self._select_key(self.motion_list, motion)
+        self.kw_edit.setText(", ".join(kw))
+
+    def _current(self):
+        def _key(lst):
+            it = lst.currentItem()
+            return it.data(Qt.UserRole) if it else None
+        kw = [k.strip() for k in self.kw_edit.text().split(",") if k.strip()]
+        return (_key(self.style_list) or "spec_highlight",
+                _key(self.preset_list) or "preset_classic",
+                _key(self.motion_list) or "motion_default", kw)
+
+    def _refresh_result(self):
+        style, preset, motion, kw = self._current()
+        t = compose_template(style, preset, motion, kw)
+        self.result_lbl.setText("Result: <b>%s</b>" % t["label"])
+
+    def _on_use(self):
+        style, preset, motion, kw = self._current()
+        self.composition = (style, preset, motion, kw)
+        self.composed = compose_template(style, preset, motion, kw)
         self.accept()
