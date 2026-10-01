@@ -1916,9 +1916,99 @@ CAPTION_TEMPLATE_CATEGORIES = ['Trending', 'Classic', 'NEW', 'Hits', 'Word', 'Gl
 DEFAULT_CAPTION_TEMPLATE = "tiktok_classic"
 
 
+# ---------------------------------------------------------------------------
+# HEADLINE PRESETS — "main text" overlay styles (2026-10-01).
+# Researched from broadcast + YouTube news conventions (BBC/CNN-style lower
+# thirds, breaking-news bars, viral Shorts titles, Pakistani news tickers):
+# heavy condensed or extra-bold sans, high-contrast box treatments,
+# red = breaking, navy/gold = regular broadcast, and wipe/slide/pop
+# entrances instead of a static fade. One family per graphic; hierarchy
+# through weight + box, not extra fonts. All fonts are bundled in
+# assets/fonts/.
+#
+# Colors are ASS &HAABBGGRR. size_frac is a fraction of the play height.
+# entrance: wipe_left | rise | pop | fade | rise_fade
+# ---------------------------------------------------------------------------
+HEADLINE_PRESETS = {
+    "breaking": {
+        "label": "Breaking Bar",
+        "desc": "Red breaking-news bar, condensed bold white, wipes in from the left",
+        "font": "Anton", "size_frac": 0.055,
+        "primary": "&H00FFFFFF", "accent": "&H00FFFFFF",
+        "box": True, "pill": False, "back_c": "&H002E10C8",  # #C8102E red
+        "outline": 2, "shadow": 0,
+        "alignment": 8, "margin_v_frac": 0.055,
+        "entrance": "wipe_left", "uppercase": True,
+    },
+    "broadcast": {
+        "label": "Broadcast Lower",
+        "desc": "Navy translucent bar, extra-bold white, gold keyword accents",
+        "font": "Montserrat", "size_frac": 0.042,
+        "primary": "&H00FFFFFF", "accent": "&H002CC7FF",  # gold #FFC72C
+        "box": True, "pill": False, "back_c": "&H26331D0B",  # #0B1D33 @85%
+        "outline": 1, "shadow": 1,
+        "alignment": 8, "margin_v_frac": 0.055,
+        "entrance": "wipe_left", "uppercase": True,
+    },
+    "viral": {
+        "label": "Viral Title",
+        "desc": "Huge condensed title, thick outline, pops in with scale",
+        "font": "Bebas Neue", "size_frac": 0.075,
+        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
+        "box": False, "pill": False, "back_c": "&H00000000",
+        "outline": 7, "shadow": 2,
+        "alignment": 8, "margin_v_frac": 0.07,
+        "entrance": "pop", "uppercase": True,
+    },
+    "pill": {
+        "label": "Creator Pill",
+        "desc": "Rounded black pill, bold white, yellow keyword accents, rises in",
+        "font": "Poppins", "size_frac": 0.040,
+        "primary": "&H00FFFFFF", "accent": "&H0000EAFF",  # yellow #FFEA00
+        "box": False, "pill": True, "back_c": "&H40000000",  # black @75%
+        "outline": 0, "shadow": 1,
+        "alignment": 8, "margin_v_frac": 0.055,
+        "entrance": "rise_fade", "uppercase": False,
+    },
+    "minimal": {
+        "label": "Clean Minimal",
+        "desc": "No box, bold white with soft shadow, gentle fade",
+        "font": "Montserrat", "size_frac": 0.038,
+        "primary": "&H00FFFFFF", "accent": "&H00FFF97D",  # cyan #7DF9FF
+        "box": False, "pill": False, "back_c": "&H00000000",
+        "outline": 0, "shadow": 2,
+        "alignment": 8, "margin_v_frac": 0.055,
+        "entrance": "fade", "uppercase": False,
+    },
+}
+
+DEFAULT_HEADLINE_PRESET = "broadcast"
+
+# Scene text that forces the breaking style (auto mode).
+BREAKING_KEYWORDS = ("breaking", "urgent", "alert", "emergency",
+                     "just in", "developing", "explosion", "attack")
+
+
+def headline_preset_for(scene_text, override="auto"):
+    """Pick a headline preset id: explicit override, else breaking when the
+    scene text carries urgency, else the default broadcast style."""
+    if override and override != "auto" and override in HEADLINE_PRESETS:
+        return override
+    low = (scene_text or "").lower()
+    if any(k in low for k in BREAKING_KEYWORDS):
+        return "breaking"
+    return DEFAULT_HEADLINE_PRESET
+
+
 def caption_template_labels():
     """Ordered (key, label) pairs for UI dropdowns."""
     return [(k, v["label"]) for k, v in CAPTION_TEMPLATES.items()]
+
+
+def headline_preset_labels():
+    """Ordered (key, label) pairs for the main-text style dropdown."""
+    return [("auto", "Auto (breaking when urgent)")] + [
+        (k, v["label"]) for k, v in HEADLINE_PRESETS.items()]
 
 
 def make_overlay_text(analysis, max_words=5):
@@ -2155,11 +2245,13 @@ def _wordbig_anim_open(anim, tmpl, sec, pri):
             "{\\fs%d\\c%s}" % (cap_size, pri))
 
 
-def _entrance_tags(entrance, alignment, pw, ph, mv=60):
+def _entrance_tags(entrance, alignment, pw, ph, mv=60, dx=0, dy=0):
     """Line-entrance animation tags (prepended to the event text).
 
     Uses ONLY \\fad and \\move so it never conflicts with the word-level
     \\t(\\fscx/\\fscy/\\1c) transforms. mv = style MarginV (px).
+    dx/dy = user drag offset in px (click-drag captions on the preview);
+    baked into the \\move endpoints so entrances stay intact.
     """
     if entrance == "fadein":
         return "{\\fad(180,0)}"
@@ -2177,6 +2269,7 @@ def _entrance_tags(entrance, alignment, pw, ph, mv=60):
             x, y = pw // 2, ph // 2
         else:
             x, y = pw // 2, ph - mv
+        x, y = x + dx, y + dy
         return "{\\move(%d,%d,%d,%d,0,300)\\fad(300,0)}" % (x, y + 60, x, y)
     if entrance == "slideleft":
         # spec dynamic slideLeft: slide in from the right + fade, 300ms
@@ -2186,6 +2279,7 @@ def _entrance_tags(entrance, alignment, pw, ph, mv=60):
             x, y = pw // 2, ph // 2
         else:
             x, y = pw // 2, ph - mv
+        x, y = x + dx, y + dy
         return "{\\move(%d,%d,%d,%d,0,300)\\fad(300,0)}" % (x + 90, y, x, y)
     if entrance == "bouncein":
         # spec dynamic bounceIn: overshoot 118% then settle, 300ms.
@@ -2201,6 +2295,7 @@ def _entrance_tags(entrance, alignment, pw, ph, mv=60):
             x, y = pw // 2, ph // 2
         else:
             x, y = pw // 2, ph - mv
+        x, y = x + dx, y + dy
         return "{\\move(%d,%d,%d,%d,0,350)\\fad(350,0)}" % (x, y + 40, x, y)
     if entrance == "slideup":
         # resting anchor depends on alignment; \\move positions the anchor.
@@ -2213,6 +2308,7 @@ def _entrance_tags(entrance, alignment, pw, ph, mv=60):
             x, y = pw // 2, ph // 2
         else:
             x, y = pw // 2, ph - 60
+        x, y = x + dx, y + dy
         return "{\\move(%d,%d,%d,%d,0,250)\\fad(250,0)}" % (x, y + 50, x, y)
     return ""
 
@@ -2237,6 +2333,33 @@ def _font_file_for(font_name):
     return fallback
 
 
+def _headline_entrance(kind, pw, ph, margin_v):
+    """ASS entrance tags for a headline preset (alignment 8 = top-center,
+    so the anchor Y is the style's MarginV)."""
+    xc, y = pw // 2, margin_v
+    if kind == "wipe_left":
+        return "{\\an8\\move(%d,%d,%d,%d,0,350)}" % (-pw // 2, y, xc, y)
+    if kind == "rise":
+        return "{\\an8\\move(%d,%d,%d,%d,0,350)}" % (xc, y + 90, xc, y)
+    if kind == "pop":
+        return "{\\an8\\fscx125\\fscy125\\t(0,230,\\fscx100\\fscy100)}"
+    if kind == "rise_fade":
+        return ("{\\an8\\fad(200,150)\\move(%d,%d,%d,%d,0,350)}"
+                % (xc, y + 90, xc, y))
+    return "{\\an8\\fad(250,150)}"
+
+
+def _headline_style_line(pid, hp, ph):
+    """One V4+ Style line for a headline preset."""
+    size = max(28, int(ph * hp["size_frac"]))
+    mv = int(ph * hp["margin_v_frac"])
+    border = 4 if hp.get("pill") else (3 if hp.get("box") else 1)
+    return ("Style: HL_%s,%s,%d,%s,%s,&H00000000,%s,-1,0,0,0,100,100,0,0,"
+            "%d,%d,%d,8,60,60,%d,1"
+            % (pid, hp["font"], size, hp["primary"], hp["primary"],
+               hp["back_c"], border, hp["outline"], hp["shadow"], mv))
+
+
 def build_srt(sentence_timings, path):
     with open(path, "w", encoding="utf-8") as f:
         for i, s in enumerate(sentence_timings, 1):
@@ -2249,8 +2372,11 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
               secondary_track=None):
     """Build the ASS file: bottom captions + optional top overlays.
 
-    overlays: list of dicts {text, start, end}. They use the "Top" style
-    (alignment 8 = top-center) so no drawtext filter is ever needed.
+    overlays: list of dicts {text, start, end, style?, keywords?}.
+    style: a HEADLINE_PRESETS id (breaking / broadcast / viral / pill /
+    minimal) — researched broadcast/YouTube news headline looks with real
+    entrance animations (wipe/slide/pop), box treatments and keyword
+    accent colors. Falls back to the default broadcast style.
     template: key from CAPTION_TEMPLATES (CapCut-style caption look).
     secondary_track: for dual-language templates, list of dicts
     {text, start, end} with GENUINE second-language text (never a copy of
@@ -2264,7 +2390,9 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
         tmpl = CAPTION_TEMPLATES.get(template or DEFAULT_CAPTION_TEMPLATE,
                                      CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE])
     pw, ph = play_res
-    cap_size = max(24, int(ph * font_size / 1080 * tmpl["size_scale"]))
+    # user_scale: click-drag resize factor from the preview (1.0 = unchanged)
+    cap_size = max(24, int(ph * font_size / 1080 * tmpl["size_scale"]
+                           * tmpl.get("user_scale", 1.0)))
     top_size = max(30, int(ph / 20))
     # monoline preset: hollow outline — transparent fill, outline takes the
     # text color. Alpha persists through {\c} overrides in events.
@@ -2286,6 +2414,33 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
     # spec styles can pin the caption line to an exact y fraction
     # (e.g. y=0.78 -> MarginV = 0.22 * frame height); default keeps 60px.
     mv = int(ph * tmpl["margin_v_frac"]) if "margin_v_frac" in tmpl else 60
+    # Interactive caption move/resize (click-drag on the preview):
+    # dx_frac/dy_frac are fractions of the play resolution; positive dy
+    # moves captions DOWN on screen. Applied via \pos so every style
+    # (including \move entrances, which get the offset baked in) shifts
+    # exactly like the preview.
+    dx_px = int(round(tmpl.get("dx_frac", 0.0) * pw))
+    dy_px = int(round(tmpl.get("dy_frac", 0.0) * ph))
+    _al = tmpl.get("alignment", 2)
+    if _al == 8:
+        _ax, _ay = pw // 2, mv
+    elif _al == 5:
+        _ax, _ay = pw // 2, ph // 2
+    else:
+        _ax, _ay = pw // 2, ph - mv
+
+    def _pos_shift(ent_text):
+        """{pos} prefix reproducing the default anchor + user drag offset.
+
+        Skipped when the event already positions itself (\\move entrance
+        has the offset baked in; \\pos word-boxes get it directly), and
+        skipped entirely when nothing was dragged (zero behavior change).
+        """
+        if dx_px == 0 and dy_px == 0:
+            return ""
+        if "\\move" in ent_text or "\\pos" in ent_text:
+            return ""
+        return "{\\pos(%d,%d)}" % (_ax + dx_px, _ay + dy_px)
     # CapBox: opaque per-word box style (spec style 3). BorderStyle=3 draws
     # the box from BackColour; Outline pads it (spec paddingY 12).
     box_op = tmpl.get("box_opacity", 0.85)
@@ -2312,6 +2467,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
        tmpl.get("spacing", 0),
        box_pad, mv,
        top_size)
+    # Headline preset styles (one V4+ Style per preset actually used by the
+    # overlays). The legacy plain "Top" style stays for compatibility.
+    _used_hl = []
+    for _ov in overlays or []:
+        _pid = _ov.get("style") or DEFAULT_HEADLINE_PRESET
+        if _pid not in HEADLINE_PRESETS:
+            _pid = DEFAULT_HEADLINE_PRESET
+        if _pid not in _used_hl:
+            _used_hl.append(_pid)
+    _hl_lines = "".join(
+        _headline_style_line(_pid, HEADLINE_PRESETS[_pid], ph) + "\n"
+        for _pid in _used_hl)
+    header = header.replace("[Events]", _hl_lines + "[Events]")
     # spec style 8 dual-language: second independent track ("Cap2" style)
     # with its own font/size/y. Genuine translation input required —
     # never duplicate the primary line.
@@ -2378,10 +2546,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not seg:
                 w0 = _case(s["text"])
                 safe = sanitize_ass_text(w0)
-                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph)
+                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph,
+                                     dx=dx_px, dy=dy_px)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
-                    f"Cap,,0,0,0,,{ent}{safe}")
+                    f"Cap,,0,0,0,,{_pos_shift(ent)}{ent}{safe}")
                 continue
             sent_words = [_case(w["word"]) for w in seg]
             for i, w in enumerate(seg):
@@ -2393,7 +2562,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if we <= ws:
                     we = ws + 0.01
                 # entrance animation only on the first word-event of the line
-                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph, mv) if i == 0 else ""
+                ent = _entrance_tags(ent_name, tmpl["alignment"], pw, ph, mv,
+                                     dx=dx_px, dy=dy_px) if i == 0 else ""
                 if hmode == "wordbox":
                     wopen, wclose = _wordbox_anim_open(anim, tmpl, sec, pri)
                 elif hmode == "wordbig":
@@ -2420,7 +2590,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 txt = " ".join(parts)
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
-                    f"Cap,,0,0,0,,{ent}{txt}")
+                    f"Cap,,0,0,0,,{_pos_shift(ent)}{ent}{txt}")
     elif highlight and word_timings and hmode == "typewriter":
         # Real typewriter: one event per character step, progressively
         # revealing the sentence (centered growth looks best for captions).
@@ -2437,7 +2607,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 safe = sanitize_ass_text(text[:i])
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(cs)},{_ts_ass(ce)},"
-                    f"Cap,,0,0,0,,{safe}")
+                    f"Cap,,0,0,0,,{_pos_shift('')}{safe}")
     elif highlight and word_timings and hmode == "singleword":
         # Word-by-Word Sync (CapCut viral shorts): only ONE word on screen
         # at a time, synced to speech, with kinetic pop.
@@ -2448,11 +2618,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if we <= ws:
                 we = ws + 0.2
             wopen, wclose = _word_anim_open(anim, sec, pri, tmpl)
-            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph,
+                                 dx=dx_px, dy=dy_px)
             safe = sanitize_ass_text(_case(w["word"]))
             lines.append(
                 f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
-                f"Cap,,0,0,0,,{ent}{wopen}{safe}{wclose}")
+                f"Cap,,0,0,0,,{_pos_shift(ent)}{ent}{wopen}{safe}{wclose}")
     elif highlight and word_timings and hmode == "dual":
         # Dual-Language Captions: original line + second line below.
         # Second line reuses the sentence text (user's translation/Urdu can
@@ -2460,15 +2631,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         dual_size = max(18, int(cap_size * 0.62))
         for s in sentence_timings:
             safe = sanitize_ass_text(_case(s["text"]))
-            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+            ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph,
+                                 dx=dx_px, dy=dy_px)
             # main line
             lines.append(
                 f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
-                f"Cap,,0,0,0,,{ent}{safe}")
+                f"Cap,,0,0,0,,{_pos_shift(ent)}{ent}{safe}")
             # second language line (smaller, secondary color)
             lines.append(
                 f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
-                f"Cap,,0,0,0,,{{\\fs{dual_size}\\c{tmpl['secondary']}}}"
+                f"Cap,,0,0,0,,{_pos_shift('')}{{\\fs{dual_size}\\c{tmpl['secondary']}}}"
                 f"{safe}{{\\c{tmpl['primary']}}}")
     elif highlight and word_timings and hmode == "standard":
         # Standard Subtitles: plain two-line text, no highlight, no anim.
@@ -2476,7 +2648,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             safe = sanitize_ass_text(_case(s["text"]))
             lines.append(
                 f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},"
-                f"Cap,,0,0,0,,{safe}")
+                f"Cap,,0,0,0,,{_pos_shift('')}{safe}")
     elif highlight and word_timings and hmode == "wordbox_each":
         # Spec style 3 UPPERCASE IMPACT: EVERY word gets its OWN black box.
         # Box+word slam in at word.start (scale 1.25 -> 1.0 in 100ms,
@@ -2504,7 +2676,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             total = sum(widths) + space * (len(disp) - 1)
             x = pw / 2 - total / 2
             for k, w in enumerate(seg):
-                cx = int(x + widths[k] / 2)
+                cx = int(x + widths[k] / 2) + dx_px
                 x += widths[k] + space
                 ws, we = w["start"], w["end"]
                 if k + 1 < len(seg):
@@ -2515,14 +2687,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     we = ws + 0.01
                 safe = sanitize_ass_text(disp[k])
                 tag = ("{\\an5\\pos(%d,%d)\\fscx125\\fscy125"
-                       "\\t(0,100,0.6,\\fscx100\\fscy100)}" % (cx, y))
+                       "\\t(0,100,0.6,\\fscx100\\fscy100)}" % (cx, y + dy_px))
                 lines.append(
                     f"Dialogue: 0,{_ts_ass(ws)},{_ts_ass(we)},"
                     f"CapBox,,0,0,0,,{tag}{safe}")
     elif highlight and word_timings:
         # karaoke-style per-word highlight
         k_tag = "\\kf" if tmpl.get("karaoke_smooth") else "\\k"
-        ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph)
+        ent = _entrance_tags(entrance, tmpl["alignment"], pw, ph,
+                             dx=dx_px, dy=dy_px)
         words = list(word_timings)
         wi = 0
         for s in sentence_timings:
@@ -2535,23 +2708,46 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             txt = "".join("{%s%d}%s " % (k_tag, max(1, int((w["end"] - w["start"]) * 100)),
                                           sanitize_ass_text(_case(w["word"])))
                           for w in seg)
-            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{ent}{txt.strip()}")
+            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{_pos_shift(ent)}{ent}{txt.strip()}")
     else:
         for s in sentence_timings:
             safe = sanitize_ass_text(s["text"])
-            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{safe}")
+            lines.append(f"Dialogue: 0,{_ts_ass(s['start'])},{_ts_ass(s['end'])},Cap,,0,0,0,,{_pos_shift('')}{safe}")
     # spec style 8: secondary track events (independent text + timings,
     # Cap2 style). Static per spec (no word animation on secondary).
     if tmpl.get("dual") and secondary_track:
+        # secondary anchor: an2 with its own MarginV
+        _sec_mv = int(ph * tmpl.get("secondary_cfg", {}).get("margin_v_frac", 0.12))
+        _sec_pos = ("" if (dx_px == 0 and dy_px == 0) else
+                    "{\\pos(%d,%d)}" % (pw // 2 + dx_px, ph - _sec_mv + dy_px))
         for t2 in secondary_track:
             safe2 = sanitize_ass_text(t2["text"])
             lines.append(f"Dialogue: 0,{_ts_ass(t2['start'])},{_ts_ass(t2['end'])},"
-                         f"Cap2,,0,0,0,,{safe2}")
+                         f"Cap2,,0,0,0,,{_sec_pos}{safe2}")
     for ov in overlays or []:
-        txt = sanitize_ass_text(ov["text"])
+        txt = ov.get("text", "") or ""
         if not txt.strip():
             continue
-        lines.append(f"Dialogue: 1,{_ts_ass(ov['start'])},{_ts_ass(ov['end'])},Top,,0,0,0,,{txt}")
+        pid = ov.get("style") or DEFAULT_HEADLINE_PRESET
+        hp = HEADLINE_PRESETS.get(pid, HEADLINE_PRESETS[DEFAULT_HEADLINE_PRESET])
+        if pid not in HEADLINE_PRESETS:
+            pid = DEFAULT_HEADLINE_PRESET
+        if hp.get("uppercase"):
+            txt = txt.upper()
+        kwset = {str(k).lower() for k in (ov.get("keywords") or [])}
+        parts = []
+        for w_ in txt.split():
+            core = w_.strip(".,!?\"'").lower()
+            safe = sanitize_ass_text(w_)
+            if core and core in kwset and hp["accent"] != hp["primary"]:
+                parts.append("{\\c%s}%s{\\c%s}"
+                             % (hp["accent"], safe, hp["primary"]))
+            else:
+                parts.append(safe)
+        ent = _headline_entrance(hp.get("entrance", "fade"), pw, ph,
+                                 int(ph * hp["margin_v_frac"]))
+        lines.append(f"Dialogue: 1,{_ts_ass(ov['start'])},{_ts_ass(ov['end'])},"
+                     f"HL_{pid},,0,0,0,,{ent}{' '.join(parts)}")
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(lines) + "\n")
     return path

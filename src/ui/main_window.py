@@ -33,6 +33,68 @@ from src.version import __version__, __display_name__
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+class _DragCaptionLabel(QLabel):
+    """Caption overlay that can be click-dragged and wheel-resized.
+
+    Active only in caption move-mode (toggled by the "Move captions"
+    button). Drag moves the caption; mouse wheel scales it; double-click
+    resets. Reports changes through the owner's _cap_pos dict so the
+    render (build_ass dx_frac/dy_frac/user_scale) matches the preview.
+    """
+
+    def __init__(self, owner, parent=None):
+        super().__init__(parent)
+        self._owner = owner
+        self._drag_start = None
+
+    def mousePressEvent(self, ev):  # noqa: D102
+        if ev.button() == Qt.LeftButton and self._owner._cap_move_mode:
+            self._drag_start = ev.globalPosition().toPoint()
+            self.setCursor(Qt.ClosedHandCursor)
+            ev.accept()
+        else:
+            super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):  # noqa: D102
+        if self._drag_start is not None and self._owner._cap_move_mode:
+            w, h = max(1, self.width()), max(1, self.height())
+            dx = (ev.globalPosition().x() - self._drag_start.x()) / w
+            dy = (ev.globalPosition().y() - self._drag_start.y()) / h
+            self._drag_start = ev.globalPosition().toPoint()
+            pos = self._owner._cap_pos
+            pos["dx"] = max(-0.45, min(0.45, pos["dx"] + dx))
+            pos["dy"] = max(-0.45, min(0.45, pos["dy"] + dy))
+            self._owner._apply_cap_pos_to_overlay()
+            ev.accept()
+        else:
+            super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):  # noqa: D102
+        self._drag_start = None
+        if self._owner._cap_move_mode:
+            self.setCursor(Qt.OpenHandCursor)
+        super().mouseReleaseEvent(ev)
+
+    def wheelEvent(self, ev):  # noqa: D102
+        if self._owner._cap_move_mode:
+            pos = self._owner._cap_pos
+            factor = 1.1 if ev.angleDelta().y() > 0 else 1 / 1.1
+            pos["scale"] = max(0.5, min(2.5, pos["scale"] * factor))
+            self._owner._apply_cap_pos_to_overlay()
+            ev.accept()
+        else:
+            super().wheelEvent(ev)
+
+    def mouseDoubleClickEvent(self, ev):  # noqa: D102
+        if self._owner._cap_move_mode:
+            self._owner._cap_pos.update(dx=0.0, dy=0.0, scale=1.0)
+            self._owner._apply_cap_pos_to_overlay()
+            self._owner._log("Caption position reset.")
+            ev.accept()
+        else:
+            super().mouseDoubleClickEvent(ev)
+
+
 class PipelineWorker(QThread):
     progress = Signal(int, str, str)
     log = Signal(str)
@@ -915,7 +977,21 @@ class MainWindow(QMainWindow):
         self.chk_text_overlays.setChecked(True)
         self.chk_text_overlays.setToolTip(
             "Uncheck to skip the big title text overlays for this video.")
-        form.addRow(self.chk_text_overlays)
+        from src.text_captions import headline_preset_labels
+        self.cb_headline_style = QComboBox()
+        for key, label in headline_preset_labels():
+            self.cb_headline_style.addItem(label, key)
+        self.cb_headline_style.setToolTip(
+            "Main text (headline) style: researched broadcast/YouTube news "
+            "looks with entrance animations. Auto = red breaking bar when "
+            "the scene is urgent, broadcast bar otherwise.")
+        _hl_row = QHBoxLayout()
+        _hl_row.addWidget(self.chk_text_overlays)
+        _hl_row.addWidget(self.cb_headline_style, 1)
+        _hl_wrap = QWidget()
+        _hl_wrap.setLayout(_hl_row)
+        _hl_row.setContentsMargins(0, 0, 0, 0)
+        form.addRow(_hl_wrap)
         self.chk_captions = QCheckBox("Captions")
         self.chk_captions.setChecked(True)
         form.addRow(self.chk_captions)
@@ -925,6 +1001,13 @@ class MainWindow(QMainWindow):
         # Spec 6.5 composer: composed dict (style+preset+motion) or None.
         self._caption_composed = None
         self._caption_composition = None
+        # Interactive caption move/resize (click-drag on the preview):
+        # dx/dy are fractions of the preview size (positive dy = down),
+        # scale multiplies the caption size. Applied to the render via
+        # dx_frac/dy_frac/user_scale in _caption_template_for_render().
+        self._cap_pos = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+        self._cap_move_mode = False
+        self._fs_active = False
         cap_row = QHBoxLayout()
         self.caption_style_lbl = QLabel(
             CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE]["label"])
@@ -1084,6 +1167,19 @@ class MainWindow(QMainWindow):
         self.stop_btn.setToolTip("Stop (shuru se)")
         self.stop_btn.clicked.connect(self._stop_play)
         ctl.addWidget(self.stop_btn)
+        self.move_cap_btn = QPushButton("✋")
+        self.move_cap_btn.setMaximumWidth(48)
+        self.move_cap_btn.setCheckable(True)
+        self.move_cap_btn.setToolTip(
+            "Caption move mode: video par caption ko drag karo (uper/neechay/"
+            "left/right), wheel se chhota/bara, double-click se reset.")
+        self.move_cap_btn.toggled.connect(self._toggle_cap_move_mode)
+        ctl.addWidget(self.move_cap_btn)
+        self.fs_btn = QPushButton("⛶")
+        self.fs_btn.setMaximumWidth(48)
+        self.fs_btn.setToolTip("Full screen preview (Esc se wapas)")
+        self.fs_btn.clicked.connect(self._toggle_fullscreen)
+        ctl.addWidget(self.fs_btn)
         self.seek_slider = QSlider(Qt.Horizontal)
         self.seek_slider.setRange(0, 0)
         self.seek_slider.sliderMoved.connect(self._seek)
@@ -1164,7 +1260,8 @@ class MainWindow(QMainWindow):
         bold = "bold" if tmpl.get("bold") == -1 else "normal"
         italic = "italic" if tmpl.get("italic") else "normal"
         font = tmpl.get("font", "Arial")
-        px = max(12, int(size * float(tmpl.get("size_scale", 1.0))))
+        user_scale = float(getattr(self, "_cap_pos", {}).get("scale", 1.0))
+        px = max(12, int(size * float(tmpl.get("size_scale", 1.0)) * user_scale))
         return (f"QLabel {{ color: {primary}; font-family: '{font}'; "
                 f"font-size: {px}px; font-weight: {bold}; "
                 f"font-style: {italic}; {bg} }}")
@@ -1175,8 +1272,7 @@ class MainWindow(QMainWindow):
             return
         if self.video_widget is None:
             return
-        from PySide6.QtWidgets import QLabel
-        ov = QLabel(self.video_widget)
+        ov = _DragCaptionLabel(self, self.video_widget)
         ov.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         ov.setWordWrap(True)
         ov.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks -> video
@@ -1186,11 +1282,96 @@ class MainWindow(QMainWindow):
         ov.show()
         self.caption_overlay = ov
 
+    def _apply_cap_pos_to_overlay(self):
+        """Reflect the drag/resize state on the preview overlay.
+
+        dx/dy shift the overlay margins; scale multiplies the font size.
+        The render matches via dx_frac/dy_frac/user_scale.
+        """
+        ov = getattr(self, "caption_overlay", None)
+        if ov is None or self.video_widget is None:
+            return
+        w, h = max(1, self.video_widget.width()), max(1, self.video_widget.height())
+        dx_px = int(self._cap_pos["dx"] * w)
+        dy_px = int(self._cap_pos["dy"] * h)
+        left = max(4, 20 + dx_px)
+        right = max(4, 20 - dx_px)
+        bottom = max(4, 24 - dy_px)
+        ov.setContentsMargins(left, 0, right, bottom)
+        ov.setStyleSheet(self._caption_overlay_style())
+
+    def _toggle_cap_move_mode(self, on: bool):
+        """Enable/disable caption drag mode on the preview."""
+        self._cap_move_mode = on
+        ov = getattr(self, "caption_overlay", None)
+        if ov is not None:
+            ov.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
+            ov.setCursor(Qt.OpenHandCursor if on else Qt.ArrowCursor)
+        if on:
+            self.video_hint.setText(
+                "Move mode: caption drag karo (move) • wheel (chhota/bara) "
+                "• double-click (reset) • dobara dabao to band karo")
+        else:
+            self.video_hint.setText(
+                "Tip: video par click karo — caption edit ho jayega")
+
+    # -- full-screen preview (CapCut style) --
+    def _toggle_fullscreen(self):
+        if self._fs_active:
+            self._exit_fullscreen()
+            return
+        if not self._ensure_player() or self.video_widget is None:
+            return
+        vw = self.video_widget
+        self._fs_parent = vw.parent()
+        self._fs_layout = self._fs_parent.layout() if self._fs_parent else None
+        self._fs_index = (self._fs_layout.indexOf(vw)
+                          if self._fs_layout else 0)
+        if self._fs_layout:
+            self._fs_layout.removeWidget(vw)
+        vw.setParent(None)
+        vw.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        vw.showFullScreen()
+        # floating exit hint (child of the fullscreen window)
+        from PySide6.QtWidgets import QPushButton as _PB
+        self._fs_exit_btn = _PB("✕ Exit full screen (Esc)", vw)
+        self._fs_exit_btn.setStyleSheet(
+            "background:rgba(0,0,0,160);color:#fff;border-radius:8px;"
+            "padding:8px 14px;font-size:14px;")
+        self._fs_exit_btn.adjustSize()
+        self._fs_exit_btn.move(20, 20)
+        self._fs_exit_btn.clicked.connect(self._exit_fullscreen)
+        self._fs_exit_btn.show()
+        self._fs_active = True
+        self._log("Full screen preview — Esc dabao wapas aane ke liye.")
+
+    def _exit_fullscreen(self):
+        if not self._fs_active or self.video_widget is None:
+            return
+        vw = self.video_widget
+        btn = getattr(self, "_fs_exit_btn", None)
+        if btn is not None:
+            btn.deleteLater()
+            self._fs_exit_btn = None
+        vw.setParent(self._fs_parent)
+        vw.setWindowFlags(Qt.Widget)
+        lay = getattr(self, "_fs_layout", None)
+        if lay is not None:
+            lay.insertWidget(getattr(self, "_fs_index", 1), vw)
+        vw.show()
+        self._fs_active = False
+        # overlay geometry follows the re-docked widget
+        ov = getattr(self, "caption_overlay", None)
+        if ov is not None:
+            ov.setGeometry(vw.rect())
+            self._apply_cap_pos_to_overlay()
+
     def _refresh_caption_style(self):
         """Instant style update when template/size changes (no re-encode)."""
         ov = getattr(self, "caption_overlay", None)
         if ov is not None:
             ov.setStyleSheet(self._caption_overlay_style())
+            self._apply_cap_pos_to_overlay()
             # Refresh text immediately so the user sees the change.
             if self.player is not None:
                 self._update_caption_text(self.player.position())
@@ -1200,6 +1381,29 @@ class MainWindow(QMainWindow):
         return (self._caption_composed
                 if isinstance(self._caption_composed, dict)
                 else self._caption_template_key)
+
+    def _caption_template_for_render(self):
+        """Render-ready template dict: base style + the user's click-drag
+        move/resize (dx_frac/dy_frac/user_scale) baked in.
+
+        build_ass() applies these so the burned video matches the preview
+        exactly. The extra keys round-trip through the edit session, so
+        post-render Apply keeps the position too.
+        """
+        from src.text_captions import CAPTION_TEMPLATES
+        base = self._active_caption_template()
+        t = dict(base) if isinstance(base, dict) else dict(
+            CAPTION_TEMPLATES.get(base) or {})
+        if not isinstance(base, dict):
+            t["template_key"] = base
+        pos = getattr(self, "_cap_pos", None) or {}
+        dx, dy, sc = pos.get("dx", 0.0), pos.get("dy", 0.0), pos.get("scale", 1.0)
+        if dx or dy:
+            t["dx_frac"] = dx
+            t["dy_frac"] = dy
+        if sc and abs(sc - 1.0) > 1e-6:
+            t["user_scale"] = sc
+        return t
 
     def _active_tmpl_dict(self):
         """Resolved template dict for UI previews/overlays."""
@@ -1511,8 +1715,14 @@ class MainWindow(QMainWindow):
         if obj is self.video_widget:
             from PySide6.QtCore import QEvent
             if event.type() == QEvent.MouseButtonPress:
-                self._on_video_clicked()
+                # In caption move-mode the drag label eats the clicks.
+                if not self._cap_move_mode:
+                    self._on_video_clicked()
                 return True
+            if event.type() == QEvent.KeyPress:
+                if event.key() == Qt.Key_Escape and self._fs_active:
+                    self._exit_fullscreen()
+                    return True
             if event.type() == QEvent.Resize:
                 ov = getattr(self, "caption_overlay", None)
                 if ov is not None:
@@ -1774,9 +1984,16 @@ class MainWindow(QMainWindow):
         self.edit_template_btn = QPushButton("Choose Style...")
         self.edit_template_btn.setEnabled(False)
         self.edit_template_btn.clicked.connect(self._open_caption_gallery)
+        self.edit_compose_btn = QPushButton("Compose 8+5+5...")
+        self.edit_compose_btn.setEnabled(False)
+        self.edit_compose_btn.setToolTip(
+            "Structural style x visual preset x motion — video banne ke "
+            "baad bhi compose karo.")
+        self.edit_compose_btn.clicked.connect(self._open_caption_composer)
         # CapCut-style: template select karte hi preview mein nazar aaye.
         trow2.addWidget(self.edit_template_lbl, 1)
         trow2.addWidget(self.edit_template_btn)
+        trow2.addWidget(self.edit_compose_btn)
         cap_form.addRow("Template:", trow2)
         size_row = QHBoxLayout()
         self.edit_size_slider = QSlider(Qt.Horizontal)
@@ -2035,9 +2252,10 @@ class MainWindow(QMainWindow):
             "output_fps": int(self.cb_fps.currentText()),
             "output_codec": self.cb_codec.currentText(),
             "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
+            "headline_style": self.cb_headline_style.currentData(),
             "captions_enabled": self.chk_captions.isChecked(),
             "caption_highlight": True, "caption_font_size": 48,
-            "caption_template": self._active_caption_template(),
+            "caption_template": self._caption_template_for_render(),
             "caption_composition": list(self._caption_composition)
             if self._caption_composition else None,
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
@@ -2143,6 +2361,14 @@ class MainWindow(QMainWindow):
                     self._caption_composition = (
                         (comp[0], comp[1], comp[2], tkey.get("keywords", []))
                         if comp else None)
+                    if tkey.get("template_key"):
+                        self._caption_template_key = tkey["template_key"]
+                    # Restore the click-drag move/resize state too.
+                    self._cap_pos = {
+                        "dx": float(tkey.get("dx_frac", 0.0)),
+                        "dy": float(tkey.get("dy_frac", 0.0)),
+                        "scale": float(tkey.get("user_scale", 1.0)),
+                    }
                     label = tkey.get("label", "")
                 else:
                     self._caption_template_key = tkey
@@ -2156,6 +2382,7 @@ class MainWindow(QMainWindow):
                 self.edit_size_slider.setEnabled(True)
                 self.edit_apply_btn.setEnabled(True)
                 self.gen_captions_btn.setEnabled(True)
+                self.edit_compose_btn.setEnabled(True)
                 # Cache timings for the live caption overlay.
                 self._cap_sentences = data.get("sentence_timings", [])
                 self._cap_words = data.get("word_timings", [])
@@ -2205,7 +2432,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Edit Captions",
                                 "Render a video first, then edit its captions.")
             return
-        template = self._active_caption_template()
+        template = self._caption_template_for_render()
         size = self.edit_size_slider.value()
         self.edit_apply_btn.setEnabled(False)
         self.stage_lbl.setText("Updating captions...")
@@ -2238,7 +2465,7 @@ class MainWindow(QMainWindow):
                     return
             except Exception:  # noqa: BLE001 - fall through to transcription
                 pass
-        template = self._active_caption_template()
+        template = self._caption_template_for_render()
         size = self.edit_size_slider.value()
         self.gen_captions_btn.setEnabled(False)
         self.edit_apply_btn.setEnabled(False)
@@ -2782,8 +3009,8 @@ class MainWindow(QMainWindow):
             self.project.snapshot()
             sc.text = text.strip()
             # Update the timeline overlay to match
-            from src.text_overlays import make_overlay_text
-            from src.script_analysis import analyze_sentence
+            from src.text_engine import make_overlay_text
+            from src.script_engine import analyze_sentence
             ov = make_overlay_text(analyze_sentence(sc.text))
             for c in self.pipeline.timeline.by_track("text"):
                 if c.payload.get("scene_id") == sid and not c.locked:
@@ -2826,7 +3053,7 @@ class MainWindow(QMainWindow):
         # Re-detect scenes so the UI reflects the new structure.
         try:
             from src.scene_detector import detect_scenes
-            from src.script_analysis import analyze_script
+            from src.script_engine import analyze_script
             self.pipeline.analysis = analyze_script(new_script)
             sent_texts = [s.text for s in self.pipeline.analysis.sentences]
             self.pipeline.scenes = detect_scenes(

@@ -5,6 +5,7 @@ by mood, else a generated ambient bed. Mixing via ffmpeg with sidechain
 ducking + loudnorm so voice stays dominant and nothing clips.
 """
 import os
+import re
 import subprocess
 import wave
 
@@ -106,11 +107,71 @@ def sfx_crowd(d=3.0):
     return 0.4 * _noise(d) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * np.arange(n) / SR))
 
 
+# ---- variety pack (2026-10-01): short UI-style sounds for caption
+# entrances and headline hits. CapCut-style videos put a tiny pop/tick
+# under each animated caption line instead of one big effect per scene.
+def sfx_pop(d=0.18):
+    """Punchy little pop for word pop / bounce entrances."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    f = np.linspace(520, 170, n)
+    tone = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 22)
+    return 0.8 * tone + 0.15 * _noise(d) * _env(n, 0.002, 0.001)
+
+
+def sfx_ding(d=0.8):
+    """Bright bell chime for breaking-news / headline hits."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    tone = (np.sin(2 * np.pi * 1568 * t) * 0.5
+            + np.sin(2 * np.pi * 2093 * t) * 0.3
+            + np.sin(2 * np.pi * 2637 * t) * 0.2) * np.exp(-t * 5)
+    return 0.55 * tone
+
+
+def sfx_tick(d=0.06):
+    """Short click for typewriter caption chunks."""
+    n = int(SR * d)
+    x = _noise(d)
+    x = np.convolve(x, np.ones(max(1, n // 8)) / max(1, n // 8),
+                    mode="same")
+    return 0.6 * x * _env(n, 0.001, 0.001)
+
+
+def sfx_sparkle(d=0.5):
+    """Shimmer for glow / aesthetic caption moments."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    f = np.linspace(3000, 6500, n)
+    tone = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 7)
+    tone += 0.5 * np.sin(2 * np.pi * np.cumsum(f * 1.5) / SR) * np.exp(-t * 9)
+    return 0.35 * tone
+
+
+def sfx_punch(d=0.35):
+    """Heavy thud for slam-in impact words and breaking titles."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    body = np.sin(2 * np.pi * 68 * t) * np.exp(-t * 14)
+    snap = _noise(d) * _env(n, 0.001, 0.001)
+    return 0.9 * body + 0.35 * snap
+
+
+def sfx_swoosh(d=0.5):
+    """Soft quick swoosh for slide entrances (lighter than whoosh)."""
+    n = int(SR * d)
+    x = _noise(d) * _env(n, 0.45, 0.08)
+    sweep = np.sin(2 * np.pi * np.linspace(400, 3200, n) * np.arange(n) / SR)
+    return 0.45 * x + 0.18 * sweep * _env(n, 0.4, 0.08)
+
+
 SFX_BUILDERS = {
     "whoosh": sfx_whoosh, "impact": sfx_impact, "boom": sfx_boom,
     "riser": sfx_riser, "alert": sfx_alert, "thunder": sfx_thunder,
     "wind": sfx_wind, "camera": sfx_camera, "digital": sfx_digital,
     "crowd": sfx_crowd,
+    "pop": sfx_pop, "ding": sfx_ding, "tick": sfx_tick,
+    "sparkle": sfx_sparkle, "punch": sfx_punch, "swoosh": sfx_swoosh,
 }
 
 SFX_KEYWORDS = {
@@ -138,18 +199,105 @@ def ensure_sfx_library(sfx_dir):
     return paths
 
 
-def place_sfx(scene_analyses, timings, max_per_scene=1):
-    """Contextual placement only: keyword match per scene, never on every scene."""
+def _kw_hit(text, kw):
+    """Match a keyword: word-boundary for short keywords (so 'ai' does not
+    fire on 'said'/'again' — that was the main cause of the same SFX
+    repeating on almost every scene), plain substring for longer ones."""
+    if len(kw) <= 3:
+        return re.search(r"\b" + re.escape(kw) + r"\b", text) is not None
+    return kw in text
+
+
+def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0):
+    """Contextual placement only: keyword match per scene, never on every scene.
+
+    Variety rules (2026-10-01): the same effect is never placed on two
+    scenes in a row — among the keyword hits we prefer effects not used
+    recently, and ties are broken with a seeded RNG so a render is
+    reproducible but not monotonous.
+    """
+    import random
+    rng = random.Random(seed)
     events = []
+    recent = []  # last few used sfx names; never repeat the tail
     for sa, t in zip(scene_analyses, timings):
         text = (sa.text + " " + " ".join(sa.keywords)).lower()
         hits = []
         for sfx, words in SFX_KEYWORDS.items():
-            if any(w in text for w in words):
+            if any(_kw_hit(text, w) for w in words):
                 hits.append(sfx)
-        for sfx in hits[:max_per_scene]:
+        fresh = [h for h in hits if h not in recent] or hits
+        chosen = rng.sample(fresh, min(max_per_scene, len(fresh)))
+        for sfx in chosen:
             at = t["start"] + min(0.4, (t["end"] - t["start"]) * 0.2)
             events.append({"time": round(at, 3), "sfx": sfx, "gain_db": -10})
+        recent = (recent + chosen)[-3:]
+    return events
+
+
+# Map a caption template's effective entrance/animation to a subtle
+# UI-style sound, CapCut-style: the sound matches how the caption moves.
+_ANIM_SFX = {
+    # anim -> (sfx, gain_db)
+    "popin": ("pop", -18), "pop12": ("pop", -18), "pop106": ("pop", -18),
+    "pop_soft": ("pop", -20), "bounce_single": ("pop", -17),
+    "slamin": ("punch", -14), "negrow": ("punch", -15),
+    "flip": ("swoosh", -18),
+}
+_ENTRANCE_SFX = {
+    "bouncein": ("pop", -18),
+    "slideleft": ("swoosh", -19), "slideup": ("swoosh", -19),
+    "rise300": ("swoosh", -20),
+    # fade*/none: silence — a sound on every faded line gets annoying.
+}
+
+
+def _caption_chunk_sfx(template, chunk_index=0):
+    """Pick the micro-SFX for one caption chunk from the template's
+    effective motion (motion overrides already merged by compose_template)."""
+    if not isinstance(template, dict):
+        return None
+    comp = template.get("composed_from")
+    motion_id = comp[2] if comp else "motion_default"
+    motion_sfx = {
+        "motion_bounce": ("pop", -17),
+        "motion_negrow": ("punch", -15),
+        "motion_flip3d": ("swoosh", -18),
+        "motion_typewriter": ("tick", -20),
+        # karaoke sweep is smooth — no per-chunk tick.
+    }
+    if motion_id in motion_sfx:
+        return motion_sfx[motion_id]
+    anim = template.get("anim", "none")
+    if anim in _ANIM_SFX:
+        return _ANIM_SFX[anim]
+    entrances = template.get("entrance_cycle") or [template.get("entrance", "none")]
+    entrance = entrances[chunk_index % len(entrances)]
+    return _ENTRANCE_SFX.get(entrance)
+
+
+def place_caption_sfx(sentence_timings, template, max_events=60,
+                      min_gap=1.2):
+    """Subtle per-chunk sounds synced to caption entrances (CapCut-style).
+
+    One quiet pop/tick/swoosh where each caption chunk appears, matched to
+    its animation. Never a machine gun: events are spaced >= min_gap apart
+    and capped at max_events per video.
+    """
+    events = []
+    last_at = -1e9
+    for i, ch in enumerate(sentence_timings):
+        pick = _caption_chunk_sfx(template, i)
+        if not pick:
+            continue
+        sfx, gain = pick
+        at = float(ch.get("start", 0))
+        if at - last_at < min_gap:
+            continue
+        if len(events) >= max_events:
+            break
+        events.append({"time": round(at, 3), "sfx": sfx, "gain_db": gain})
+        last_at = at
     return events
 
 

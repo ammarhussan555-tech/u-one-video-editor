@@ -400,22 +400,36 @@ class CaptionComposerDialog(QDialog):
     def __init__(self, composition=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Compose Caption Style")
-        self.setMinimumSize(640, 520)
+        self.setMinimumSize(920, 640)
         self.composed = None
         self.composition = composition or ("spec_highlight", "preset_classic",
                                            "motion_default", [])
+        self._style_key = "spec_highlight"
 
         lay = QVBoxLayout(self)
 
+        # 1. Structural style as CapCut-style visual cards (same look as
+        # the caption gallery), not a plain text list.
         lay.addWidget(QLabel("<b>1. Structural style</b> (layout + timing)"))
-        self.style_list = QListWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        grid_host = QWidget()
+        grid = QGridLayout(grid_host)
+        grid.setSpacing(8)
+        self._style_cards = {}
+        cols = 4
+        ci = 0
         for key in self.SPEC_ORDER:
             tmpl = CAPTION_TEMPLATES.get(key)
             if not tmpl:
                 continue
-            QListWidgetItem("%s - %s" % (tmpl["label"], tmpl.get("desc", "")),
-                            self.style_list).setData(Qt.UserRole, key)
-        lay.addWidget(self.style_list, 2)
+            card = _TemplateCard(key, tmpl["label"])
+            card.clicked.connect(self._on_style_card)
+            grid.addWidget(card, ci // cols, ci % cols)
+            self._style_cards[key] = card
+            ci += 1
+        scroll.setWidget(grid_host)
+        lay.addWidget(scroll, 2)
 
         lay.addWidget(QLabel("<b>2. Visual preset</b> (look override)"))
         self.preset_list = QListWidget()
@@ -442,7 +456,7 @@ class CaptionComposerDialog(QDialog):
         self.result_lbl.setWordWrap(True)
         lay.addWidget(self.result_lbl)
 
-        for lst in (self.style_list, self.preset_list, self.motion_list):
+        for lst in (self.preset_list, self.motion_list):
             lst.itemSelectionChanged.connect(self._refresh_result)
 
         self._preselect()
@@ -460,6 +474,12 @@ class CaptionComposerDialog(QDialog):
         lay.addLayout(btns)
         self.setStyleSheet("QDialog{background:#141416;}")
 
+    def _on_style_card(self, key: str):
+        self._style_key = key
+        for k, card in self._style_cards.items():
+            card.set_selected(k == key)
+        self._refresh_result()
+
     def _select_key(self, lst: QListWidget, key: str):
         for i in range(lst.count()):
             if lst.item(i).data(Qt.UserRole) == key:
@@ -469,7 +489,8 @@ class CaptionComposerDialog(QDialog):
 
     def _preselect(self):
         style, preset, motion, kw = self.composition
-        self._select_key(self.style_list, style)
+        self._on_style_card(style if style in self._style_cards
+                            else "spec_highlight")
         self._select_key(self.preset_list, preset)
         self._select_key(self.motion_list, motion)
         self.kw_edit.setText(", ".join(kw))
@@ -479,7 +500,7 @@ class CaptionComposerDialog(QDialog):
             it = lst.currentItem()
             return it.data(Qt.UserRole) if it else None
         kw = [k.strip() for k in self.kw_edit.text().split(",") if k.strip()]
-        return (_key(self.style_list) or "spec_highlight",
+        return (self._style_key or "spec_highlight",
                 _key(self.preset_list) or "preset_classic",
                 _key(self.motion_list) or "motion_default", kw)
 

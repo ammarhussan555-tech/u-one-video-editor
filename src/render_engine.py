@@ -29,6 +29,7 @@ from typing import Callable, Dict, List, Optional
 from . import cache_manager
 from . import secure_store
 from .audio_mixer import (ensure_sfx_library, mix_audio, place_sfx,
+                           place_caption_sfx,
                           select_music, synth_ambient_bed)
 from .error_recovery import RenderCancelled, UOneError, ValidationError
 from .export_engine import ExportEngine
@@ -43,7 +44,8 @@ from .script_engine import (analyze_script, analyze_sentence,
                             build_search_query, detect_scenes)
 from .settings import Settings
 from .temp_manager import TempManager, ensure_free_space
-from .text_engine import build_ass, build_srt, make_overlay_text
+from .text_engine import (build_ass, build_srt, make_overlay_text,
+                          headline_preset_for)
 from .timeline_engine import Timeline
 from .voiceover import audio_duration, get_sentence_timings, synthesize_speech
 
@@ -560,11 +562,16 @@ class RenderEngine:
                             "scene_id": r.spec.scene_id},
                    locked=sc.locked if sc else False)
             if S.get("text_overlays", "auto") == "auto" and sc:
-                ov = make_overlay_text(analyze_sentence(sc.text))
+                sa = analyze_sentence(sc.text)
+                ov = make_overlay_text(sa)
                 if ov:
+                    hl = headline_preset_for(
+                        sc.text, S.get("headline_style", "auto"))
                     tl.add("text", t["start"] + 0.3,
                            min(t["end"], t["start"] + 3.2), kind="text",
-                           label=ov, payload={"scene_id": sc.id},
+                           label=ov, payload={"scene_id": sc.id,
+                                             "style": hl,
+                                             "keywords": list(sa.keywords)},
                            locked=sc.locked)
         self.timeline = tl
 
@@ -574,7 +581,9 @@ class RenderEngine:
             return
         srt = os.path.join(self.audio_dir, "captions.srt")
         ass = os.path.join(self.audio_dir, "captions.ass")
-        overlays = [{"text": c.label, "start": c.start, "end": c.end}
+        overlays = [{"text": c.label, "start": c.start, "end": c.end,
+                     "style": c.payload.get("style"),
+                     "keywords": c.payload.get("keywords", [])}
                     for c in self.timeline.by_track("text")]
         build_srt(self.sentence_timings, srt)
         build_ass(self.sentence_timings, self.word_timings, ass,
@@ -592,7 +601,19 @@ class RenderEngine:
         sfx_lib = ensure_sfx_library(os.path.join(self.assets_dir, "sfx"))
         self.sfx_library = sfx_lib
         sas = [analyze_sentence(sc.text) for sc in self.scenes]
-        events = place_sfx(sas, self.scene_timings)
+        # Seed from the content so different videos get different SFX
+        # variety, while the same project stays reproducible.
+        seed = abs(hash(" ".join(sc.text for sc in self.scenes))) % (2 ** 31)
+        events = place_sfx(sas, self.scene_timings, seed=seed)
+        # CapCut-style: a subtle sound under each animated caption chunk,
+        # matched to its entrance animation (pop/tick/swoosh/punch).
+        if S.get("captions_enabled", True):
+            tmpl = S.get("caption_template")
+            if isinstance(tmpl, str):
+                from .text_captions import CAPTION_TEMPLATES
+                tmpl = CAPTION_TEMPLATES.get(tmpl, {})
+            events += place_caption_sfx(self.sentence_timings, tmpl or {})
+            events.sort(key=lambda e: e["time"])
         for ev in events:
             lib = sfx_lib[ev["sfx"]]
             d = audio_duration(lib) or 1.0
@@ -717,10 +738,15 @@ class RenderEngine:
         sc = self._scene(scene_id)
         if not sc or getattr(sc, "locked", False) or not self.timeline:
             return
-        ov = make_overlay_text(analyze_sentence(sc.text))
+        sa = analyze_sentence(sc.text)
+        ov = make_overlay_text(sa)
+        hl = headline_preset_for(
+            sc.text, self.settings.get("headline_style", "auto"))
         for c in self.timeline.by_track("text"):
             if c.payload.get("scene_id") == scene_id and not c.locked:
                 c.label = ov
+                c.payload["style"] = hl
+                c.payload["keywords"] = list(sa.keywords)
 
     def regenerate_sfx(self, scene_id):
         sc = self._scene(scene_id)
