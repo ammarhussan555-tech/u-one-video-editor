@@ -2132,7 +2132,7 @@ def caption_template_labels():
 
 def headline_preset_labels():
     """Ordered (key, label) pairs for the main-text style dropdown."""
-    return [("auto", "Auto (breaking when urgent)")] + [
+    return [("auto", "Auto (niche style + breaking when urgent)")] + [
         (k, v["label"]) for k, v in HEADLINE_PRESETS.items()]
 
 
