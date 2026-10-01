@@ -305,45 +305,29 @@ def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
     return events
 
 
-# Map a caption template's effective entrance/animation to a subtle
-# UI-style sound, CapCut-style: the sound matches how the caption moves.
-_ANIM_SFX = {
-    # anim -> (sfx, gain_db)
-    "popin": ("pop", -18), "pop12": ("pop", -18), "pop106": ("pop", -18),
-    "pop_soft": ("pop", -20), "bounce_single": ("pop", -17),
-    "slamin": ("punch", -14), "negrow": ("punch", -15),
-    "flip": ("swoosh", -18),
-}
-_ENTRANCE_SFX = {
-    "bouncein": ("pop", -18),
-    "slideleft": ("swoosh", -19), "slideup": ("swoosh", -19),
-    "rise300": ("swoosh", -20),
-    # fade*/none: silence — a sound on every faded line gets annoying.
+# Map a caption style's engine to a subtle UI-style sound,
+# CapCut-style: the sound matches how the caption moves.
+_ENGINE_SFX = {
+    # engine -> (sfx, gain_db)
+    "pop": ("pop", -18),
+    "spring": ("pop", -17),
+    "karaoke": ("tick", -21),
+    "wave": ("swoosh", -20),
+    "highlight_box": ("pop", -19),
+    "underline": ("swoosh", -20),
+    "outline_fill": ("pop", -19),
+    "glow": ("pop", -19),
+    "typewriter": ("tick", -20),
+    "solo": ("punch", -16),
+    # fade: silence - a sound on every faded line gets annoying.
 }
 
 
 def _caption_chunk_sfx(template, chunk_index=0):
-    """Pick the micro-SFX for one caption chunk from the template's
-    effective motion (motion overrides already merged by compose_template)."""
+    """Pick the micro-SFX for one caption chunk from the style's engine."""
     if not isinstance(template, dict):
         return None
-    comp = template.get("composed_from")
-    motion_id = comp[2] if comp else "motion_default"
-    motion_sfx = {
-        "motion_bounce": ("pop", -17),
-        "motion_negrow": ("punch", -15),
-        "motion_flip3d": ("swoosh", -18),
-        "motion_typewriter": ("tick", -20),
-        # karaoke sweep is smooth — no per-chunk tick.
-    }
-    if motion_id in motion_sfx:
-        return motion_sfx[motion_id]
-    anim = template.get("anim", "none")
-    if anim in _ANIM_SFX:
-        return _ANIM_SFX[anim]
-    entrances = template.get("entrance_cycle") or [template.get("entrance", "none")]
-    entrance = entrances[chunk_index % len(entrances)]
-    return _ENTRANCE_SFX.get(entrance)
+    return _ENGINE_SFX.get(template.get("engine"))
 
 
 def place_caption_sfx(sentence_timings, template, max_events=60,

@@ -1036,9 +1036,6 @@ class MainWindow(QMainWindow):
         # Caption template gallery (CapCut-style visual picker)
         from src.text_captions import CAPTION_TEMPLATES, DEFAULT_CAPTION_TEMPLATE
         self._caption_template_key = DEFAULT_CAPTION_TEMPLATE
-        # Spec 6.5 composer: composed dict (style+preset+motion) or None.
-        self._caption_composed = None
-        self._caption_composition = None
         # Interactive caption move/resize (click-drag on the preview):
         # dx/dy are fractions of the preview size (positive dy = down),
         # scale multiplies the caption size. Applied to the render via
@@ -1058,11 +1055,6 @@ class MainWindow(QMainWindow):
         cap_gallery_btn.clicked.connect(self._open_caption_gallery)
         cap_row.addWidget(self.caption_style_lbl, 1)
         cap_row.addWidget(cap_gallery_btn)
-        cap_compose_btn = QPushButton("Compose 8+5+5...")
-        cap_compose_btn.setToolTip(
-            "Compose a caption style: structural style x visual preset x motion.")
-        cap_compose_btn.clicked.connect(self._open_caption_composer)
-        cap_row.addWidget(cap_compose_btn)
         form.addRow("Caption style:", cap_row)
         mrow = QHBoxLayout()
         self.music_lbl = QLabel("(optional)")
@@ -1438,10 +1430,8 @@ class MainWindow(QMainWindow):
                 self._update_caption_text(self.player.position())
 
     def _active_caption_template(self):
-        """Template for build_ass: composed dict (composer) or gallery key."""
-        return (self._caption_composed
-                if isinstance(self._caption_composed, dict)
-                else self._caption_template_key)
+        """Template key for build_ass (CapCut caption styles)."""
+        return self._caption_template_key
 
     def _caption_template_for_render(self):
         """Render-ready template dict: base style + the user's click-drag
@@ -1451,12 +1441,12 @@ class MainWindow(QMainWindow):
         exactly. The extra keys round-trip through the edit session, so
         post-render Apply keeps the position too.
         """
-        from src.text_captions import CAPTION_TEMPLATES
+        from src.text_captions import CAPTION_TEMPLATES, \
+            DEFAULT_CAPTION_TEMPLATE
         base = self._active_caption_template()
-        t = dict(base) if isinstance(base, dict) else dict(
-            CAPTION_TEMPLATES.get(base) or {})
-        if not isinstance(base, dict):
-            t["template_key"] = base
+        t = dict(CAPTION_TEMPLATES.get(base)
+                 or CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE])
+        t["template_key"] = base
         pos = getattr(self, "_cap_pos", None) or {}
         dx, dy, sc = pos.get("dx", 0.0), pos.get("dy", 0.0), pos.get("scale", 1.0)
         if dx or dy:
@@ -1469,23 +1459,7 @@ class MainWindow(QMainWindow):
     def _active_tmpl_dict(self):
         """Resolved template dict for UI previews/overlays."""
         from src.text_captions import CAPTION_TEMPLATES
-        if isinstance(self._caption_composed, dict):
-            return self._caption_composed
         return CAPTION_TEMPLATES.get(self._caption_template_key) or {}
-
-    def _open_caption_composer(self):
-        """Spec 6.5: compose structural style x preset x motion."""
-        from src.ui.caption_gallery import CaptionComposerDialog
-        dlg = CaptionComposerDialog(self._caption_composition, self)
-        if dlg.exec():
-            self._caption_composition = dlg.composition
-            self._caption_composed = dlg.composed
-            label = dlg.composed.get("label", "")
-            self.caption_style_lbl.setText(label)
-            if hasattr(self, "edit_template_lbl"):
-                self.edit_template_lbl.setText(label)
-            self._log(f"Caption style: {label}")
-            self._refresh_caption_style()
 
     def _open_caption_gallery(self):
         """Open the CapCut-style visual template gallery."""
@@ -1494,9 +1468,6 @@ class MainWindow(QMainWindow):
         dlg = CaptionGalleryDialog(self._caption_template_key, self)
         if dlg.exec():
             self._caption_template_key = dlg.selected_key
-            # Plain gallery pick replaces any composed style.
-            self._caption_composed = None
-            self._caption_composition = None
             label = CAPTION_TEMPLATES[dlg.selected_key]["label"]
             self.caption_style_lbl.setText(label)
             if hasattr(self, "edit_template_lbl"):
@@ -1953,8 +1924,6 @@ class MainWindow(QMainWindow):
             # Sync the main panel controls too.
             if chosen["key"]:
                 self._caption_template_key = chosen["key"]
-                self._caption_composed = None
-                self._caption_composition = None
                 from src.text_captions import CAPTION_TEMPLATES as _CT
                 self.caption_style_lbl.setText(
                     _CT[chosen["key"]]["label"])
@@ -2090,16 +2059,9 @@ class MainWindow(QMainWindow):
         self.edit_template_btn = QPushButton("Choose Style...")
         self.edit_template_btn.setEnabled(False)
         self.edit_template_btn.clicked.connect(self._open_caption_gallery)
-        self.edit_compose_btn = QPushButton("Compose 8+5+5...")
-        self.edit_compose_btn.setEnabled(False)
-        self.edit_compose_btn.setToolTip(
-            "Structural style x visual preset x motion — video banne ke "
-            "baad bhi compose karo.")
-        self.edit_compose_btn.clicked.connect(self._open_caption_composer)
         # CapCut-style: template select karte hi preview mein nazar aaye.
         trow2.addWidget(self.edit_template_lbl, 1)
         trow2.addWidget(self.edit_template_btn)
-        trow2.addWidget(self.edit_compose_btn)
         cap_form.addRow("Template:", trow2)
         size_row = QHBoxLayout()
         self.edit_size_slider = QSlider(Qt.Horizontal)
@@ -2362,8 +2324,6 @@ class MainWindow(QMainWindow):
             "captions_enabled": self.chk_captions.isChecked(),
             "caption_highlight": True, "caption_font_size": 48,
             "caption_template": self._caption_template_for_render(),
-            "caption_composition": list(self._caption_composition)
-            if self._caption_composition else None,
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
             "voice_name": self.voice_combo.currentText(),
@@ -2459,28 +2419,24 @@ class MainWindow(QMainWindow):
                 self._edit_session = session
                 # Sync the editor controls with the render's caption style.
                 from src.text_captions import CAPTION_TEMPLATES as _CT3
+                from src.text_captions import (
+                    migrate_caption_template_id as _mig)
                 tkey = data.get("template") or self._caption_template_key
                 if isinstance(tkey, dict):
-                    # Composed (style+preset+motion) style restored from session.
-                    self._caption_composed = tkey
-                    comp = tkey.get("composed_from")
-                    self._caption_composition = (
-                        (comp[0], comp[1], comp[2], tkey.get("keywords", []))
-                        if comp else None)
-                    if tkey.get("template_key"):
-                        self._caption_template_key = tkey["template_key"]
-                    # Restore the click-drag move/resize state too.
+                    # Legacy composed dict: restore its key + move state.
+                    inner = tkey.get("template_key")
+                    self._caption_template_key = (
+                        _mig(inner) if inner
+                        else _mig(self._caption_template_key))
                     self._cap_pos = {
                         "dx": float(tkey.get("dx_frac", 0.0)),
                         "dy": float(tkey.get("dy_frac", 0.0)),
                         "scale": float(tkey.get("user_scale", 1.0)),
                     }
-                    label = tkey.get("label", "")
                 else:
-                    self._caption_template_key = tkey
-                    self._caption_composed = None
-                    self._caption_composition = None
-                    label = _CT3.get(tkey, {}).get("label", tkey)
+                    self._caption_template_key = _mig(tkey)
+                label = _CT3.get(self._caption_template_key, {}).get(
+                    "label", self._caption_template_key)
                 self.caption_style_lbl.setText(label)
                 self.edit_template_lbl.setText(label)
                 self.edit_size_slider.setValue(int(data.get("font_size", 48)))

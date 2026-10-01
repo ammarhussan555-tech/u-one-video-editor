@@ -381,7 +381,7 @@ class RenderEngine:
                 fmt=S.get("output_format", "16:9"),
                 res=S.get("output_resolution", "1080p"),
                 fps=S.fps,
-                template=S.get("caption_template", "spec_highlight"),
+                template=S.get("caption_template", "karaoke_pop"),
                 font_size=S.get("caption_font_size", 48),
                 output_video=out)
             self._edit_session_path = session_path
