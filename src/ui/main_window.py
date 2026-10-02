@@ -1298,16 +1298,32 @@ class MainWindow(QMainWindow):
         return "#FFFFFF"
 
     def _caption_overlay_style(self) -> str:
-        """Build QLabel QSS from the selected template + size (instant)."""
+        """Build QLabel QSS from the selected template + size (instant).
+
+        Understands the 120-preset schema-2 fields (bold as bool,
+        background: box/bar/pill_line/none + bg_opacity). The old keys
+        (bold == -1, box/back_c) are still honored for legacy templates.
+        """
         tmpl = self._active_tmpl_dict()
         size = self.edit_size_slider.value()
         primary = self._ass_to_css(tmpl.get("primary", "&H00FFFFFF"))
         bg = ""
-        if tmpl.get("box"):
-            back = self._ass_to_css(tmpl.get("back_c", "&HC8000000"))
+        _bgkind = tmpl.get("background", "none")
+        if _bgkind in ("box", "bar", "pill_line") or tmpl.get("box"):
+            if tmpl.get("back_c"):
+                back = self._ass_to_css(tmpl["back_c"])
+            else:
+                # Same derivation as build_ass: BackColour from bg_opacity.
+                try:
+                    _op = float(tmpl.get("bg_opacity", 0.85))
+                except (TypeError, ValueError):
+                    _op = 0.85
+                back = self._ass_to_css(
+                    "&H%02X000000" % int(round(255 * (1 - _op))))
             bg = (f"background-color: {back}; padding: 6px 14px; "
                   f"border-radius: 8px;")
-        bold = "bold" if tmpl.get("bold") == -1 else "normal"
+        _b = tmpl.get("bold", False)
+        bold = "bold" if (_b is True or _b == -1) else "normal"
         italic = "italic" if tmpl.get("italic") else "normal"
         font = tmpl.get("font", "Arial")
         user_scale = float(getattr(self, "_cap_pos", {}).get("scale", 1.0))
@@ -1530,7 +1546,10 @@ class MainWindow(QMainWindow):
             ov.setText("")
             return
         # Karaoke: highlight the word being spoken right now.
-        html = cur["text"]
+        tmpl_tc = self._active_tmpl_dict()
+        _upper = (tmpl_tc.get("text_case") or "").lower() == "upper"
+        disp_text = cur["text"].upper() if _upper else cur["text"]
+        html = disp_text
         words = getattr(self, "_cap_words", None) or []
         cur_word = None
         for w in words:
@@ -1538,6 +1557,8 @@ class MainWindow(QMainWindow):
                 cur_word = w["word"]
                 break
         if cur_word:
+            if _upper:
+                cur_word = cur_word.upper()
             tmpl = self._active_tmpl_dict()
             hl = self._ass_to_css(tmpl.get("secondary", "&H0000D7FF"))
             # Highlight first occurrence of the current word.
@@ -1545,7 +1566,7 @@ class MainWindow(QMainWindow):
             html = _re.sub(
                 _re.escape(cur_word),
                 f'<span style="color:{hl};">{cur_word}</span>',
-                cur["text"], count=1)
+                disp_text, count=1)
         ov.setText(f"<div style='text-align:center;'>{html}</div>")
 
     # -- preview playback controls --
@@ -1919,11 +1940,16 @@ class MainWindow(QMainWindow):
         from src.text_captions import CAPTION_TEMPLATES
         trow = QHBoxLayout()
         trow.addWidget(QLabel("Template:"))
+        # data["template"] may be a composed dict (template_key + move
+        # state) — never use a dict as a dict key (unhashable crash).
+        _tkey = data.get("template")
+        if isinstance(_tkey, dict):
+            _tkey = _tkey.get("template_key")
         tmpl_lbl = QLabel(
-            CAPTION_TEMPLATES.get(data.get("template"), {}).get("label", ""))
+            CAPTION_TEMPLATES.get(_tkey, {}).get("label", ""))
         tmpl_lbl.setStyleSheet("color:#4da3ff;font-weight:bold;")
         tmpl_btn = QPushButton("Choose Style...")
-        chosen = {"key": data.get("template")}
+        chosen = {"key": _tkey}
 
         def _pick():
             from src.ui.caption_gallery import CaptionGalleryDialog

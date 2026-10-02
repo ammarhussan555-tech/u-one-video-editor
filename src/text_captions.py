@@ -1658,6 +1658,21 @@ def _preset_anchor(p, pw, ph):
     return 2, pw / 2.0, float(ph - 60)
 
 
+def _clamp_burn_xy(x, y, pw, ph, cap_size):
+    """Keep burned caption coordinates inside the frame.
+
+    The preview overlay clamps the drag via margins so captions stay
+    visible; the burn must give the same guarantee. A big downward drag
+    used to bake \\pos() coordinates below the frame (e.g. y=1288 on a
+    1080p video) — captions silently vanished after Apply. Margins are
+    chosen so default (un-dragged) anchors are never moved.
+    """
+    mx, my = 60, 60
+    cx = min(max(int(round(x)), mx), pw - mx)
+    cy = min(max(int(round(y)), my), ph - my)
+    return cx, cy
+
+
 def _layout_fs(p, layout, j, n, cap_size):
     """Metric font-size tag for word j (must be identical across layers)."""
     if layout == "two_tone" and n > 1 and j == n - 1:
@@ -2020,8 +2035,7 @@ def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
         if not words_tw:
             return lines
         _al, ax, ay = _preset_anchor(p, pw, ph)
-        ax += dx_px
-        ay += dy_px
+        ax, ay = _clamp_burn_xy(ax + dx_px, ay + dy_px, pw, ph, cap_size)
         lead = p.get("lead_ms", -20) / 1000.0
         floor_s = p.get("floor_ms", 140) / 1000.0
         hold_s = p.get("hold_ms", 200) / 1000.0
@@ -2033,8 +2047,7 @@ def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
     if not words:
         return lines
     _al, ax, ay = _preset_anchor(p, pw, ph)
-    ax += dx_px
-    ay += dy_px
+    ax, ay = _clamp_burn_xy(ax + dx_px, ay + dy_px, pw, ph, cap_size)
     xi, yi = int(round(ax)), int(round(ay))
     lead = p.get("lead_ms", -20) / 1000.0
     floor_s = p.get("floor_ms", 140) / 1000.0
@@ -2226,7 +2239,9 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
             return ""
         if "\\move" in ent_text or "\\pos" in ent_text:
             return ""
-        return "{\\pos(%d,%d)}" % (_ax + dx_px, _ay + dy_px)
+        # Clamp: never bake an off-frame position into the burn.
+        _cx, _cy = _clamp_burn_xy(_ax + dx_px, _ay + dy_px, pw, ph, cap_size)
+        return "{\\pos(%d,%d)}" % (_cx, _cy)
     # BACKGROUND field: the box/bar/pill is drawn from BackColour.
     header = """[Script Info]
 ScriptType: v4.00+
@@ -2292,8 +2307,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if tmpl.get("dual") and secondary_track:
         # secondary anchor: an2 with its own MarginV
         _sec_mv = int(ph * tmpl.get("secondary_cfg", {}).get("margin_v_frac", 0.12))
-        _sec_pos = ("" if (dx_px == 0 and dy_px == 0) else
-                    "{\\pos(%d,%d)}" % (pw // 2 + dx_px, ph - _sec_mv + dy_px))
+        if dx_px == 0 and dy_px == 0:
+            _sec_pos = ""
+        else:
+            _sx, _sy = _clamp_burn_xy(pw // 2 + dx_px, ph - _sec_mv + dy_px,
+                                      pw, ph, cap_size)
+            _sec_pos = "{\\pos(%d,%d)}" % (_sx, _sy)
         for t2 in secondary_track:
             safe2 = sanitize_ass_text(t2["text"])
             lines.append(f"Dialogue: 0,{_ts_ass(t2['start'])},{_ts_ass(t2['end'])},"
