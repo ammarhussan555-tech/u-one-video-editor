@@ -16,575 +16,443 @@ from .ffmpeg_util import sanitize_ass_text
 # See the CAPTION_TEMPLATES block below for per-tool sourcing.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# CAPTION PRESET LIBRARY — 120 data-driven presets (2026-10-02 rebuild).
+#
+# 24 categories x 5 presets. Every preset is PURE DATA with these fields:
+#   FONT:            font, size_scale, bold, italic, text_case, spacing
+#   COLOR:           primary            (normal words)
+#   STROKE:          outline, outline_c  (px + color)
+#   SHADOW:          shadow             (px, 0 = none)
+#   POSITION:        position           (bottom|lower|center|top)
+#   WORD HIGHLIGHT:  highlight          (color|box|pill|underline|wash|glow|
+#                                       dim|outline|none),
+#                    active_color, on_highlight_text
+#   ACTIVE WORD ANIMATION:
+#                    active_anim        (pop|spring|stomp|fade|rise|fall|wipe|
+#                                       jitter|rotate|glowpulse|throb|
+#                                       typewriter|slide|sweep|wave|none),
+#                    anim_peak, anim_frm (0=auto), anim_up_ms, anim_total_ms,
+#                    anim_y, anim_amp
+#   WORD TIMING:     lead_ms, floor_ms, hold_ms
+#   LINE BREAK:      max_words
+#   BACKGROUND:      background         (none|box|bar|pill_line), bg_opacity
+#   EMOJI:           emoji              ("" = none; else decorates active word)
+#   ENTRY:           entry              (pop|fade|slide_up|none), entry_ms
+#   EXIT:            exit               (fade|none), exit_ms
+#   LAYOUT:          layout             (standard|two_tone|headline)
+#
+# Concepts are inspired by popular tools (CapCut's large preset library,
+# Submagic's dynamic word highlighting, Captions.ai's creator styles, Opus
+# Clip's automatic emphasis, VEED's caption style presets, VN's
+# word-by-word animation, InShot/ZapCap/Clipchamp/Canva/Adobe Express
+# preset approaches) — but every preset is an ORIGINAL recreation. No
+# proprietary templates, keyframes, or assets are copied. Every preset
+# carries meta {"source": "visual_recreation"}.
+#
+# RENDERER LAW (user-mandated): the renderer in this module is a PURE
+# function of these fields. It must never invent animations, effects,
+# emojis, SFX, colors, or movements not present in the selected preset.
+# Only the currently spoken word (from word-level audio timestamps)
+# receives the preset's active-word animation; previous words revert to
+# normal automatically because each active-word overlay event is
+# independent of the others.
+# ---------------------------------------------------------------------------
+
 _VR_META = {"source": "visual_recreation"}
 
-# ---------------------------------------------------------------------------
-# Caption styles grounded in REAL popular auto-caption tools (2026-10-02).
-#
-# Research: ~/workspace/research/popular_tools_captions.md
-#   Submagic   — Hormozi 1 / Beast / Minimal / Karaoke / Neon / Gradient
-#                (style names from Submagic skill docs + reviews)
-#   Captions.ai — Box Highlight (signature "keyword in a colored box"),
-#                Ali (minimal white), Pulse (official template names)
-#   Opus Clip  — Karaoke (lime pill), Beasty, Deep Diver, Pod_P, Mozi,
-#                Popline, Youshaei (+ Glitch/Bounce/Shake engines from
-#                Opus-style clones)
-#   VEED       — Impact Pop, Stomp, Reveal, Float In, Scale In, Drop In,
-#                Rotate & Flip, Colour Highlight (official FAQ engine names)
-#   capite hex pairs (MIT clone): hormozi #FFFFFF/#00FFFF,
-#                mrbeast #FFFF00/#FF6600, podcast-viral lime #A3E635 ...
-#
-# HONESTY: no tool publishes per-style keyframe numbers or exact in-app
-# hex values. Names + documented looks come from the sources above; all
-# ms/scale numbers are visual-recreation targets. Each style dict carries
-# meta {"source": "visual_recreation"} — the UI must never claim these are
-# any tool's exact in-app presets.
-#
-# Every style is a DISTINCT motion/layout/timing config — a color/font-only
-# difference is NOT a style (user boundary). Distinct mechanics:
-#   pop        = scale overshoot (hormozi/beast/impact/pop with different
-#                envelopes, fonts, layouts)
-#   karaoke    = pure color-state sync, no scale
-#   dim        = karaoke-dim: upcoming words grey, active highlighted
-#                (deepdiver, youshaei)
-#   spring     = scale overshoot + vertical spring (bounce)
-#   shake      = rapid small X jitter, no color split (quake)
-#   stomp      = hard slam 135 -> 100%, no overshoot
-#   reveal     = horizontal unfold \fscx30 -> 100 (wipe feel)
-#   float      = gentle rise + fade, no scale
-#   drop       = falls from above with a small bounce
-#   rotate     = rotation wobble + pop
-#   colour     = background color wash fades in, no motion
-#   typewriter = character alpha reveal + cursor
-#   highlight  = marker wash behind the word (kept as 'colour' family)
-#   box_snap   = solid box SNAPS 40 -> 100% in 80ms (captions.ai keyword box)
-#   pill       = pill badge springs 60 -> 115% (lime for Opus Karaoke)
-#   glow       = bord/blur flash (neon)
-#   gradient   = teal -> blue -> violet sweep + pop
-#   fade       = opacity only: minimal / ali / beasty
-#   two_tone   = layout: white setup + lime punchline (mozi)
-#   headline   = layout: big word + small pink line (popline)
-#
-# Rendering model (proven, kept): layer 0 = full phrase card; layer 1 =
-# per-active-word overlay holding the FULL phrase with every other word
-# fully transparent ({\alpha&HFF&}) so libass lays both layers out
-# identically — no fragile word-width measurement. Words center-anchored
-# (\an5). Y-motion uses event-level \move (NOT \t on \pos — libass can't
-# transform \pos). \t() = milliseconds, \k = centiseconds, colors BGR.
-# ---------------------------------------------------------------------------
+# ASS colors, &HAABBGGRR.
+_C_WHITE = "&H00FFFFFF"
+_C_YELLOW = "&H0000E6FF"   # #FFE600
+_C_GOLD = "&H0000D7FF"     # #FFD700
+_C_CYAN = "&H00FFFF00"     # #00FFFF
+_C_GREEN = "&H0066FF00"    # #00FF66
+_C_LIME = "&H0035E6A3"     # #A3E635
+_C_PINK = "&H00882EFF"     # #FF2E88
+_C_ORANGE = "&H000066FF"   # #FF6600
+_C_RED = "&H00303BFF"      # #FF3B30
+_C_PURPLE = "&H00F755A8"   # #A855F7
+_C_TEAL = "&H00FFD400"     # #00D4FF
+_C_BLUE = "&H00F8BD38"     # #38BDF8
+_C_CREAM = "&H00EBFBFF"    # #FFFBEB
+_C_GREY = "&H00808080"
+_C_BLACK = "&H00000000"
+_C_DIM_UPCOMING = "&H00A0A0A0"
 
-CAPTION_TEMPLATES = {
-    # ================= SUBMAGIC =================
-    # -- Hormozi 1 (DEFAULT): Montserrat Black, ALL CAPS, white + yellow
-    #    highlight, thick black stroke, 4-6 words / 2 lines, pop on active
-    'submagic_hormozi': {
-        'id': 'submagic_hormozi', 'label': 'Submagic Hormozi',
-        'category': 'Submagic',
-        'desc': 'Submagic Hormozi 1 — heavy caps, spoken word pops YELLOW',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        'pop': {'frm': 80, 'peak': 125, 'up_ms': 80, 'total_ms': 140},
-        'meta': _VR_META,
-    },
-    # -- Beast: Komika-style heavy cartoon caps, yellow base / orange
-    #    active, big pop (font mapped to bundled Bangers)
-    'submagic_beast': {
-        'id': 'submagic_beast', 'label': 'Submagic Beast',
-        'category': 'Submagic',
-        'desc': 'MrBeast energy — huge cartoon caps, spoken word pops ORANGE',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
-        'font': 'Bangers', 'size_scale': 1.15,
-        'primary': '&H0000D7FF', 'secondary': '&H000066FF',  # #FFD700/#FF6600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 6, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 200,
-        'pop': {'frm': 70, 'peak': 135, 'up_ms': 90, 'total_ms': 180},
-        'meta': _VR_META,
-    },
-    # -- Karaoke: pure color-state sync, no scale (Submagic Karaoke)
-    'submagic_karaoke': {
-        'id': 'submagic_karaoke', 'label': 'Submagic Karaoke',
-        'category': 'Submagic',
-        'desc': 'Full phrase on screen; spoken word glows gold — no motion',
-        'engine': 'karaoke', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',  # #FFD700
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': -10, 'floor_ms': 140, 'hold_ms': 150,
-        'pulse': {'peak': 100, 'up_ms': 60, 'total_ms': 120},
-        'meta': _VR_META,
-    },
-    # -- Neon: cyan glow pulse on the active word
-    'submagic_neon': {
-        'id': 'submagic_neon', 'label': 'Submagic Neon',
-        'category': 'Submagic',
-        'desc': 'White core, CYAN neon glow flashes on the spoken word',
-        'engine': 'glow', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'glow_c': '&H00FFFF00',  # #00FFFF
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
-        'glow': {'up_ms': 80, 'scale_peak': 105, 'decay_ms': 120},
-        'meta': _VR_META,
-    },
-    # -- Gradient: teal -> blue -> violet sweep + pop (capite hex family)
-    'submagic_gradient': {
-        'id': 'submagic_gradient', 'label': 'Submagic Gradient',
-        'category': 'Submagic',
-        'desc': 'Teal to violet color sweep across the spoken word + pop',
-        'engine': 'gradient', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00F5D020',  # teal-ish
-        'grad_mid': '&H00F6823B', 'grad_end': '&H00F65C8B',  # blue->violet
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        'pop': {'frm': 80, 'peak': 120, 'up_ms': 80, 'total_ms': 150},
-        'meta': _VR_META,
-    },
-    # -- Minimal: small clean white lower-third, fade only
-    'submagic_minimal': {
-        'id': 'submagic_minimal', 'label': 'Submagic Minimal',
-        'category': 'Submagic',
-        'desc': 'Small clean white lower-third — calm fade, no pop',
-        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
-        'font': 'Montserrat', 'size_scale': 0.8,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': 0, 'italic': 0, 'outline': 1, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 200, 'hold_ms': 200,
-        'fade': {'in_ms': 150, 'out_ms': 150},
-        'meta': _VR_META,
-    },
-    # ================= CAPTIONS.AI =================
-    # -- Box Highlight: the Captions.ai signature — keyword in a colored
-    #    box that SNAPS in (40 -> 100% in 80ms, no overshoot)
-    'captions_box': {
-        'id': 'captions_box', 'label': 'Captions Box',
-        'category': 'Captions.ai',
-        'desc': 'Captions.ai signature — spoken keyword in a YELLOW box',
-        'engine': 'box_snap', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'box_color': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- Ali: minimal white, thin shadow, calm — sentence case, NO stroke
-    'captions_ali': {
-        'id': 'captions_ali', 'label': 'Captions Ali',
-        'category': 'Captions.ai',
-        'desc': 'Ali Abdaal calm — sentence case, soft shadow, gentle fade',
-        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
-        'font': 'Montserrat', 'size_scale': 0.9,
-        'primary': '&H00FFFBEB', 'secondary': '&H00FFFBEB',  # soft cream
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': 0, 'italic': 0, 'outline': 0, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 220, 'hold_ms': 220,
-        'fade': {'in_ms': 200, 'out_ms': 200},
-        'meta': _VR_META,
-    },
-    # -- Pulse: official Captions.ai template — rhythmic throb
-    'captions_pulse': {
-        'id': 'captions_pulse', 'label': 'Captions Pulse',
-        'category': 'Captions.ai',
-        'desc': 'Spoken word throbs rhythmically while it is spoken',
-        'engine': 'pulse', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 200, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # ================= OPUS CLIP =================
-    # -- Karaoke: Montserrat Black, spoken word in a LIME pill
-    #    (capite podcast-viral #A3E635)
-    'opus_karaoke': {
-        'id': 'opus_karaoke', 'label': 'Opus Karaoke',
-        'category': 'Opus',
-        'desc': 'Opus Karaoke — spoken word springs into a LIME pill',
-        'engine': 'pill', 'layout': 'compact', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'box_color': '&H0035E6A3',  # #A3E635 lime
-        'pill_text': '&H00000000',  # dark text on the lime pill
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- Beasty: quiet literary — tiny serif italic in a dark rounded
-    #    pill around the whole line, gentle fade
-    'opus_beasty': {
-        'id': 'opus_beasty', 'label': 'Opus Beasty',
-        'category': 'Opus',
-        'desc': 'Opus Beasty — quiet serif italic inside a dark pill',
-        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
-        'font': 'Playfair Display', 'size_scale': 0.72,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'outline_c': '&H00000000', 'back_c': '&HB4000000',  # dark pill
-        'bold': 0, 'italic': -1, 'outline': 0, 'shadow': 0,
-        'alignment': 2, 'box': True,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 250, 'hold_ms': 250,
-        'fade': {'in_ms': 250, 'out_ms': 250},
-        'meta': _VR_META,
-    },
-    # -- Deep Diver: Poppins, cream pill line, karaoke-dim — upcoming
-    #    words stay grey, spoken word goes bold cream
-    'opus_deepdiver': {
-        'id': 'opus_deepdiver', 'label': 'Opus Deep Diver',
-        'category': 'Opus',
-        'desc': 'Opus Deep Diver — teleprompter dim, spoken word CREAM',
-        'engine': 'dim', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Poppins', 'size_scale': 0.95,
-        'primary': '&H00FFFFFF', 'secondary': '&H00D6F7FF',  # cream #FFF7D6
-        'dim_c': '&H00808080',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- Pod P: Anton, HOT-PINK caps on dark, punchy pop
-    'opus_podp': {
-        'id': 'opus_podp', 'label': 'Opus Pod P',
-        'category': 'Opus',
-        'desc': 'Opus Pod P — hot-pink caps on dark, punchy pop',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
-        'font': 'Anton', 'size_scale': 1.05,
-        'primary': '&H00882EFF', 'secondary': '&H00FFFFFF',  # #FF2E88
-        'outline_c': '&H00000000', 'back_c': '&HB4000000',
-        'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': True,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        'pop': {'frm': 75, 'peak': 122, 'up_ms': 70, 'total_ms': 140},
-        'meta': _VR_META,
-    },
-    # -- Mozi: two-color stacked punchline — white setup, LIME punchline
-    #    (Teko mapped to bundled Anton)
-    'opus_mozi': {
-        'id': 'opus_mozi', 'label': 'Opus Mozi',
-        'category': 'Opus',
-        'desc': 'Opus Mozi — white setup, LIME punchline, two-tone stack',
-        'engine': 'pop', 'layout': 'two_tone', 'max_words': 5,
-        'font': 'Anton', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # active yellow
-        'accent': '&H0035E6A3',  # #A3E635 lime punchline
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': 0, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        'pop': {'frm': 80, 'peak': 120, 'up_ms': 70, 'total_ms': 140},
-        'meta': _VR_META,
-    },
-    # -- Popline: two-size headline — BIG white word + small pink line
-    #    (Bebas Neue)
-    'opus_popline': {
-        'id': 'opus_popline', 'label': 'Opus Popline',
-        'category': 'Opus',
-        'desc': 'Opus Popline — big white word, small pink line under',
-        'engine': 'pop', 'layout': 'headline', 'max_words': 5,
-        'font': 'Bebas Neue', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'accent': '&H00882EFF',  # #FF2E88 pink line
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        'pop': {'frm': 80, 'peak': 120, 'up_ms': 70, 'total_ms': 140},
-        'meta': _VR_META,
-    },
-    # -- Youshaei: Montserrat Black, TEAL current word + dim grey upcoming
-    'opus_youshaei': {
-        'id': 'opus_youshaei', 'label': 'Opus Youshaei',
-        'category': 'Opus',
-        'desc': 'Opus Youshaei — spoken word TEAL, rest dimmed grey',
-        'engine': 'dim', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFD400',  # #00D4FF teal
-        'dim_c': '&H00808080',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- Glitch Infinite: RGB-split jitter on the spoken word
-    'opus_glitch': {
-        'id': 'opus_glitch', 'label': 'Opus Glitch',
-        'category': 'Opus',
-        'desc': 'Opus Glitch Infinite — RGB-split jitter on the word',
-        'engine': 'glitch', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 160, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- Seamless Bounce: springy bounce on the spoken word
-    'opus_bounce': {
-        'id': 'opus_bounce', 'label': 'Opus Bounce',
-        'category': 'Opus',
-        'desc': 'Opus Seamless Bounce — word springs up and settles',
-        'engine': 'spring', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -25, 'floor_ms': 160, 'hold_ms': 150,
-        'spring': {'scales': [70, 118, 94, 100], 'ys': [18, -6, 2, 0],
-                   'total_ms': 240},
-        'meta': _VR_META,
-    },
-    # -- Baby Earthquake: the spoken word shakes
-    'opus_quake': {
-        'id': 'opus_quake', 'label': 'Opus Quake',
-        'category': 'Opus',
-        'desc': 'Opus Baby Earthquake — spoken word shakes hard',
-        'engine': 'shake', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 180, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # ================= VEED =================
-    # -- Impact Pop: grows from nothing — 0 -> 115 -> 100%
-    'veed_impact': {
-        'id': 'veed_impact', 'label': 'VEED Impact Pop',
-        'category': 'VEED',
-        'desc': 'VEED Impact Pop — word bursts from zero size',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 180,
-        'pop': {'frm': 0, 'peak': 115, 'up_ms': 100, 'total_ms': 180},
-        'meta': _VR_META,
-    },
-    # -- Stomp: hard slam 135 -> 100%, no overshoot
-    'veed_stomp': {
-        'id': 'veed_stomp', 'label': 'VEED Stomp',
-        'category': 'VEED',
-        'desc': 'VEED Stomp — word slams down hard, no bounce',
-        'engine': 'stomp', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- Reveal: horizontal unfold — \fscx 30 -> 100 (wipe feel)
-    'veed_reveal': {
-        'id': 'veed_reveal', 'label': 'VEED Reveal',
-        'category': 'VEED',
-        'desc': 'VEED Reveal — word wipes open left to right',
-        'engine': 'reveal', 'layout': 'compact', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 150, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- Float In: gentle rise + fade, no scale
-    'veed_float': {
-        'id': 'veed_float', 'label': 'VEED Float In',
-        'category': 'VEED',
-        'desc': 'VEED Float In — word drifts up gently and fades in',
-        'engine': 'float', 'layout': 'compact', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -30, 'floor_ms': 200, 'hold_ms': 200,
-        'meta': _VR_META,
-    },
-    # -- Scale In: smooth grow 55 -> 100%, no overshoot
-    'veed_scale': {
-        'id': 'veed_scale', 'label': 'VEED Scale In',
-        'category': 'VEED',
-        'desc': 'VEED Scale In — smooth grow, no overshoot',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 160, 'hold_ms': 180,
-        'pop': {'frm': 55, 'peak': 100, 'up_ms': 150, 'total_ms': 150},
-        'meta': _VR_META,
-    },
-    # -- Drop In: falls from above with a small bounce
-    'veed_drop': {
-        'id': 'veed_drop', 'label': 'VEED Drop In',
-        'category': 'VEED',
-        'desc': 'VEED Drop In — word drops from above, tiny bounce',
-        'engine': 'drop', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -25, 'floor_ms': 160, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- Rotate & Flip: rotation wobble + pop
-    'veed_rotate': {
-        'id': 'veed_rotate', 'label': 'VEED Rotate & Flip',
-        'category': 'VEED',
-        'desc': 'VEED Rotate & Flip — word spins in with a pop',
-        'engine': 'rotate', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 160, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- Colour Highlight: background wash fades in behind the word —
-    #    no motion at all (the color IS the style)
-    'veed_colour': {
-        'id': 'veed_colour', 'label': 'VEED Colour Highlight',
-        'category': 'VEED',
-        'desc': 'VEED Colour Highlight — purple wash fades in, no motion',
-        'engine': 'colour', 'layout': 'compact', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'wash_c': '&H00ED3A7C',  # #7C3AED purple
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # ================= UNIVERSAL =================
-    # -- Typewriter: character reveal + block cursor (kept universal)
-    'typewriter': {
-        'id': 'typewriter', 'label': 'Typewriter',
-        'category': 'Universal',
-        'desc': 'Characters type in with a blinking block cursor',
-        'engine': 'typewriter', 'layout': 'phrase', 'max_words': 8,
-        'font': 'Courier Prime', 'size_scale': 0.95,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 120, 'hold_ms': 300,
-        'meta': _VR_META,
-    },
+#: Defaults for every preset field; category bases and variants override.
+_PRESET_DEFAULTS = {
+    "font": "Montserrat", "size_scale": 1.0, "bold": True, "italic": False,
+    "text_case": "upper", "spacing": 0,
+    "primary": _C_WHITE,
+    "outline": 3, "outline_c": _C_BLACK,
+    "shadow": 1,
+    "position": "bottom",
+    "highlight": "color", "active_color": _C_YELLOW,
+    "on_highlight_text": _C_BLACK,
+    "active_anim": "pop", "anim_peak": 120, "anim_frm": 0,
+    "anim_up_ms": 80, "anim_total_ms": 160, "anim_y": 0, "anim_amp": 4,
+    "lead_ms": -20, "floor_ms": 140, "hold_ms": 200,
+    "max_words": 4,
+    "background": "none", "bg_opacity": 0.85,
+    "emoji": "",
+    "entry": "pop", "entry_ms": 180,
+    "exit": "fade", "exit_ms": 120,
+    "layout": "standard",
+    "preset_schema": 2,
 }
 
-CAPTION_TEMPLATE_CATEGORIES = ['Submagic', 'Captions.ai', 'Opus', 'VEED', 'Universal']
+# (slug, label, concept, base overrides, [5 variant override dicts]).
+# Every variant differs from its base in at least 3 fields.
+_CATEGORY_DEFS = [
+    ("classic", "Classic", "CapCut/Clipchamp clean caption presets",
+     {"text_case": "title", "outline": 2, "shadow": 1, "highlight": "color",
+      "active_anim": "none", "entry": "fade", "entry_ms": 200},
+     [
+         {"active_color": _C_YELLOW},
+         {"active_color": _C_CYAN, "position": "lower"},
+         {"active_color": _C_GREEN, "text_case": "upper", "entry": "pop",
+          "entry_ms": 150},
+         {"active_color": _C_ORANGE, "font": "Poppins", "size_scale": 0.95},
+         {"active_color": _C_PINK, "outline": 3, "position": "lower",
+          "size_scale": 1.05},
+     ]),
+    ("bold", "Bold", "heavy broadcast weight",
+     {"outline": 5, "size_scale": 1.15, "active_anim": "pop",
+      "anim_peak": 130, "shadow": 2},
+     [
+         {"font": "Anton", "active_color": _C_YELLOW},
+         {"font": "Montserrat", "active_color": _C_ORANGE,
+          "active_anim": "stomp", "anim_peak": 135},
+         {"font": "Bebas Neue", "active_color": _C_CYAN,
+          "active_anim": "spring", "anim_y": 20},
+         {"font": "Bangers", "active_color": _C_LIME, "position": "lower"},
+         {"font": "Anton", "active_color": _C_PINK, "background": "box",
+          "bg_opacity": 0.9},
+     ]),
+    ("dynamic", "Dynamic", "Submagic-style dynamic word highlighting",
+     {"active_anim": "pop", "anim_peak": 125, "max_words": 4,
+      "highlight": "color"},
+     [
+         {"active_color": _C_YELLOW, "font": "Montserrat"},
+         {"active_color": _C_GREEN, "active_anim": "spring", "anim_y": 16},
+         {"active_color": _C_CYAN, "anim_peak": 130, "position": "lower"},
+         {"active_color": _C_ORANGE, "active_anim": "stomp",
+          "anim_peak": 135},
+         {"active_color": _C_YELLOW, "active_anim": "throb"},
+     ]),
+    ("pop", "Pop", "scale-overshoot punch-ins",
+     {"active_anim": "pop"},
+     [
+         {"active_anim": "pop", "anim_frm": 0, "anim_peak": 115,
+          "anim_up_ms": 100, "active_color": _C_YELLOW},
+         {"font": "Bangers", "anim_frm": 70, "anim_peak": 135,
+          "active_color": _C_ORANGE},
+         {"font": "Anton", "active_color": _C_PINK, "background": "box"},
+         {"anim_frm": 55, "anim_peak": 105, "anim_up_ms": 150,
+          "active_color": _C_CYAN},
+         {"active_anim": "stomp", "anim_peak": 135,
+          "active_color": _C_YELLOW, "font": "Montserrat"},
+     ]),
+    ("bounce", "Bounce", "springy scale + vertical bounce",
+     {"active_anim": "spring", "anim_y": 18, "anim_peak": 118},
+     [
+         {"active_color": _C_YELLOW},
+         {"active_color": _C_GREEN, "anim_peak": 125, "anim_y": 30},
+         {"active_color": _C_CYAN, "anim_peak": 110, "anim_y": 10},
+         {"active_color": _C_YELLOW, "highlight": "box",
+          "on_highlight_text": _C_BLACK},
+         {"active_color": _C_PINK, "position": "lower", "font": "Poppins"},
+     ]),
+    ("karaoke", "Karaoke", "pure word-by-word color sync",
+     {"active_anim": "none", "highlight": "color", "entry": "fade"},
+     [
+         {"active_color": _C_YELLOW},
+         {"highlight": "pill", "active_color": _C_LIME,
+          "on_highlight_text": _C_BLACK},
+         {"highlight": "dim", "active_color": _C_CYAN},
+         {"highlight": "dim", "active_color": _C_TEAL, "font": "Poppins"},
+         {"highlight": "underline", "active_color": _C_YELLOW},
+     ]),
+    ("hormozi", "Hormozi-style", "heavy caps business-creator look",
+     {"font": "Montserrat", "text_case": "upper", "outline": 4,
+      "shadow": 2, "active_anim": "pop", "anim_peak": 120, "max_words": 4},
+     [
+         {"active_color": _C_GREEN},
+         {"active_color": _C_YELLOW, "outline": 5, "anim_peak": 125},
+         {"active_color": _C_CYAN, "active_anim": "spring", "anim_y": 14},
+         {"active_color": _C_ORANGE, "background": "box"},
+         {"active_color": _C_GREEN, "size_scale": 1.1, "position": "lower"},
+     ]),
+    ("highlight", "Highlight", "marker / box / pill / underline treatments",
+     {"highlight": "box"},
+     [
+         {"highlight": "box", "active_color": _C_YELLOW,
+          "on_highlight_text": _C_BLACK, "active_anim": "pop",
+          "anim_peak": 110},
+         {"highlight": "pill", "active_color": _C_YELLOW,
+          "on_highlight_text": _C_BLACK, "active_anim": "pop"},
+         {"highlight": "wash", "active_color": _C_PURPLE,
+          "active_anim": "fade"},
+         {"highlight": "underline", "active_color": _C_YELLOW,
+          "active_anim": "none"},
+         {"highlight": "box", "active_color": _C_ORANGE,
+          "on_highlight_text": _C_WHITE, "active_anim": "stomp"},
+     ]),
+    ("wordbyword", "Word-by-word", "VN-style compact word focus",
+     {"max_words": 3, "active_anim": "pop", "anim_peak": 125},
+     [
+         {"active_color": _C_YELLOW},
+         {"max_words": 2, "size_scale": 1.2, "active_color": _C_GREEN},
+         {"active_color": _C_CYAN, "active_anim": "spring", "anim_y": 16},
+         {"max_words": 2, "active_color": _C_PINK, "active_anim": "stomp"},
+         {"active_color": _C_ORANGE, "active_anim": "fade",
+          "font": "Poppins"},
+     ]),
+    ("minimal", "Minimal", "small quiet lower-third",
+     {"size_scale": 0.85, "outline": 1, "shadow": 0, "active_anim": "fade",
+      "entry": "fade", "exit": "fade", "text_case": "title"},
+     [
+         {"active_color": _C_BLUE, "font": "Poppins"},
+         {"active_color": _C_CREAM, "position": "lower"},
+         {"active_color": _C_TEAL, "italic": True},
+         {"highlight": "none", "active_anim": "fade"},
+         {"size_scale": 0.75, "active_color": _C_YELLOW, "outline": 1},
+     ]),
+    ("cinematic", "Cinematic", "slow elegant title cards",
+     {"spacing": 2, "entry": "fade", "entry_ms": 400, "exit": "fade",
+      "exit_ms": 200, "active_anim": "fade", "position": "lower",
+      "text_case": "title"},
+     [
+         {"active_color": _C_WHITE, "highlight": "none"},
+         {"active_color": _C_GOLD, "active_anim": "rise", "anim_y": 20},
+         {"position": "center", "active_color": _C_CREAM},
+         {"active_color": _C_GOLD, "spacing": 4, "size_scale": 1.1},
+         {"active_color": _C_BLUE, "font": "Poppins", "italic": True},
+     ]),
+    ("news", "News", "broadcast lower-third bars",
+     {"background": "bar", "bg_opacity": 0.75, "position": "bottom",
+      "text_case": "upper", "font": "Montserrat"},
+     [
+         {"active_color": _C_WHITE, "highlight": "none",
+          "active_anim": "fade"},
+         {"active_color": _C_YELLOW, "active_anim": "pop", "anim_peak": 112},
+         {"background": "box", "active_color": _C_WHITE,
+          "highlight": "none"},
+         {"position": "lower", "active_color": _C_CYAN,
+          "active_anim": "none"},
+         {"background": "box", "bg_opacity": 0.9, "active_color": _C_WHITE,
+          "highlight": "none", "active_anim": "stomp", "font": "Anton"},
+     ]),
+    ("documentary", "Documentary", "calm explanatory captions",
+     {"font": "Poppins", "text_case": "title", "active_anim": "fade",
+      "entry": "fade", "entry_ms": 300},
+     [
+         {"active_color": _C_WHITE, "highlight": "none"},
+         {"active_color": _C_CREAM, "position": "lower"},
+         {"active_color": _C_BLUE, "highlight": "color"},
+         {"italic": True, "active_color": _C_WHITE, "highlight": "none"},
+         {"background": "bar", "bg_opacity": 0.5, "active_color": _C_CREAM},
+     ]),
+    ("podcast", "Podcast", "casual conversational badges",
+     {"font": "Fredoka", "text_case": "title"},
+     [
+         {"highlight": "pill", "active_color": _C_YELLOW,
+          "on_highlight_text": _C_BLACK, "active_anim": "pop"},
+         {"active_color": _C_CYAN, "active_anim": "spring", "anim_y": 14},
+         {"active_color": _C_GREEN, "position": "lower"},
+         {"background": "pill_line", "active_color": _C_YELLOW},
+         {"font": "Poppins", "active_color": _C_PINK,
+          "active_anim": "fade"},
+     ]),
+    ("social", "Social", "bright playful creator captions",
+     {"font": "Poppins", "active_anim": "pop"},
+     [
+         {"active_anim": "rotate", "active_color": _C_YELLOW},
+         {"emoji": "\U0001F525", "active_color": _C_YELLOW,
+          "anim_peak": 125},
+         {"active_color": _C_PINK, "active_anim": "spring", "anim_y": 18},
+         {"active_color": _C_CYAN, "active_anim": "wipe"},
+         {"active_color": _C_LIME, "active_anim": "jitter"},
+     ]),
+    ("gaming", "Gaming", "aggressive glitch energy",
+     {"font": "Anton", "active_anim": "jitter", "text_case": "upper"},
+     [
+         {"active_color": _C_RED, "highlight": "color"},
+         {"active_anim": "jitter", "anim_amp": 8, "active_color": _C_YELLOW,
+          "font": "Bangers"},
+         {"active_anim": "stomp", "anim_peak": 140,
+          "active_color": _C_ORANGE},
+         {"active_anim": "rotate", "active_color": _C_RED},
+         {"active_anim": "glowpulse", "highlight": "glow",
+          "active_color": _C_RED, "font": "Bangers"},
+     ]),
+    ("meme", "Meme", "impact-style top captions",
+     {"font": "Anton", "position": "top", "outline": 5,
+      "text_case": "upper"},
+     [
+         {"active_color": _C_WHITE, "highlight": "none",
+          "active_anim": "pop"},
+         {"active_color": _C_YELLOW},
+         {"active_color": _C_CYAN, "active_anim": "stomp"},
+         {"font": "Bebas Neue", "active_color": _C_WHITE,
+          "highlight": "none"},
+         {"position": "bottom", "active_color": _C_YELLOW,
+          "active_anim": "pop"},
+     ]),
+    ("neon", "Neon", "neon tube glow",
+     {"highlight": "glow", "active_anim": "glowpulse", "shadow": 0,
+      "outline": 2},
+     [
+         {"active_color": _C_CYAN},
+         {"active_color": _C_PINK},
+         {"active_color": _C_GREEN, "text_case": "upper"},
+         {"active_color": _C_PURPLE, "font": "Poppins"},
+         {"active_color": _C_YELLOW, "active_anim": "pop",
+          "highlight": "glow"},
+     ]),
+    ("threed", "3D", "deep extruded shadow",
+     {"shadow": 4, "outline": 4, "active_anim": "pop"},
+     [
+         {"active_color": _C_WHITE, "highlight": "none"},
+         {"active_color": _C_YELLOW, "shadow": 3, "active_anim": "spring",
+          "anim_y": 16},
+         {"active_color": _C_CYAN, "shadow": 4, "active_anim": "stomp"},
+         {"active_color": _C_ORANGE, "shadow": 3, "font": "Anton"},
+         {"active_color": _C_LIME, "shadow": 4, "position": "lower"},
+     ]),
+    ("glowing", "Glowing", "soft luminous wash",
+     {"highlight": "wash", "active_anim": "fade", "shadow": 0},
+     [
+         {"active_color": _C_YELLOW},
+         {"active_color": _C_CYAN},
+         {"active_color": _C_PINK, "active_anim": "rise", "anim_y": 14},
+         {"active_color": _C_GREEN, "font": "Poppins"},
+         {"active_color": _C_PURPLE, "entry": "fade", "entry_ms": 300},
+     ]),
+    ("typewriter", "Typewriter", "monospace character reveal",
+     {"font": "Courier Prime", "text_case": "none",
+      "active_anim": "typewriter", "highlight": "none", "shadow": 0,
+      "outline": 1},
+     [
+         {"active_color": _C_WHITE},
+         {"active_color": _C_GREEN},
+         {"active_color": _C_YELLOW, "background": "bar",
+          "bg_opacity": 0.8},
+         {"active_color": _C_CYAN},
+         {"active_color": _C_WHITE, "background": "box"},
+     ]),
+    ("animated", "Animated", "playful mixed motion",
+     {},
+     [
+         {"active_anim": "wipe", "active_color": _C_YELLOW},
+         {"active_anim": "rise", "anim_y": 30, "active_color": _C_CYAN},
+         {"active_anim": "fall", "anim_y": 40, "active_color": _C_PINK},
+         {"active_anim": "rotate", "active_color": _C_GREEN},
+         {"active_anim": "slide", "active_color": _C_ORANGE},
+     ]),
+    ("emoji", "Emoji", "emoji-decorated active words",
+     {"active_anim": "pop", "font": "Poppins"},
+     [
+         {"emoji": "\U0001F525", "active_color": _C_YELLOW},
+         {"emoji": "\u2728", "active_color": _C_CYAN,
+          "active_anim": "spring", "anim_y": 14},
+         {"emoji": "\u26A1", "active_color": _C_WHITE,
+          "active_anim": "stomp"},
+         {"emoji": "\U0001F4A1", "active_color": _C_PINK,
+          "font": "Fredoka"},
+         {"emoji": "\U0001F3AF", "active_color": _C_GREEN,
+          "active_anim": "rise", "anim_y": 16},
+     ]),
+    ("advanced", "Advanced", "experimental composites",
+     {},
+     [
+         {"active_anim": "sweep", "active_color": _C_YELLOW},
+         {"highlight": "outline", "active_color": _C_YELLOW,
+          "active_anim": "pop", "anim_peak": 110},
+         {"layout": "two_tone", "active_color": _C_LIME,
+          "active_anim": "pop"},
+         {"layout": "headline", "active_color": _C_PINK,
+          "active_anim": "pop"},
+         {"active_anim": "wave", "active_color": _C_YELLOW},
+     ]),
+]
 
-DEFAULT_CAPTION_TEMPLATE = "submagic_hormozi"
+
+def _build_caption_presets():
+    """Materialize the 120 presets from _CATEGORY_DEFS. Pure data."""
+    out = {}
+    for slug, _label, _concept, base, variants in _CATEGORY_DEFS:
+        for i, over in enumerate(variants, 1):
+            pid = "%s_%02d" % (slug, i)
+            p = dict(_PRESET_DEFAULTS)
+            p.update(base)
+            p.update(over)
+            p["id"] = pid
+            p["label"] = "%s %02d" % (_label, i)
+            p["category"] = _label
+            p["meta"] = _VR_META
+            out[pid] = p
+    return out
+
+
+CAPTION_TEMPLATES = _build_caption_presets()
+
+CAPTION_TEMPLATE_CATEGORIES = [label for _s, label, _c, _b, _v
+                               in _CATEGORY_DEFS]
+
+DEFAULT_CAPTION_TEMPLATE = "dynamic_01"
 
 #: Every retired caption-style id migrates to its closest successor.
-#: The 2026-10-02 23-style CapCut-clone set -> the real-tools set:
 _MIGRATION_MAP = {
-    'karaoke_pop': 'submagic_hormozi',
-    'karaoke': 'submagic_karaoke',
-    'hormozi': 'submagic_hormozi',
-    'beast': 'submagic_beast',
-    'bounce': 'opus_bounce',
-    'spring_up': 'veed_float',
-    'typewriter': 'typewriter',
-    'wave': 'veed_float',
-    'zoom': 'veed_scale',
-    'neon_glow': 'submagic_neon',
-    'highlighter': 'veed_colour',
-    'box_highlight': 'captions_box',
-    'pill': 'opus_karaoke',
-    'caption_bar': 'opus_beasty',
-    'outline_fill': 'submagic_karaoke',
-    'underline_sweep': 'veed_reveal',
-    'glide': 'veed_impact',
-    'solo_pop': 'veed_impact',
-    'minimal_fade': 'submagic_minimal',
-    'gradient_sweep': 'submagic_gradient',
-    'sticker_pop': 'veed_rotate',
-    'glitch': 'opus_glitch',
-    'pulse': 'captions_pulse',
-    'beast_box': 'submagic_beast',
+    # 28-style real-tools set (2026-10-02)
+    "submagic_hormozi": "hormozi_01", "submagic_beast": "hormozi_02",
+    "submagic_karaoke": "karaoke_01", "submagic_neon": "neon_01",
+    "submagic_gradient": "advanced_01", "submagic_minimal": "minimal_01",
+    "captions_box": "highlight_01", "captions_ali": "minimal_02",
+    "captions_pulse": "dynamic_05",
+    "opus_karaoke": "karaoke_02", "opus_beasty": "minimal_03",
+    "opus_deepdiver": "karaoke_03", "opus_podp": "pop_03",
+    "opus_mozi": "advanced_03", "opus_popline": "advanced_04",
+    "opus_youshaei": "karaoke_04", "opus_glitch": "gaming_01",
+    "opus_bounce": "bounce_01", "opus_quake": "gaming_02",
+    "veed_impact": "pop_01", "veed_stomp": "pop_05",
+    "veed_reveal": "animated_01", "veed_float": "animated_02",
+    "veed_scale": "pop_04", "veed_drop": "animated_03",
+    "veed_rotate": "animated_04", "veed_colour": "highlight_03",
+    "typewriter": "typewriter_01",
+    # 23-style CapCut-clone set (2026-10-02)
+    "karaoke_pop": "dynamic_01", "karaoke": "karaoke_01",
+    "hormozi": "hormozi_01", "beast": "hormozi_02",
+    "bounce": "bounce_01", "spring_up": "bounce_02",
+    "wave": "advanced_05", "zoom": "pop_04",
+    "neon_glow": "neon_01", "highlighter": "highlight_04",
+    "box_highlight": "highlight_01", "pill": "karaoke_02",
+    "caption_bar": "news_02", "outline_fill": "advanced_02",
+    "underline_sweep": "karaoke_05", "glide": "animated_05",
+    "solo_pop": "wordbyword_02", "minimal_fade": "minimal_01",
+    "gradient_sweep": "advanced_01", "sticker_pop": "social_01",
+    "glitch": "gaming_01", "pulse": "dynamic_05",
+    "beast_box": "hormozi_02",
+    # 14-style set (2026-10-01) — same ids as the 23-set where they overlap
 }
 
 #: Older retired ids (8 spec_* structural styles, 101 legacy templates,
 #: preset/motion ids) fall back to the default.
 _LEGACY_STYLE_IDS = frozenset({
-    'spec_word_sync', 'spec_highlight', 'spec_impact', 'spec_aesthetic',
-    'spec_minimal', 'spec_dynamic', 'spec_standard', 'spec_dual',
-    'tiktok_classic',
-    'preset_classic', 'preset_glow', 'preset_monoline', 'preset_textbox',
-    'preset_trending', 'motion_default', 'motion_bounce', 'motion_negrow',
-    'motion_flip3d', 'motion_typewriter', 'motion_karaoke',
+    "spec_word_sync", "spec_highlight", "spec_impact", "spec_aesthetic",
+    "spec_minimal", "spec_dynamic", "spec_standard", "spec_dual",
+    "tiktok_classic",
+    "preset_classic", "preset_glow", "preset_monoline", "preset_textbox",
+    "preset_trending", "motion_default", "motion_bounce", "motion_negrow",
+    "motion_flip3d", "motion_typewriter", "motion_karaoke",
 })
 
 
 def migrate_caption_template_id(old_id):
-    """Map any saved/legacy caption-style id to a current style id.
+    """Map any saved/legacy caption-style id to a current preset id.
 
-    Retired 23-style ids map to their closest real-tools successor
-    (_MIGRATION_MAP). Unknown ids fall back to DEFAULT_CAPTION_TEMPLATE.
+    Retired style ids map to their closest successor (_MIGRATION_MAP).
+    Unknown ids fall back to DEFAULT_CAPTION_TEMPLATE.
     """
     if isinstance(old_id, str):
         if old_id in _MIGRATION_MAP:
@@ -595,8 +463,18 @@ def migrate_caption_template_id(old_id):
 
 
 def caption_template_labels():
-    """[(style_id, label)] for the caption-style pickers."""
-    return [(k, CAPTION_TEMPLATES[k]['label']) for k in CAPTION_TEMPLATES]
+    """[(preset_id, label)] for the caption-style pickers."""
+    return [(k, CAPTION_TEMPLATES[k]["label"]) for k in CAPTION_TEMPLATES]
+
+
+def caption_category_labels():
+    """[(category_label, preset_count)] for the gallery category browser."""
+    counts = {}
+    for p in CAPTION_TEMPLATES.values():
+        counts[p["category"]] = counts.get(p["category"], 0) + 1
+    return [(c, counts.get(c, 0)) for c in CAPTION_TEMPLATE_CATEGORIES]
+
+
 # ---------------------------------------------------------------------------
 # MAIN-TEXT ENGINE — Genspark-validated (2026-10-01).
 #
@@ -1739,390 +1617,353 @@ def _norm_cap_words(word_timings, text_case):
     return out
 
 
-def _cap_base_open(tmpl):
-    """Override tags for the base phrase layer (layer 0)."""
-    engine = tmpl.get("engine")
-    if engine == "outline_fill":
-        # hollow: transparent fill, visible outline
-        return "{\\1a&HFF&\\3c%s\\bord%d}" % (tmpl["outline_c"],
-                                             tmpl["outline"])
-    if engine == "fade":
-        # base phrase dimmed so the fading-in word reads as the highlight
-        return "{\\alpha&H99&}"
+# ---------------------------------------------------------------------------
+# DATA-DRIVEN PRESET RENDERER (2026-10-02 rebuild).
+#
+# RENDERER LAW: every function below is a PURE function of the preset
+# fields + word timestamps. No branch invents animations, effects, emojis,
+# colors, or movements that are not in the selected preset.
+#
+# Architecture (proven, kept): layer 0 = full phrase card; layer 1 =
+# per-active-word overlay holding the FULL phrase with every other word
+# fully transparent ({\alpha&HFF&}) so libass lays both layers out
+# identically — no fragile word-width measurement. Words center-anchored
+# (\an5). Y-motion uses event-level \move (NOT \t on \pos — libass can't
+# transform \pos). \t() = milliseconds, \k = centiseconds, colors BGR.
+#
+# Spoken-word tracking: each overlay event covers exactly one word's
+# active window (word start + lead .. max(word end, start + floor)).
+# Previous words automatically return to normal because every event is
+# independent — only the currently spoken word carries the preset's
+# active-word animation.
+# ---------------------------------------------------------------------------
+
+#: Upcoming-word color for highlight="dim" (karaoke-dim concept).
+_DIM_UPCOMING = "&H00A0A0A0"
+
+#: Gradient sweep stops for active_anim="sweep" (teal -> blue -> violet).
+_SWEEP_MID = "&H00F6823B"
+_SWEEP_END = "&H00F65C8B"
+
+
+def _preset_anchor(p, pw, ph):
+    """(alignment, ax, ay) from the preset POSITION field. Deterministic."""
+    pos = p.get("position", "bottom")
+    if pos == "top":
+        return 8, pw / 2.0, 60.0
+    if pos == "center":
+        return 5, pw / 2.0, ph / 2.0
+    if pos == "lower":
+        return 2, pw / 2.0, float(ph - int(ph * 0.16))
+    return 2, pw / 2.0, float(ph - 60)
+
+
+def _layout_fs(p, layout, j, n, cap_size):
+    """Metric font-size tag for word j (must be identical across layers)."""
+    if layout == "two_tone" and n > 1 and j == n - 1:
+        return "\\fs%d" % int(cap_size * 1.25)
+    if layout == "headline" and n > 1:
+        return "\\fs%d" % (int(cap_size * 1.6) if j == 0
+                           else int(cap_size * 0.7))
     return ""
 
 
-def _base_phrase(tmpl, disp, cap_size):
-    """Visible base-layer phrase with the style's layout (mirrors the
-    overlay's per-word structure so libass aligns both layers exactly)."""
-    layout = tmpl.get("layout") or "compact"
-    accent_c = tmpl.get("accent")
-    n = len(disp)
-    if layout == "two_tone" and accent_c and n > 1:
-        # Mozi: white setup, LIME punchline (bigger)
-        return ("{\\c%s}%s {\\c%s\\fs%d}%s"
-                % (tmpl["primary"], " ".join(disp[:-1]),
-                   accent_c, int(cap_size * 1.25), disp[-1]))
-    if layout == "headline" and accent_c and n > 1:
-        # Popline: BIG first word, small pink line underneath
-        return ("{\\fs%d}%s\\N{\\fs%d\\c%s}%s"
-                % (int(cap_size * 1.6), disp[0],
-                   int(cap_size * 0.7), accent_c, " ".join(disp[1:])))
-    if (tmpl.get("engine") or "pop") == "dim":
-        # Deep Diver / Youshaei: whole line starts dimmed grey
-        return "{\\c%s}%s" % (tmpl.get("dim_c", "&H00808080&"),
-                                " ".join(disp))
-    return " ".join(disp)
+def _em_pair(p, visible):
+    """Emoji decoration pair for a word. Invisible variant keeps metrics
+    identical via transparent placeholders (never invents layout)."""
+    em = p.get("emoji", "")
+    if not em:
+        return "", ""
+    if visible:
+        return em + " ", " " + em
+    return ("{\\alpha&HFF&}%s{\\alpha&H00&} " % em,
+            " {\\alpha&HFF&}%s{\\alpha&H00&}" % em)
 
 
-def _cap_active_events(tmpl, disp, idx, ax, ay, ws, we, cap_size):
-    """Layer-1 overlay events for the active word.
+def _join_chunks(parts):
+    """Join word chunks with spaces, keeping backslash-N line breaks tight."""
+    text = ""
+    for c in parts:
+        if c == "\\N":
+            text = text.rstrip() + "\\N"
+        elif text.endswith("\\N"):
+            text += c
+        else:
+            text += (" " if text else "") + c
+    return text
 
-    Each event holds the FULL phrase with every word except disp[idx]
-    fully transparent, so libass positions the active word exactly over
-    the base layer — no measuring needed. Returns complete
-    "Dialogue: ..." strings.
+
+def _hl_tags(p):
+    """Highlight treatment open-tags for the active word (no braces)."""
+    hl = p.get("highlight", "color")
+    ac = p["active_color"]
+    on = p.get("on_highlight_text", "&H00000000")
+    if hl == "box":
+        return "\\c%s\\3c%s\\bord7" % (on, ac)
+    if hl == "pill":
+        return "\\c%s\\3c%s\\bord8" % (on, ac)
+    if hl == "underline":
+        return "\\c%s\\u1" % ac
+    if hl == "wash":
+        # translucent color wash behind the glyphs. NOTE: no \t here —
+        # libass drops an entire event when two \t transforms share one
+        # override block, and the active word's group already carries the
+        # ACTIVE WORD ANIMATION's \t (see _anim_phases).
+        return ("\\c%s\\3c%s\\bord10\\3a&H40&"
+                % (ac, ac))
+    if hl == "glow":
+        return "\\c%s\\3c%s\\bord4\\blur6" % (ac, ac)
+    if hl in ("color", "dim", "outline"):
+        return "\\c%s" % ac
+    return "\\c%s" % p["primary"]  # highlight == "none"
+
+
+def _anim_phases(p, xi, yi, dur_ms):
+    """ACTIVE WORD ANIMATION as sequential phases: [(delay_ms, tags)].
+
+    RENDERER LAW (libass safety): ffmpeg's libass — the renderer U One
+    burns captions with — silently drops an ENTIRE event when two ``\\t``
+    transforms share one override block (verified empirically). So a
+    multi-stage animation is emitted as sequential Dialogue events, each
+    phase carrying at most ONE ``\\t`` with t1=0. Each phase is still a
+    pure function of the preset's ACTIVE WORD ANIMATION field.
     """
-    engine = tmpl.get("engine") or "pop"
-    layout = tmpl.get("layout") or "compact"
-    active_c = tmpl["secondary"]
-    dim_c = tmpl.get("dim_c", "&H00808080&")
-    accent_c = tmpl.get("accent")
-    pill_text_c = tmpl.get("pill_text")
-    word = disp[idx]
-    xi, yi = int(round(ax)), int(round(ay))
-    out = []
-
-    def _inactive_chunk(words, color=None, fs=None):
-        """Inactive words for the overlay (fully transparent, layout-only)."""
-        t = ""
-        if words:
-            open_tags = "{\\alpha&HFF&"
-            if color:
-                open_tags += "\\c%s" % color
-            if fs:
-                open_tags += "\\fs%d" % fs
-            open_tags += "}"
-            t = open_tags + " ".join(words)
-        return t
-
-    def _text(active_tags):
-        # Per-word roles; inactive words are fully transparent (layout
-        # only) so libass positions the active word exactly over the base
-        # layer. Layouts: standard / two_tone (Mozi) / headline (Popline)
-        # / dim (Deep Diver, Youshaei).
-        n = len(disp)
-        chunks = []
-        for j, w in enumerate(disp):
-            is_active = (j == idx)
-            fs_tag = ""
-            if layout == "two_tone" and accent_c and j == n - 1:
-                fs_tag = "\\fs%d" % int(cap_size * 1.25)
-                col = accent_c if is_active else accent_c
-            elif layout == "headline" and accent_c and n > 1:
-                fs_tag = "\\fs%d" % (int(cap_size * 1.6) if j == 0
-                                     else int(cap_size * 0.7))
-                col = None
-            else:
-                col = None
-            if is_active:
-                text_c = (pill_text_c if (engine == "pill" and pill_text_c)
-                          else active_c)
-                if layout == "two_tone" and accent_c and j == n - 1:
-                    text_c = accent_c  # punchline keeps its lime + pop
-                if layout == "headline" and accent_c and n > 1 and j > 0:
-                    pass  # active small word: active_c below
-                chunks.append("{\\c%s\\alpha&H00&%s%s}%s"
-                              % (text_c, fs_tag, active_tags, w))
-            else:
-                open_tags = "{\\alpha&HFF&"
-                if layout == "two_tone" and accent_c and j == n - 1:
-                    open_tags += "\\c%s" % accent_c
-                elif layout == "headline" and accent_c and n > 1 and j > 0:
-                    open_tags += "\\c%s" % accent_c
-                elif engine == "dim" and j > idx:
-                    open_tags += "\\c%s" % dim_c
-                elif engine == "dim":
-                    open_tags += "\\c%s" % tmpl["primary"]
-                open_tags += fs_tag + "}"
-                chunks.append(open_tags + w)
-            if layout == "headline" and accent_c and n > 1 and j == 0:
-                chunks.append("\\N")
-        # join, keeping the \N line break tight (no spaces around it)
-        text = ""
-        for _c in chunks:
-            if _c == "\\N":
-                text = text.rstrip() + "\\N"
-            elif text.endswith("\\N"):
-                text += _c
-            else:
-                text += (" " if text else "") + _c
-        return text
-
-    def _dlg(s, e, pos_tags, active_tags, fade_in=100):
-        if fade_in:
-            pos_tags += "\\fad(%d,0)" % fade_in
-        return ("Dialogue: 1,%s,%s,Cap,,0,0,0,,{%s}%s"
-                % (_ts_ass(max(0.0, s)), _ts_ass(max(0.001, e)),
-                   pos_tags, _text(active_tags)))
-
-    pos = "\\an5\\pos(%d,%d)" % (xi, yi)
-    pop = tmpl.get("pop") or {"frm": 80, "peak": 125, "up_ms": 80,
-                              "total_ms": 140}
-
-    if engine in ("pop", "solo"):
-        tags = ("\\fscx%d\\fscy%d\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
-                "\\t(%d,%d,1.8,\\fscx100\\fscy100)"
-                % (pop["frm"], pop["frm"], pop["up_ms"],
-                   pop["peak"], pop["peak"], pop["up_ms"],
-                   pop["total_ms"]))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "spring":
-        k = tmpl["spring"]
-        scales, ys, total = k["scales"], k["ys"], k["total_ms"]
-        n = len(scales) - 1
-        seg = float(total) / max(1, n)
-        for i in range(n):
-            s0, s1 = scales[i], scales[i + 1]
-            y0, y1 = ys[i], ys[i + 1]
-            es = ws + (seg * i) / 1000.0
-            ee = ws + (seg * (i + 1)) / 1000.0
-            if i == n - 1:
-                ee = max(ee, we)
-            accel = 0.5 if i == 0 else 1.5
-            mv = ("\\an5\\move(%d,%d,%d,%d,0,%d)"
-                  % (xi, yi + y0, xi, yi + y1, int(seg)))
-            tags = ("\\fscx%d\\fscy%d\\t(0,%d,%.1f,\\fscx%d\\fscy%d)"
-                    % (s0, s0, int(seg), accel, s1, s1))
-            out.append(_dlg(es, ee, mv, tags,
-                            fade_in=60 if i == 0 else 0))
-    elif engine == "karaoke":
-        pu = tmpl.get("pulse") or {"peak": 112, "up_ms": 60, "total_ms": 120}
-        tags = ("\\t(0,%d,\\fscx%d\\fscy%d)\\t(%d,%d,\\fscx100\\fscy100)"
-                % (pu["up_ms"], pu["peak"], pu["peak"],
-                   pu["up_ms"], pu["total_ms"]))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "highlight_box":
-        # marker stroke: black text with a thick yellow outline — needs no
-        # measuring, unlike a drawn box.
-        mc = tmpl.get("box_color", "&H0000E6FF&")
-        tags = ("\\3c%s\\bord6\\fscx%d\\fscy%d"
-                "\\t(0,%d,\\fscx%d\\fscy%d)"
-                "\\t(%d,%d,\\fscx100\\fscy100)"
-                % (mc, pop["frm"], pop["frm"], pop["up_ms"],
-                   pop["peak"], pop["peak"], pop["up_ms"],
-                   pop["total_ms"]))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "underline":
-        tags = ("\\u1\\fscx108\\fscy108"
-                "\\t(0,50,\\fscx108\\fscy108)\\t(50,100,\\fscx100\\fscy100)")
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "outline_fill":
-        tags = ("\\fscx%d\\fscy%d\\t(0,%d,\\fscx%d\\fscy%d)"
-                "\\t(%d,%d,\\fscx100\\fscy100)"
-                % (pop["frm"], pop["frm"], pop["up_ms"],
-                   pop["peak"], pop["peak"], pop["up_ms"],
-                   pop["total_ms"]))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "glow":
-        g = tmpl.get("glow") or {"up_ms": 80, "scale_peak": 105,
-                                 "decay_ms": 120}
-        gc = tmpl.get("glow_c") or active_c
-        tags = ("\\3c%s\\bord2\\blur1"
-                "\\t(0,%d,\\bord6\\blur10\\fscx%d\\fscy%d)"
-                "\\t(%d,%d,\\bord2\\blur1\\fscx100\\fscy100)"
-                % (gc, g["up_ms"], g["scale_peak"], g["scale_peak"],
-                   g["up_ms"], g["up_ms"] + g["decay_ms"]))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "fade":
-        f = tmpl.get("fade") or {"in_ms": 120, "out_ms": 120}
-        out.append(_dlg(ws, we + f["out_ms"] / 1000.0, pos, "",
-                        fade_in=0))
-        # apply the fade via open tags instead of _dlg's fade_in
-        out[-1] = out[-1].replace(
-            "{\\an5\\pos(%d,%d)}" % (xi, yi),
-            "{\\an5\\pos(%d,%d)\\fad(%d,%d)}" % (xi, yi, f["in_ms"],
-                                                f["out_ms"]), 1)
-    elif engine == "box_snap":
-        # solid box SNAPS 40 -> 100% in 80ms, no overshoot (Captions.ai
-        # keyword box). The box color rides on the outline stroke so no
-        # word-width measuring is needed.
-        mc = tmpl.get("box_color", "&H001409E5&")
-        tags = ("\\3c%s\\bord7\\fscx40\\fscy40"
-                "\\t(0,80,\\fscx100\\fscy100)" % mc)
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "pill":
-        # springy pill badge: 60 -> 115% over 90ms, settle over 90ms;
-        # dark text on the colored pill.
-        mc = tmpl.get("box_color", "&H0000E6FF&")
-        tags = ("\\3c%s\\bord8\\fscx60\\fscy60"
-                "\\t(0,90,0.5,\\fscx115\\fscy115)"
-                "\\t(90,180,1.8,\\fscx100\\fscy100)" % mc)
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "bar":
-        # words fade + rise 14px into the persistent translucent bar;
-        # deliberately no color pop — the motion is the style.
-        mv = "\\an5\\move(%d,%d,%d,%d,0,180)" % (xi, yi + 14, xi, yi)
-        out.append(_dlg(ws, we, mv, "", fade_in=150))
-    elif engine == "glide":
-        # slide in from the right: X +60 -> 0 over 200ms ease-out + fade
-        mv = "\\an5\\move(%d,%d,%d,%d,0,200)" % (xi + 60, yi, xi, yi)
-        out.append(_dlg(ws, we, mv, "", fade_in=150))
-    elif engine == "gradient":
-        # teal -> blue -> violet sweep across the spoken word + pop
-        gm = tmpl.get("grad_mid", "&H00F6823B&")
-        ge = tmpl.get("grad_end", "&H00F65C8B&")
-        tags = ("\\fscx%d\\fscy%d\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
-                "\\t(%d,%d,1.8,\\fscx100\\fscy100)"
-                "\\t(0,90,\\1c%s)\\t(90,180,\\1c%s)"
-                % (pop["frm"], pop["frm"], pop["up_ms"],
-                   pop["peak"], pop["peak"], pop["up_ms"],
-                   pop["total_ms"], gm, ge))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "sticker":
-        # tilted sticker slap: rotation wobble 6 -> -2 -> 0deg + pop,
-        # thick dark outline sells the label
-        tags = ("\\frz6\\3c&H00000000&\\bord8\\fscx70\\fscy70"
-                "\\t(0,90,0.5,\\fscx120\\fscy120\\frz-2)"
-                "\\t(90,160,1.8,\\fscx100\\fscy100\\frz0)")
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "glitch":
-        # RGB-split jitter: 3 quick X steps with alternating red/blue
-        # outlines, then the clean word holds for the rest of its window
-        steps = [("&H000000FF&", 4), ("&H00FF0000&", -4),
-                 ("&H00000000&", 0)]
-        for gi, (gc, jx) in enumerate(steps):
-            es = ws + gi * 0.06
-            ee = (ws + (gi + 1) * 0.06) if gi < 2 else max(we, ws + 0.18)
-            mv = ("\\an5\\move(%d,%d,%d,%d,0,60)"
-                  % (xi + jx, yi, xi, yi))
-            out.append(_dlg(es, ee, mv, "\\3c%s\\bord4" % gc,
-                            fade_in=0))
-    elif engine == "pulse":
-        # rhythmic throb 100 -> 108 -> 100% across the spoken window
-        dur_ms = max(300, int((we - ws) * 1000))
+    a = p.get("active_anim", "pop")
+    peak = int(p.get("anim_peak", 120))
+    up = int(p.get("anim_up_ms", 80))
+    total = int(p.get("anim_total_ms", 160))
+    frm = int(p.get("anim_frm") or max(50, 200 - peak))
+    y = int(p.get("anim_y", 0))
+    ac = p["active_color"]
+    settle = max(60, total - up)
+    if a == "pop":
+        return [(0, "\\fscx%d\\fscy%d\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
+                     % (frm, frm, up, peak, peak)),
+                (up, "\\fscx%d\\fscy%d\\t(0,%d,1.8,\\fscx100\\fscy100)"
+                     % (peak, peak, settle))]
+    if a == "spring":
+        return [(0, "\\move(%d,%d,%d,%d,0,%d)"
+                     "\\fscx%d\\fscy%d\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
+                     % (xi, yi + y, xi, yi, up,
+                        frm or 85, frm or 85, up, peak, peak)),
+                (up, "\\fscx%d\\fscy%d\\t(0,%d,1.5,\\fscx100\\fscy100)"
+                     % (peak, peak, settle))]
+    if a == "stomp":
+        return [(0, "\\fscx%d\\fscy%d\\t(0,%d,1.8,\\fscx100\\fscy100)"
+                     % (peak, peak, up))]
+    if a == "fade":
+        return [(0, "\\alpha&HFF&\\t(0,%d,\\alpha&H00&)" % up)]
+    if a == "rise":
+        return [(0, "\\move(%d,%d,%d,%d,0,%d)"
+                     "\\alpha&HFF&\\t(0,%d,\\alpha&H00&)"
+                     % (xi, yi + y, xi, yi, up, up))]
+    if a == "fall":
+        return [(0, "\\move(%d,%d,%d,%d,0,%d)"
+                     "\\alpha&HFF&\\t(0,%d,\\alpha&H00&)"
+                     % (xi, yi - y, xi, yi, up, min(up, 80)))]
+    if a == "wipe":
+        return [(0, "\\fscx30\\fscy100\\t(0,%d,0.5,\\fscx100\\fscy100)"
+                     % up)]
+    if a == "rotate":
+        return [(0, "\\frz-10\\fscx80\\fscy80"
+                     "\\t(0,%d,0.5,\\frz0\\fscx%d\\fscy%d)"
+                     % (up, peak, peak)),
+                (up, "\\fscx%d\\fscy%d\\t(0,%d,1.8,\\fscx100\\fscy100)"
+                     % (peak, peak, settle))]
+    if a == "glowpulse":
+        return [(0, "\\3c%s\\bord2\\blur1"
+                     "\\t(0,%d,\\bord6\\blur10\\fscx105\\fscy105)"
+                     % (ac, up)),
+                (up, "\\3c%s\\bord6\\blur10\\fscx105\\fscy105"
+                     "\\t(0,120,\\bord2\\blur1\\fscx100\\fscy100)"
+                     % ac)]
+    if a == "throb":
         n = min(4, max(1, dur_ms // 300))
-        tags = ""
+        phases = []
         for pi in range(n):
             s0 = pi * 300
-            tags += ("\\t(%d,%d,\\fscx108\\fscy108)"
-                     "\\t(%d,%d,\\fscx100\\fscy100)"
-                     % (s0, s0 + 150, s0 + 150, s0 + 300))
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "stomp":
-        # VEED Stomp: hard slam 135 -> 100% in 90ms, no overshoot
-        tags = ("\\fscx135\\fscy135\\t(0,90,1.8,\\fscx100\\fscy100)")
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "reveal":
-        # VEED Reveal: horizontal unfold \fscx 30 -> 100 (wipe feel)
-        tags = ("\\fscx30\\fscy100\\t(0,120,0.5,\\fscx100\\fscy100)")
-        out.append(_dlg(ws, we, pos, tags, fade_in=60))
-    elif engine == "float":
-        # VEED Float In: gentle rise 30px + fade over 400ms, no scale
-        mv = "\\an5\\move(%d,%d,%d,%d,0,400)" % (xi, yi + 30, xi, yi)
-        out.append(_dlg(ws, we, mv, "", fade_in=350))
-    elif engine == "drop":
-        # VEED Drop In: falls from above, tiny bounce at the end
-        es1 = ws + 0.14
-        mv1 = "\\an5\\move(%d,%d,%d,%d,0,140)" % (xi, yi - 40, xi, yi + 6)
-        out.append(_dlg(ws, es1, mv1, "", fade_in=80))
-        mv2 = "\\an5\\move(%d,%d,%d,%d,0,80)" % (xi, yi + 6, xi, yi)
-        out.append(_dlg(es1, we, mv2, "", fade_in=0))
-    elif engine == "rotate":
-        # VEED Rotate & Flip: rotation wobble -10 -> 0deg + pop
-        tags = ("\\frz-10\\fscx80\\fscy80"
-                "\\t(0,120,0.5,\\frz0\\fscx118\\fscy118)"
-                "\\t(120,200,1.8,\\fscx100\\fscy100)")
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "colour":
-        # VEED Colour Highlight: purple wash fades in behind the word —
-        # no motion at all (the color IS the style)
-        wc = tmpl.get("wash_c", "&H00ED3A7C&")
-        tags = ("\\3c%s\\bord10\\3a&HFF&\\t(0,150,\\3a&H00&)" % wc)
-        out.append(_dlg(ws, we, pos, tags, fade_in=0))
-    elif engine == "dim":
-        # Opus karaoke-dim: subtle 100 -> 106 -> 100% (the dimming is the
-        # style; _text() grays the upcoming words)
-        tags = ("\\t(0,60,\\fscx106\\fscy106)"
-                "\\t(60,120,\\fscx100\\fscy100)")
-        out.append(_dlg(ws, we, pos, tags))
-    elif engine == "shake":
-        # Opus Baby Earthquake: rapid small X jitter, then hold
-        jx = 4
+            phases.append((s0, "\\t(0,150,\\fscx108\\fscy108)"))
+            phases.append((s0 + 150,
+                           "\\fscx108\\fscy108"
+                           "\\t(0,150,\\fscx100\\fscy100)"))
+        return phases
+    if a == "slide":
+        return [(0, "\\move(%d,%d,%d,%d,0,%d)" % (xi + 60, yi, xi, yi, up))]
+    if a == "sweep":
+        return [(0, "\\fscx%d\\fscy%d\\1c%s"
+                     "\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
+                     % (frm, frm, _SWEEP_MID, up, peak, peak)),
+                (up, "\\fscx%d\\fscy%d\\1c%s"
+                     "\\t(0,%d,1.8,\\fscx100\\fscy100)"
+                     % (peak, peak, _SWEEP_MID, settle)),
+                (total, "\\1c%s\\t(0,60,\\1c%s)"
+                        % (_SWEEP_MID, _SWEEP_END)),
+                (total + 60, "\\1c%s\\t(0,60,\\1c%s)"
+                             % (_SWEEP_END, ac))]
+    return [(0, "")]  # "none" (and any unknown value degrades to no motion)
+
+
+def _anim_sub_events(p, xi, yi, ws, we):
+    """Active-word overlay sub-events: (start, end, pos_tags, tags, fade_in).
+
+    Most primitives are a single event; jitter/wave need segmented moves.
+    """
+    a = p.get("active_anim", "pop")
+    dur_ms = max(1, int((we - ws) * 1000))
+    pos = "\\an5\\pos(%d,%d)" % (xi, yi)
+    if a == "jitter":
+        amp = int(p.get("anim_amp", 4))
+        out = []
         for si in range(4):
             es = ws + si * 0.06
             ee = ws + (si + 1) * 0.06
-            x0 = xi + (jx if si % 2 == 0 else -jx)
-            mv = "\\an5\\move(%d,%d,%d,%d,0,60)" % (x0, yi, xi, yi)
-            out.append(_dlg(es, ee, mv, "", fade_in=0))
-        out.append(_dlg(ws + 0.24, we, pos, "", fade_in=0))
-    return out
+            x0 = xi + (amp if si % 2 == 0 else -amp)
+            out.append({"s": es, "e": ee,
+                        "pos": "\\an5\\move(%d,%d,%d,%d,0,60)"
+                               % (x0, yi, xi, yi),
+                        "tags": "", "fade_in": 0})
+        out.append({"s": ws + 0.24, "e": we, "pos": pos,
+                    "tags": "", "fade_in": 0})
+        return out
+    if a == "wave":
+        total = int(p.get("anim_total_ms", 400))
+        seg = max(60, total // 4)
+        ys = [10, -10, 10, -10]
+        out = []
+        y_prev = 0
+        for si, y_off in enumerate(ys):
+            es = ws + si * seg / 1000.0
+            ee = ws + (si + 1) * seg / 1000.0
+            out.append({"s": es, "e": ee,
+                        "pos": "\\an5\\move(%d,%d,%d,%d,0,%d)"
+                               % (xi, yi + y_prev, xi, yi + y_off, seg),
+                        "tags": "", "fade_in": 60 if si == 0 else 0})
+            y_prev = y_off
+        out.append({"s": ws + 4 * seg / 1000.0, "e": we, "pos": pos,
+                    "tags": "", "fade_in": 0})
+        return out
+    fade_in = 150 if a == "slide" else (0 if a in ("fade",) else 100)
+    # Multi-phase animations become sequential sub-events so that no
+    # single event ever carries two \t transforms (libass would drop
+    # the whole event — see _anim_phases). Phases hand off cleanly:
+    # phase i ends exactly when phase i+1 starts.
+    phases = _anim_phases(p, xi, yi, dur_ms)
+    out = []
+    for pi, (delay, tags) in enumerate(phases):
+        if delay >= dur_ms:
+            continue
+        es = ws + delay / 1000.0
+        if pi + 1 < len(phases) and phases[pi + 1][0] < dur_ms:
+            ee = ws + phases[pi + 1][0] / 1000.0
+        else:
+            ee = we
+        out.append({"s": es, "e": ee, "pos": pos, "tags": tags,
+                    "fade_in": fade_in if pi == 0 else 0})
+    return out or [{"s": ws, "e": we, "pos": pos, "tags": "",
+                    "fade_in": fade_in}]
 
 
-def _render_wave(tmpl, chunks, ax, ay, lead, floor_s, hold_s):
-    """Whole-line sine wave: the full phrase bobs as one unit (like
-    CapCut's Wave), with the spoken word highlighted yellow. No base
-    layer — every sub-event shows the full phrase, so the line never
-    doubles against a static copy."""
-    import math
-    lines = []
-    wv = tmpl["wave"]
-    period = 4 * wv["half_ms"] / 1000.0
-    ypk = wv["y_peak"]
-    active_c = tmpl["secondary"]
-    xi, yi = int(round(ax)), int(round(ay))
-    step = 0.1
-    for ch in chunks:
-        seg = ch["words"]
-        disp = [sanitize_ass_text(w["word"]) for w in seg]
-        card_s = max(0.0, seg[0]["start"] + lead)
-        chunk_e = seg[-1]["end"] + hold_s
-
-        def _active(tm):
-            for i, w in enumerate(seg):
-                ws = max(0.0, w["start"] + lead)
-                we = max(w["end"], w["start"] + floor_s)
-                if ws <= tm < we:
-                    return i
-            return -1
-
-        t = card_s
-        first = True
-        while t < chunk_e - 0.001:
-            t2 = min(t + step, chunk_e)
-            tm = (t + t2) / 2.0
-            ai = _active(tm)
-            y0 = yi + ypk * math.sin(2 * math.pi * (t - card_s) / period)
-            y1 = yi + ypk * math.sin(2 * math.pi * (t2 - card_s) / period)
-            parts = []
-            for i, d in enumerate(disp):
-                if i == ai:
-                    parts.append("{\\c%s}%s{\\c&H00FFFFFF}" % (active_c, d))
-                else:
-                    parts.append(d)
-            fade = "\\fad(100,0)" if first else ""
-            lines.append(
-                "Dialogue: 1,%s,%s,Cap,,0,0,0,,"
-                "{\\an5\\move(%d,%d,%d,%d,0,%d)%s}%s"
-                % (_ts_ass(t), _ts_ass(t2), xi, int(round(y0)),
-                   xi, int(round(y1)), int((t2 - t) * 1000), fade,
-                   " ".join(parts)))
-            t = t2
-            first = False
-    return lines
+def _entry_open(p, xi, yi):
+    """Base-layer open tags: ENTRY animation + EXIT fade. Pure preset data."""
+    e = p.get("entry", "pop")
+    ms = int(p.get("entry_ms", 180))
+    eo = int(p.get("exit_ms", 120)) if p.get("exit") == "fade" else 0
+    if e == "pop":
+        return ("\\an5\\pos(%d,%d)\\fscx120\\fscy120"
+                "\\t(0,%d,\\fscx100\\fscy100)\\fad(0,%d)"
+                % (xi, yi, ms, eo))
+    if e == "slide_up":
+        return ("\\an5\\move(%d,%d,%d,%d,0,%d)\\fad(0,%d)"
+                % (xi, yi + 60, xi, yi, ms, eo))
+    fi = ms if e == "fade" else 0
+    return "\\an5\\pos(%d,%d)\\fad(%d,%d)" % (xi, yi, fi, eo)
 
 
-def _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead, floor_s,
-                       hold_s):
+def _base_phrase_preset(p, disp, cap_size):
+    """Visible base-layer phrase. Metric-identical to the overlay words."""
+    n = len(disp)
+    layout = p.get("layout", "standard")
+    ac = p["active_color"]
+    parts = []
+    for j, w in enumerate(disp):
+        fs = _layout_fs(p, layout, j, n, cap_size)
+        if layout == "two_tone" and n > 1 and j == n - 1:
+            col = ac
+        elif layout == "headline" and n > 1 and j > 0:
+            col = ac
+        else:
+            col = p["primary"]
+        pre, post = _em_pair(p, False)
+        parts.append("%s{\\c%s%s}%s%s" % (pre, col, fs, w, post))
+        if layout == "headline" and j == 0 and n > 1:
+            parts.append("\\N")
+    return _join_chunks(parts)
+
+
+def _overlay_text(p, disp, idx, cap_size, anim_tags, dim_mode):
+    """Layer-1 overlay: full phrase, only word idx visible (or dim-mode
+    states). Inactive words are fully transparent layout placeholders,
+    so libass positions the active word exactly over the base layer."""
+    n = len(disp)
+    layout = p.get("layout", "standard")
+    em = p.get("emoji", "")
+    ac = p["active_color"]
+    hl = p.get("highlight", "color")
+    # ASS tags are STATEFUL across an event: an earlier {\alpha&HFF&}
+    # (transparent placeholder) would otherwise keep the active word
+    # invisible, because \c changes color but NOT alpha. Every group
+    # that shows text therefore resets alpha explicitly — except the
+    # fade animation, which drives alpha itself via \t.
+    areset = "" if "\\alpha" in anim_tags else "\\alpha&H00&"
+    chunks = []
+    for j, w in enumerate(disp):
+        fs = _layout_fs(p, layout, j, n, cap_size)
+        if dim_mode:
+            # karaoke-dim: past = primary, active = highlight, upcoming = grey
+            pre_v, post_v = ((em + " ", " " + em) if em else ("", ""))
+            if j < idx:
+                paint = "{\\alpha&H00&\\c%s%s}" % (p["primary"], fs)
+            elif j == idx:
+                paint = "{%s%s%s%s}" % (areset, _hl_tags(p), fs, anim_tags)
+            else:
+                paint = "{\\alpha&H00&\\c%s%s}" % (_DIM_UPCOMING, fs)
+            chunks.append(paint + pre_v + w + post_v)
+        elif j == idx:
+            pre_v, post_v = ((em + " ", " " + em) if em else ("", ""))
+            if hl == "none":
+                open_t = "{%s\\c%s%s%s}" % (areset, p["primary"], fs,
+                                            anim_tags)
+            elif hl == "outline":
+                open_t = "{%s\\c%s\\1a&H00&%s%s}" % (areset, ac, fs,
+                                                     anim_tags)
+            else:
+                open_t = "{%s%s%s%s}" % (areset, _hl_tags(p), fs,
+                                         anim_tags)
+            chunks.append(open_t + pre_v + w + post_v)
+        else:
+            t = "{\\alpha&HFF&%s}" % fs
+            if em:
+                t += em + " "
+            t += w
+            if em:
+                t += " " + em
+            chunks.append(t)
+        if layout == "headline" and j == 0 and n > 1:
+            chunks.append("\\N")
+    return _join_chunks(chunks)
+
+
+def _render_typewriter_preset(p, chunks, ax, ay, cap_size, lead, floor_s,
+                              hold_s):
     """Character-by-character reveal synced to word timestamps.
 
     Each character of each word gets its own event inside the word's
-    active window, plus a blinking block cursor at the frontier. The
-    completed word holds on screen until the next word starts.
+    active window, plus a block cursor at the frontier. The completed
+    word holds on screen until the next word starts.
     """
     lines = []
-    cursor = tmpl.get("cursor", "\u258c")
-    cur_c = tmpl["secondary"]
+    cursor = "▌"
+    cur_c = p["active_color"]
     xi, yi = int(round(ax)), int(round(ay))
 
     def _dlg(s, e, txt):
@@ -2136,25 +1977,24 @@ def _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead, floor_s,
         acc = []
         for wi, w in enumerate(seg):
             word = w["word"]
-            n = max(1, len(word))
+            nch = max(1, len(word))
             ws = max(0.0, w["start"] + lead)
             dur = max(w["end"], w["start"] + floor_s) - ws
-            step = min(dur / n, 0.055)  # reveal speed cap ~55ms/char
+            step = min(dur / nch, 0.055)  # reveal speed cap ~55ms/char
             if wi + 1 < len(seg):
                 hold_until = max(seg[wi + 1]["start"] + lead, w["end"])
             else:
                 hold_until = w["end"] + hold_s
             prefix = (" ".join(acc) + " ") if acc else ""
-            for k in range(1, n + 1):
+            for k in range(1, nch + 1):
                 cs = ws + (k - 1) * step
                 ce = ws + k * step
-                if k == n:
+                if k == nch:
                     ce = max(ce, hold_until)
                 txt = sanitize_ass_text(prefix + word[:k])
                 lines.append(_dlg(cs, ce, "%s{\\c%s}%s" % (txt, cur_c,
                                                            cursor)))
             acc.append(word)
-        # blink the cursor twice after the line completes
         end = seg[-1]["end"] + hold_s
         full = sanitize_ass_text(" ".join(w["word"] for w in seg))
         lines.append(_dlg(end, end + 0.25, full))
@@ -2163,61 +2003,77 @@ def _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead, floor_s,
     return lines
 
 
-def _render_capcut_captions(tmpl, sentence_timings, word_timings, pw, ph,
-                            cap_size, mv, dx_px, dy_px):
-    """Dialogue lines for one of the real-tools caption engines.
+def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
+                            cap_size, dx_px, dy_px):
+    """Dialogue lines for one caption preset — the data-driven renderer.
 
-    Styles are grounded in Submagic / Captions.ai / Opus Clip / VEED
-    (see CAPTION_TEMPLATES header). Layer 0: the full phrase card (with
-    the style's base overrides). Layer 1: per active word, the full
-    phrase with only that word visible — laid out by libass itself, so
-    alignment is always exact.
+    Layer 0: the full phrase card (preset ENTRY/EXIT, BACKGROUND, POSITION).
+    Layer 1: per active word, the full phrase with only that word visible,
+    carrying the preset's WORD HIGHLIGHT + ACTIVE WORD ANIMATION, timed
+    from the word-level audio timestamps (WORD TIMING field). Previous
+    words automatically return to normal: every overlay event is
+    independent, so when a word's window ends its styling ends with it.
     """
     lines = []
-    engine = tmpl.get("engine") or "pop"
-    max_words = tmpl.get("max_words", 5)
-    lead = tmpl.get("lead_ms", -20) / 1000.0
-    floor_s = tmpl.get("floor_ms", 140) / 1000.0
-    hold_s = tmpl.get("hold_ms", 150) / 1000.0
-    words = _norm_cap_words(word_timings, tmpl.get("text_case"))
+    if p.get("active_anim") == "typewriter":
+        words_tw = _norm_cap_words(word_timings, p.get("text_case"))
+        if not words_tw:
+            return lines
+        _al, ax, ay = _preset_anchor(p, pw, ph)
+        ax += dx_px
+        ay += dy_px
+        lead = p.get("lead_ms", -20) / 1000.0
+        floor_s = p.get("floor_ms", 140) / 1000.0
+        hold_s = p.get("hold_ms", 200) / 1000.0
+        chunks = chunk_words(words_tw, max_words=p.get("max_words", 4),
+                             max_dur=2.5, gap_break=0.4)
+        return _render_typewriter_preset(p, chunks, ax, ay, cap_size,
+                                         lead, floor_s, hold_s)
+    words = _norm_cap_words(word_timings, p.get("text_case"))
     if not words:
         return lines
-    al = tmpl.get("alignment", 2)
-    if al == 8:
-        ax, ay = pw / 2.0, float(mv)
-    elif al == 5:
-        ax, ay = pw / 2.0, ph / 2.0
-    else:
-        ax, ay = pw / 2.0, float(ph - mv)
+    _al, ax, ay = _preset_anchor(p, pw, ph)
     ax += dx_px
     ay += dy_px
-    chunks = chunk_words(words, max_words=max_words, max_dur=2.5,
-                         gap_break=0.4)
-
-    if engine == "typewriter":
-        return _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead,
-                                  floor_s, hold_s)
-    if engine == "wave":
-        return _render_wave(tmpl, chunks, ax, ay, lead, floor_s, hold_s)
-
-    base_open = _cap_base_open(tmpl)
+    xi, yi = int(round(ax)), int(round(ay))
+    lead = p.get("lead_ms", -20) / 1000.0
+    floor_s = p.get("floor_ms", 140) / 1000.0
+    hold_s = p.get("hold_ms", 200) / 1000.0
+    chunks = chunk_words(words, max_words=p.get("max_words", 4),
+                         max_dur=2.5, gap_break=0.4)
+    dim_mode = (p.get("highlight") == "dim")
+    base_open = ""
+    if p.get("highlight") == "outline":
+        # hollow base: transparent fill, colored outline
+        base_open = "\\1a&HFF&\\3c%s\\bord%d" % (p["active_color"],
+                                                p.get("outline", 3))
     for ch in chunks:
         seg = ch["words"]
         disp = [w["word"] for w in seg]
         card_s = max(0.0, seg[0]["start"] + lead)
         card_e = seg[-1]["end"] + hold_s
-        base_text = _base_phrase(tmpl, disp, cap_size)
-        lines.append(
-            "Dialogue: 0,%s,%s,Cap,,0,0,0,,"
-            "{\\an5\\pos(%d,%d)%s\\fad(100,0)}%s"
-            % (_ts_ass(card_s), _ts_ass(card_e),
-               int(round(ax)), int(round(ay)), base_open, base_text))
+        if not dim_mode:
+            base_text = _base_phrase_preset(p, disp, cap_size)
+            lines.append(
+                "Dialogue: 0,%s,%s,Cap,,0,0,0,,"
+                "{%s%s}%s"
+                % (_ts_ass(card_s), _ts_ass(card_e),
+                   _entry_open(p, xi, yi), base_open, base_text))
         for i, w in enumerate(seg):
             ws = max(0.0, w["start"] + lead)
             we = max(w["end"], w["start"] + floor_s)
-            lines.extend(_cap_active_events(
-                tmpl, disp, i, ax, ay, ws, we, cap_size))
+            for ev in _anim_sub_events(p, xi, yi, ws, we):
+                pos_tags = ev["pos"]
+                if ev["fade_in"]:
+                    pos_tags += "\\fad(%d,0)" % ev["fade_in"]
+                txt = _overlay_text(p, disp, i, cap_size, ev["tags"],
+                                    dim_mode)
+                lines.append(
+                    "Dialogue: 1,%s,%s,Cap,,0,0,0,,{%s}%s"
+                    % (_ts_ass(ev["s"]), _ts_ass(ev["e"]),
+                       pos_tags, txt))
     return lines
+
 
 def _headline_entrance(entrance, pw, ph, margin_v, alignment=8,
                       enter_ms=200, exit_ms=150):
@@ -2286,16 +2142,16 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
     250-video main-text research: huge heavy caps, white fill, red/yellow
     keyword accents, no box by default, snappy pop entrances. Falls back
     to the default creator style.
-    template: key from CAPTION_TEMPLATES (CapCut-style caption look).
+    template: key from CAPTION_TEMPLATES (caption preset look).
     secondary_track: for dual-language templates, list of dicts
     {text, start, end} with GENUINE second-language text (never a copy of
     the primary). Rendered with the "Cap2" style at its own y position.
     """
-    # template may be a key into CAPTION_TEMPLATES or a new-style template
-    # dict (with an "engine" key). Legacy ids (the removed 8+5+5 spec
-    # engine, old template packs) migrate to the default style.
+    # template may be a key into CAPTION_TEMPLATES or a preset dict
+    # (preset_schema == 2). Legacy ids (removed engines, old template
+    # packs) migrate to the default preset.
     if isinstance(template, dict):
-        if template.get("engine"):
+        if template.get("preset_schema") == 2:
             tmpl = dict(template)
         else:
             tmpl = dict(CAPTION_TEMPLATES.get(
@@ -2308,35 +2164,43 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
         tmpl = dict(CAPTION_TEMPLATES.get(
             migrate_caption_template_id(template or DEFAULT_CAPTION_TEMPLATE),
             CAPTION_TEMPLATES[DEFAULT_CAPTION_TEMPLATE]))
-    for _k, _v in (("spacing", 0), ("pill", False), ("box", False),
-                   ("monoline", False), ("text_case", None)):
+    for _k, _v in (("spacing", 0), ("text_case", None)):
         tmpl.setdefault(_k, _v)
     pw, ph = play_res
     # user_scale: click-drag resize factor from the preview (1.0 = unchanged)
     cap_size = max(24, int(ph * font_size / 1080 * tmpl["size_scale"]
                            * tmpl.get("user_scale", 1.0)))
     top_size = max(30, int(ph / 20))
-    # monoline preset: hollow outline — transparent fill, outline takes the
-    # text color. Alpha persists through {\c} overrides in events.
-    h_primary, h_outline_c, h_outline = (tmpl["primary"], tmpl["outline_c"],
-                                         tmpl["outline"])
-    if tmpl.get("monoline"):
-        h_primary = "&HFF" + tmpl["primary"][4:]
-        h_outline_c = tmpl["primary"]
-        h_outline = max(tmpl["outline"], 3)
-    # BorderStyle: 3 = opaque box (Hormozi), 4 = rounded box (pill),
-    # else 1 = outline.
-    if tmpl.get("pill"):
+    h_primary = tmpl["primary"]
+    h_outline_c, h_outline = tmpl["outline_c"], tmpl["outline"]
+    h_bold = -1 if tmpl.get("bold", True) else 0
+    h_italic = -1 if tmpl.get("italic", False) else 0
+    # BorderStyle from the preset BACKGROUND field: 3 = opaque box/bar
+    # (drawn from BackColour), 4 = rounded pill line, else 1 = outline.
+    _bg = tmpl.get("background", "none")
+    if _bg == "pill_line":
         border_style = 4
-    elif tmpl["box"]:
+    elif _bg in ("box", "bar"):
         border_style = 3
     else:
         border_style = 1
+    bg_op = tmpl.get("bg_opacity", 0.85)
+    back_c = ("&H%02X000000" % int(round(255 * (1 - bg_op)))
+              if border_style in (3, 4) else "&H90000000")
     tmpl["_cap_size"] = cap_size  # for wordbig static fallback sizing
-    # spec styles can pin the caption line to an exact y fraction
-    # (e.g. y=0.78 -> MarginV = 0.22 * frame height); default keeps 60px.
-    mv = int(ph * tmpl["margin_v_frac"]) if "margin_v_frac" in tmpl else 60
-    # Interactive caption move/resize (click-drag on the preview):
+    mv = 60
+    # POSITION field -> alignment + anchor (mirrors _preset_anchor, so the
+    # burned captions sit exactly where the preset says).
+    _pos = tmpl.get("position", "bottom")
+    _al = {"top": 8, "center": 5}.get(_pos, 2)
+    if _al == 8:
+        _ax, _ay = pw // 2, mv
+    elif _al == 5:
+        _ax, _ay = pw // 2, ph // 2
+    elif _pos == "lower":
+        _ax, _ay = pw // 2, ph - int(ph * 0.16)
+    else:
+        _ax, _ay = pw // 2, ph - mv
     # dx_frac/dy_frac are fractions of the play resolution; positive dy
     # moves captions DOWN on screen. Applied via \pos so every style
     # (including \move entrances, which get the offset baked in) shifts
@@ -2363,11 +2227,7 @@ def build_ass(sentence_timings, word_timings, path, font_size=48, highlight=True
         if "\\move" in ent_text or "\\pos" in ent_text:
             return ""
         return "{\\pos(%d,%d)}" % (_ax + dx_px, _ay + dy_px)
-    # CapBox: opaque per-word box style (spec style 3). BorderStyle=3 draws
-    # the box from BackColour; Outline pads it (spec paddingY 12).
-    box_op = tmpl.get("box_opacity", 0.85)
-    box_back = "&H%02X000000" % int(round(255 * (1 - box_op)))
-    box_pad = tmpl.get("box_pad", 14)
+    # BACKGROUND field: the box/bar/pill is drawn from BackColour.
     header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: %d
@@ -2377,18 +2237,13 @@ WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,%s,%d,%s,%s,%s,%s,%d,%d,0,0,100,100,%d,0,%d,%d,%d,%d,40,40,%d,1
-Style: CapBox,%s,%d,%s,%s,%s,%s,%d,%d,0,0,100,100,%d,0,3,%d,0,5,40,40,%d,1
 Style: Top,Arial,%d,&H00FFFFFF,&H000019FF,&H90000000,&H90000000,-1,0,0,0,100,100,0,0,1,3,1,8,60,60,60,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-""" % (pw, ph, tmpl["font"], cap_size, h_primary, tmpl["secondary"],
-       h_outline_c, tmpl["back_c"], tmpl["bold"], tmpl["italic"],
+""" % (pw, ph, tmpl["font"], cap_size, h_primary, tmpl["active_color"],
+       h_outline_c, back_c, h_bold, h_italic,
        tmpl.get("spacing", 0),
-       border_style, h_outline, tmpl["shadow"], tmpl["alignment"], mv,
-       tmpl["font"], cap_size, tmpl["primary"], tmpl["secondary"],
-       tmpl["outline_c"], box_back, tmpl["bold"], tmpl["italic"],
-       tmpl.get("spacing", 0),
-       box_pad, mv,
+       border_style, h_outline, tmpl["shadow"], _al, mv,
        top_size)
     # Headline preset styles: one V4+ Style per unique
     # (preset, main-text type, story box colour) combo actually used by the
@@ -2424,9 +2279,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         header = header.replace("[Events]",
                                 cap2 + "[Events]")
     lines = []
-    if highlight and word_timings and tmpl.get("engine"):
-        lines.extend(_render_capcut_captions(
-            tmpl, sentence_timings, word_timings, pw, ph, cap_size, mv,
+    if highlight and word_timings and tmpl.get("preset_schema") == 2:
+        lines.extend(_render_preset_captions(
+            tmpl, sentence_timings, word_timings, pw, ph, cap_size,
             dx_px, dy_px))
     else:
         for s in sentence_timings:

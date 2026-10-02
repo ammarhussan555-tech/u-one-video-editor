@@ -1,9 +1,10 @@
-"""U One - CapCut-style caption template gallery.
+"""U One - caption preset gallery.
 
-A visual picker showing every caption template as a preview card
-("The quick" rendered in that template's style), like CapCut's
-Templates panel. Click a card to select, double-click (or Use button)
-to confirm.
+A visual picker showing every caption preset as a preview card, like
+CapCut's Templates panel: a category browser on the left, preset cards
+in a grid on the right. Clicking a card immediately applies it
+("Applied ✓" badge); the choice flows into the render settings and the
+post-render caption restyle path via the dialog's selected_key.
 """
 from __future__ import annotations
 
@@ -12,11 +13,15 @@ import io
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget, QLineEdit,
+    QDialog, QGridLayout, QHBoxLayout, QLabel, QListWidget, QPushButton,
+    QScrollArea, QSplitter, QVBoxLayout, QWidget, QLineEdit,
 )
 
-from ..text_captions import CAPTION_TEMPLATES, DEFAULT_CAPTION_TEMPLATE
+from ..text_captions import (
+    CAPTION_TEMPLATES,
+    DEFAULT_CAPTION_TEMPLATE,
+    caption_category_labels,
+)
 
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -24,7 +29,7 @@ try:
 except Exception:  # noqa: BLE001
     _PIL_OK = False
 
-_CARD_W, _CARD_H = 200, 130
+_CARD_W, _CARD_H = 200, 140
 
 
 def _ass_to_rgb(color: str):
@@ -43,7 +48,6 @@ def _load_font(name: str, size: int, bold: bool, italic: bool):
     """Best-effort font load; falls back to PIL default."""
     candidates = []
     n = (name or "").lower()
-    # bundled OFL fonts ship in assets/fonts — check there first
     bundled = {
         "anton": ["Anton-Regular.ttf"],
         "bebas": ["BebasNeue-Regular.ttf"],
@@ -102,186 +106,105 @@ def _load_font(name: str, size: int, bold: bool, italic: bool):
 
 
 def render_template_preview(key: str) -> bytes:
-    """Render a PNG preview card for a caption template.
+    """Render a PNG preview card for a caption preset.
 
-    Shows "The" as the active word (secondary color / active treatment)
-    and "quick" as the inactive word (primary) - the CapCut karaoke look.
-    Per-engine treatments (box, glow, underline, hollow, solo, typewriter)
-    are drawn so each card is visually distinct.
+    Shows the first word as the active (spoken) word with the preset's
+    WORD HIGHLIGHT treatment and the rest as normal words — the
+    karaoke look the renderer produces.
     """
-    tmpl = CAPTION_TEMPLATES[key]
+    p = CAPTION_TEMPLATES[key]
     img = Image.new("RGB", (_CARD_W, _CARD_H), (26, 26, 30))
     d = ImageDraw.Draw(img)
-    primary = _ass_to_rgb(tmpl["primary"])
-    secondary = _ass_to_rgb(tmpl["secondary"])
-    outline_c = _ass_to_rgb(tmpl["outline_c"])
-    tcase = tmpl.get("text_case")
-    w_the = "THE" if tcase == "upper" else "The"
-    w_quick = "QUICK" if tcase == "upper" else "quick"
-    engine = tmpl.get("engine", "pop")
-    size = 34
-    font = _load_font(tmpl["font"], size,
-                      bool(tmpl["bold"]), bool(tmpl["italic"]))
-    outline_w = max(1, int(tmpl["outline"]))
-    glow_c = _ass_to_rgb(tmpl.get("glow_c", tmpl["secondary"]))
+    primary = _ass_to_rgb(p["primary"])
+    active = _ass_to_rgb(p["active_color"])
+    outline_c = _ass_to_rgb(p["outline_c"])
+    on_hl = _ass_to_rgb(p.get("on_highlight_text", "&H00000000"))
+    tcase = p.get("text_case")
+    w_active = "THE" if tcase == "upper" else "The"
+    w_rest = "QUICK BROWN" if tcase == "upper" else "quick brown"
+    hl = p.get("highlight", "color")
+    size = 30
+    font = _load_font(p["font"], size, bool(p["bold"]), bool(p["italic"]))
+    outline_w = max(1, int(p["outline"]))
+    em = p.get("emoji", "")
 
     def _text(px, py, text, fnt, fill, oc=None, ow=None):
-        if tmpl["shadow"]:
+        if p["shadow"]:
             d.text((px + 2, py + 2), text, font=fnt, fill=(0, 0, 0))
         d.text((px, py), text, font=fnt, fill=fill,
                stroke_width=ow if ow is not None else outline_w,
                stroke_fill=oc if oc is not None else outline_c)
 
-    if engine == "solo":
-        # one giant word at a time, centered
-        bf = _load_font(tmpl["font"], 52,
-                        bool(tmpl["bold"]), bool(tmpl["italic"]))
-        bw = d.textlength(w_the, font=bf)
-        _text((_CARD_W - bw) / 2, (_CARD_H - 52) / 2, w_the, bf, secondary)
-    elif engine == "typewriter":
-        # partial text + block cursor at the frontier
-        frag = w_the + " qu"
-        w1 = d.textlength(frag, font=font)
-        x = (_CARD_W - w1 - 14) / 2
-        y = (_CARD_H - size) / 2 - 4
-        _text(x, y, frag, font, primary)
-        d.rectangle([x + w1 + 2, y, x + w1 + 12, y + size], fill=secondary)
-    elif (tmpl.get("layout") == "headline" and tmpl.get("accent")
-          and len(w_the) > 1):
-        # Popline: BIG first word, small pink line underneath
-        accent = _ass_to_rgb(tmpl["accent"])
-        bigf = _load_font(tmpl["font"], 46,
-                          bool(tmpl["bold"]), bool(tmpl["italic"]))
-        smallf = _load_font(tmpl["font"], 22,
-                            bool(tmpl["bold"]), bool(tmpl["italic"]))
-        bw = d.textlength(w_the, font=bigf)
-        sw = d.textlength(w_quick, font=smallf)
-        _text((_CARD_W - bw) / 2, 28, w_the, bigf, secondary)
-        _text((_CARD_W - sw) / 2, 82, w_quick, smallf, accent)
-    else:
-        w1 = d.textlength(w_the + " ", font=font)
-        w2 = d.textlength(w_quick, font=font)
-        total = w1 + w2
-        x = (_CARD_W - total) / 2
-        y = (_CARD_H - size) / 2 - 4
-        if tmpl.get("box_mode") == "persistent":
-            if engine == "bar":
-                # translucent bar behind the whole phrase (TikTok bar)
-                bar = Image.new("RGBA", img.size, (0, 0, 0, 0))
-                bd = ImageDraw.Draw(bar)
-                bd.rounded_rectangle(
-                    [x - 12, y - 10, x + total + 12, y + size + 12],
-                    radius=12, fill=(0, 0, 0, 128))
-                img = Image.alpha_composite(img.convert("RGBA"), bar
-                                            ).convert("RGB")
-                d = ImageDraw.Draw(img)
-            else:
-                # black box behind the whole phrase
-                d.rounded_rectangle(
-                    [x - 10, y - 8, x + total + 10, y + size + 10],
-                    radius=10, fill=(0, 0, 0))
-        elif tmpl.get("box"):
-            # BorderStyle=3 opaque box (Opus Beasty / Pod P): dark box
-            # behind the whole phrase
-            d.rounded_rectangle(
-                [x - 10, y - 8, x + total + 10, y + size + 10],
-                radius=10, fill=(18, 18, 22))
-        elif engine == "highlight_box":
-            # marker stroke: black text with a thick yellow outline
-            box_c = _ass_to_rgb(tmpl.get("box_color", "&H0000E6FF&"))
-            d.text((x, y), w_the + " ", font=font, fill=(0, 0, 0),
-                   stroke_width=5, stroke_fill=box_c)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        elif engine == "box_snap":
-            # solid box: dark text on the colored box behind the active word
-            box_c = _ass_to_rgb(tmpl.get("box_color", "&H001409E5&"))
-            d.rounded_rectangle(
-                [x - 8, y - 6, x + w1 + 2, y + size + 8],
-                radius=8, fill=box_c)
-            d.text((x, y), w_the + " ", font=font, fill=(255, 255, 255),
-                   stroke_width=0)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        elif engine == "pill":
-            # yellow pill badge: dark text on the pill
-            pill_c = _ass_to_rgb(tmpl.get("box_color", "&H0000E6FF&"))
-            d.rounded_rectangle(
-                [x - 10, y - 6, x + w1 + 4, y + size + 8],
-                radius=(size + 14) // 2, fill=pill_c)
-            d.text((x, y), w_the + " ", font=font, fill=(30, 30, 30),
-                   stroke_width=0)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        if engine == "glow":
-            _text(x, y, w_the + " ", font, secondary,
-                  oc=glow_c, ow=outline_w + 3)
-        elif engine == "outline_fill":
-            # hollow active word: colored outline, no fill
-            d.text((x, y), w_the + " ", font=font, fill=(26, 26, 30),
-                   stroke_width=outline_w, stroke_fill=secondary)
-        elif engine == "wave":
-            _text(x, y - 8, w_the + " ", font, secondary)
-        elif engine == "stomp":
-            # slammed-in word: draw oversized
-            bigf = _load_font(tmpl["font"], int(size * 1.3),
-                              bool(tmpl["bold"]), bool(tmpl["italic"]))
-            _text(x, y - 6, w_the + " ", bigf, secondary)
-        elif engine == "float":
-            _text(x, y - 10, w_the + " ", font, secondary)
-        elif engine == "drop":
-            bigf = _load_font(tmpl["font"], int(size * 1.2),
-                              bool(tmpl["bold"]), bool(tmpl["italic"]))
-            _text(x, y - 14, w_the + " ", bigf, secondary)
-        elif engine == "shake":
-            _text(x + 3, y, w_the + " ", font, secondary)
-        elif engine == "reveal":
-            _text(x, y, w_the + " ", font, secondary)
-            d.rectangle([x + w1 - 4, y, x + w1 + 2, y + size], fill=secondary)
-        elif engine == "rotate":
-            _text(x + 2, y - 2, w_the + " ", font, secondary)
-        elif engine == "colour":
-            # purple wash behind the active word, no motion
-            wash_c = _ass_to_rgb(tmpl.get("wash_c", tmpl["secondary"]))
-            d.rounded_rectangle(
-                [x - 6, y - 4, x + w1 + 2, y + size + 6],
-                radius=6, fill=wash_c)
-            d.text((x, y), w_the + " ", font=font, fill=primary,
-                   stroke_width=0)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            return buf.getvalue()
-        elif engine == "dim":
-            _text(x, y, w_the + " ", font, secondary)
-        elif (tmpl.get("layout") == "two_tone" and tmpl.get("accent")):
-            # Mozi: white setup + lime punchline (bigger)
-            _text(x, y, w_the + " ", font, primary)
-        else:
-            _text(x, y, w_the + " ", font, secondary)
-        if engine == "underline":
-            bar_c = _ass_to_rgb(tmpl.get("bar_c", tmpl["secondary"]))
-            d.rectangle([x, y + size + 4, x + w1 - 4, y + size + 10],
-                        fill=bar_c)
-        if (tmpl.get("layout") == "two_tone" and tmpl.get("accent")):
-            accent = _ass_to_rgb(tmpl["accent"])
-            bigf = _load_font(tmpl["font"], int(size * 1.25),
-                              bool(tmpl["bold"]), bool(tmpl["italic"]))
-            d.text((x + w1, y - 4), w_quick, font=bigf, fill=accent,
-                   stroke_width=outline_w, stroke_fill=outline_c)
-        else:
-            quick_fill = (125, 125, 125) if engine in ("fade", "dim") \
-                else primary
-            _text(x + w1, y, w_quick, font, quick_fill)
+    # BACKGROUND treatment behind the whole line
+    bg = p.get("background", "none")
+    words_w = d.textlength(w_active + " " + w_rest, font=font)
+    x0 = (_CARD_W - words_w) / 2
+    y0 = (_CARD_H - size) / 2 - 6
+    if bg in ("box", "bar"):
+        alpha = 230 if bg == "box" else 130
+        bar = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        bd = ImageDraw.Draw(bar)
+        bd.rounded_rectangle(
+            [x0 - 10, y0 - 8, x0 + words_w + 10, y0 + size + 10],
+            radius=6 if bg == "box" else 12, fill=(0, 0, 0, alpha))
+        img = Image.alpha_composite(img.convert("RGBA"), bar).convert("RGB")
+        d = ImageDraw.Draw(img)
+    elif bg == "pill_line":
+        d.rounded_rectangle(
+            [x0 - 12, y0 - 10, x0 + words_w + 12, y0 + size + 12],
+            radius=(size + 20) // 2, fill=(20, 20, 24))
+
+    aw = d.textlength(w_active + " ", font=font)
+    ax = x0
+    # WORD HIGHLIGHT treatment on the active word
+    label = (em + " " if em else "") + w_active + (" " + em if em else "")
+    if hl == "box":
+        d.rounded_rectangle([ax - 6, y0 - 5, ax + aw + 2, y0 + size + 7],
+                            radius=6, fill=active)
+        d.text((ax, y0), label, font=font, fill=on_hl, stroke_width=0)
+    elif hl == "pill":
+        d.rounded_rectangle([ax - 8, y0 - 6, ax + aw + 4, y0 + size + 8],
+                            radius=(size + 14) // 2, fill=active)
+        d.text((ax, y0), label, font=font, fill=on_hl, stroke_width=0)
+    elif hl == "underline":
+        _text(ax, y0, label, font, active)
+        d.rectangle([ax, y0 + size + 4, ax + aw - 4, y0 + size + 9],
+                    fill=active)
+    elif hl == "wash":
+        d.rounded_rectangle([ax - 5, y0 - 4, ax + aw + 1, y0 + size + 6],
+                            radius=6, fill=active)
+        d.text((ax, y0), label, font=font, fill=primary, stroke_width=0)
+    elif hl == "glow":
+        _text(ax, y0, label, font, active, oc=active, ow=outline_w + 3)
+    elif hl == "outline":
+        d.text((ax, y0), label, font=font, fill=(26, 26, 30),
+               stroke_width=outline_w, stroke_fill=active)
+    elif hl == "dim":
+        _text(ax, y0, label, font, active)
+    else:  # color / none
+        fill = active if hl == "color" else primary
+        _text(ax, y0, label, font, fill)
+    # remaining words in the normal color
+    rest_fill = (125, 125, 125) if hl == "dim" else primary
+    _text(ax + aw, y0, w_rest, font, rest_fill)
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 
-class _TemplateCard(QWidget):
-    """One clickable template preview card."""
+_ANIM_BADGE = {
+    "pop": "⤴ pop", "spring": "⤴ spring", "stomp": "⬇ stomp",
+    "fade": "◐ fade", "rise": "⬆ rise", "fall": "⬇ drop",
+    "wipe": "➡ wipe", "jitter": "⚡ jitter", "rotate": "🔃 rotate",
+    "glowpulse": "✨ glow", "throb": "💓 throb", "typewriter": "⌨ type",
+    "slide": "➡ slide", "sweep": "🌈 sweep", "wave": "🌊 wave",
+    "none": "",
+}
+
+
+class _PresetCard(QWidget):
+    """One clickable preset card with an Applied ✓ badge."""
     clicked = Signal(str)
 
     def __init__(self, key: str, label: str, parent=None):
@@ -290,15 +213,14 @@ class _TemplateCard(QWidget):
         self._selected = False
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(4)
+        lay.setSpacing(2)
         self.img_lbl = QLabel()
         self.img_lbl.setAlignment(Qt.AlignCenter)
         self.img_lbl.setFixedSize(_CARD_W, _CARD_H)
         if _PIL_OK:
             try:
-                png = render_template_preview(key)
                 pm = QPixmap()
-                pm.loadFromData(png)
+                pm.loadFromData(render_template_preview(key))
                 self.img_lbl.setPixmap(pm)
             except Exception:  # noqa: BLE001
                 self.img_lbl.setText(label)
@@ -310,33 +232,11 @@ class _TemplateCard(QWidget):
         name = QLabel(label)
         name.setAlignment(Qt.AlignCenter)
         name.setStyleSheet("color:#ccc;font-size:11px;")
-        name.setWordWrap(True)
         lay.addWidget(name)
-        # animation badge so templates don't all look static
+        # animation badge
         try:
-            from ..text_captions import CAPTION_TEMPLATES
-            tmpl = CAPTION_TEMPLATES.get(key, {})
-            badge_txt = {
-                "pop": "▶ word pop",
-                "spring": "▶ spring",
-                "karaoke": "🎤 karaoke",
-                "wave": "🌊 wave",
-                "highlight_box": "🖍 highlight",
-                "underline": "➖ underline",
-                "outline_fill": "▢ fill",
-                "glow": "✨ glow",
-                "fade": "◐ fade",
-                "typewriter": "⌨ typewriter",
-                "solo": "🔍 solo pop",
-                "box_snap": "⬛ box snap",
-                "pill": "💊 pill pop",
-                "bar": "📶 caption bar",
-                "glide": "➡ glide",
-                "gradient": "🌈 gradient",
-                "sticker": "🏷 sticker",
-                "glitch": "⚡ glitch",
-                "pulse": "💓 pulse",
-            }.get(tmpl.get("engine", ""), "")
+            badge_txt = _ANIM_BADGE.get(
+                CAPTION_TEMPLATES.get(key, {}).get("active_anim", ""), "")
             if badge_txt:
                 badge = QLabel(badge_txt)
                 badge.setAlignment(Qt.AlignCenter)
@@ -345,19 +245,29 @@ class _TemplateCard(QWidget):
                 lay.addWidget(badge)
         except Exception:  # noqa: BLE001
             pass
+        # Applied ✓ badge (visible only on the selected card)
+        self.applied = QLabel("✓ Applied")
+        self.applied.setAlignment(Qt.AlignCenter)
+        self.applied.setStyleSheet(
+            "color:#0a0;font-size:12px;font-weight:bold;")
+        self.applied.setVisible(False)
+        lay.addWidget(self.applied)
         self.setCursor(Qt.PointingHandCursor)
         self._refresh_style()
 
     def _refresh_style(self):
         if self._selected:
             self.setStyleSheet(
-                "background:#2a4a6a;border:2px solid #4da3ff;border-radius:10px;")
+                "background:#1d3a2a;border:2px solid #2ecc71;"
+                "border-radius:10px;")
         else:
             self.setStyleSheet(
-                "background:#232327;border:2px solid transparent;border-radius:10px;")
+                "background:#232327;border:2px solid transparent;"
+                "border-radius:10px;")
 
     def set_selected(self, sel: bool):
         self._selected = sel
+        self.applied.setVisible(sel)
         self._refresh_style()
 
     def mousePressEvent(self, ev):  # noqa: D102
@@ -366,7 +276,6 @@ class _TemplateCard(QWidget):
 
     def mouseDoubleClickEvent(self, ev):  # noqa: D102
         self.clicked.emit(self.key)
-        # find the dialog and accept
         w = self
         while w is not None and not isinstance(w, CaptionGalleryDialog):
             w = w.parentWidget()
@@ -376,50 +285,44 @@ class _TemplateCard(QWidget):
 
 
 class CaptionGalleryDialog(QDialog):
-    """CapCut-style template picker grid."""
+    """Preset library browser: categories on the left, preset cards right.
+
+    Clicking a card immediately applies it (✓ Applied badge); Use Template
+    confirms the dialog. selected_key flows into render settings and the
+    post-render caption restyle path.
+    """
 
     def __init__(self, current_key: str = "", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Caption Templates - CapCut Style")
-        self.setMinimumSize(760, 580)
+        self.setWindowTitle("Caption Presets")
+        self.setMinimumSize(900, 600)
         self.selected_key = current_key or DEFAULT_CAPTION_TEMPLATE
         self._cards = {}
         self._category = "All"
 
         lay = QVBoxLayout(self)
-        # search row
         top = QHBoxLayout()
         top.addWidget(QLabel("Search:"))
         self.search = QLineEdit()
-        self.search.setPlaceholderText("type a style name...")
+        self.search.setPlaceholderText("type a preset name...")
         self.search.textChanged.connect(self._filter)
         top.addWidget(self.search, 1)
         lay.addLayout(top)
 
-        # CapCut-style category tabs
-        try:
-            from ..text_captions import CAPTION_TEMPLATE_CATEGORIES
-        except Exception:
-            CAPTION_TEMPLATE_CATEGORIES = []
-        cats = ["All"] + [c for c in CAPTION_TEMPLATE_CATEGORIES
-                if c != "All"]
-        self._cat_btns = {}
-        if len(set(cats)) > 1:
-            tabrow = QHBoxLayout()
-            tabrow.setSpacing(4)
-            for cat in cats:
-                b = QPushButton(cat)
-                b.setCheckable(True)
-                b.setChecked(cat == self._category)
-                b.setStyleSheet(
-                    "QPushButton{background:#232326;color:#ccc;border:1px solid #333;"
-                    "border-radius:10px;padding:4px 10px;}"
-                    "QPushButton:checked{background:#0aa;color:#fff;}")
-                b.clicked.connect(lambda _c=False, c=cat: self._set_category(c))
-                tabrow.addWidget(b)
-                self._cat_btns[cat] = b
-            tabrow.addStretch(1)
-            lay.addLayout(tabrow)
+        split = QSplitter(Qt.Horizontal)
+        # category browser
+        self.cat_list = QListWidget()
+        self.cat_list.setMaximumWidth(170)
+        self.cat_list.setStyleSheet(
+            "QListWidget{background:#1a1a1e;color:#ccc;border:none;}"
+            "QListWidget::item{padding:6px;}"
+            "QListWidget::item:selected{background:#0a6e4e;color:#fff;}")
+        self.cat_list.addItem("All (120)")
+        for label, count in caption_category_labels():
+            self.cat_list.addItem("%s (%d)" % (label, count))
+        self.cat_list.setCurrentRow(0)
+        self.cat_list.currentRowChanged.connect(self._on_category_row)
+        split.addWidget(self.cat_list)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -427,7 +330,10 @@ class CaptionGalleryDialog(QDialog):
         self.grid = QGridLayout(self.grid_host)
         self.grid.setSpacing(8)
         scroll.setWidget(self.grid_host)
-        lay.addWidget(scroll, 1)
+        split.addWidget(scroll)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        lay.addWidget(split, 1)
 
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -444,14 +350,16 @@ class CaptionGalleryDialog(QDialog):
         self._populate("")
         self.setStyleSheet("QDialog{background:#141416;}")
 
-    def _set_category(self, cat: str):
-        self._category = cat
-        for c, b in self._cat_btns.items():
-            b.setChecked(c == cat)
+    def _on_category_row(self, row: int):
+        item = self.cat_list.item(row)
+        if item is None:
+            return
+        text = item.text()
+        self._category = "All" if text.startswith("All") else text.rsplit(
+            " (", 1)[0]
         self._populate(self.search.text())
 
     def _populate(self, filt: str):
-        # clear
         while self.grid.count():
             it = self.grid.takeAt(0)
             if it.widget():
@@ -460,15 +368,14 @@ class CaptionGalleryDialog(QDialog):
         filt = (filt or "").lower()
         cols = 3
         r = c = 0
-        items = list(CAPTION_TEMPLATES.items())
-        for key, tmpl in items:
-            label = tmpl["label"]
+        for key, p in CAPTION_TEMPLATES.items():
+            label = p["label"]
             if (self._category != "All"
-                    and tmpl.get("category") != self._category):
+                    and p.get("category") != self._category):
                 continue
             if filt and filt not in label.lower() and filt not in key.lower():
                 continue
-            card = _TemplateCard(key, label)
+            card = _PresetCard(key, label)
             card.clicked.connect(self._on_card_clicked)
             card.set_selected(key == self.selected_key)
             self.grid.addWidget(card, r, c)
@@ -482,6 +389,7 @@ class CaptionGalleryDialog(QDialog):
         self._populate(text)
 
     def _on_card_clicked(self, key: str):
+        # click-to-apply: the preset takes effect immediately (✓ badge)
         self.selected_key = key
         for k, card in self._cards.items():
             card.set_selected(k == key)
