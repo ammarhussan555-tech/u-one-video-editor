@@ -119,6 +119,45 @@ def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
     return out
 
 
+def estimate_word_timings(sentence_timings):
+    """Deterministic fallback word timings when Whisper is unavailable.
+
+    faster-whisper is an optional (unbundled) dependency, so uploaded
+    voiceovers often have no measured word boundaries. Without word
+    timings, build_ass() silently renders every preset as SIMPLE static
+    captions -- whichever style the user picked. This distributes each
+    sentence's duration across its words proportionally to word length
+    (mirroring get_sentence_timings()' long-standing proportional
+    fallback), so the active-word highlight stays approximately synced
+    and all 120 presets animate. These are ESTIMATES, not measured
+    timings; Whisper remains the accurate path when installed.
+    Returns a list of {word, start, end} or None if there is nothing
+    to distribute.
+    """
+    words = []
+    for s in sentence_timings or []:
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        parts = text.split()
+        if not parts:
+            continue
+        start = float(s.get("start", 0.0))
+        end = float(s.get("end", start))
+        if end <= start:
+            end = start + max(0.4 * len(parts), 0.5)
+        weights = [len(w) + 1 for w in parts]  # +1 for the trailing space
+        total = sum(weights) or 1
+        dur = end - start
+        t = start
+        for i, w in enumerate(parts):
+            w_end = end if i == len(parts) - 1 else t + dur * weights[i] / total
+            words.append({"word": w, "start": round(t, 3),
+                          "end": round(w_end, 3)})
+            t += dur * weights[i] / total
+    return words or None
+
+
 def whisper_word_timings(audio_path):
     """Best-effort word-level timings via faster-whisper.
 
