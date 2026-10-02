@@ -1,30 +1,34 @@
-"""Universal Semantic SFX Engine.
+"""Universal Semantic SFX Engine — decision layer.
 
-Decides, per scene, whether a sound effect is needed and — if so — which
-one, when, how loud, and for how long. Works across ALL video niches:
-there are no niche-specific hardcoded rules anywhere in this module.
+Fixes SFX selection and repetition at the ENGINE level (2026-10-02 spec).
+A dedicated decision layer runs BEFORE anything is placed on the timeline:
 
-Four inputs per scene (derived from data the pipeline already has):
-  1. SCRIPT/NARRATION — scene text, keywords, numbers, phrases
-  2. VISUAL CONTENT  — clip metadata (Asset.tags + Asset.query)
-  3. VISUAL ACTION    — action verbs (narration) + motion words (visual tags);
-                       marked LOW confidence when narration-only
-  4. SCENE MOOD      — per-sentence mood + video-level mood
+    SCRIPT + VISUAL
+      -> EVENT DETECTION          (what is happening? a noun is NOT an event)
+      -> SCENE CLASSIFICATION    (REQUIRED / OPTIONAL / NO SFX)
+      -> AUDIO EVENT             (what would this event sound like?)
+      -> SFX CATEGORY            (universal taxonomy, extensible)
+      -> SFX CANDIDATES          (every playable asset for the category)
+      -> RANKING                 (9 factors -> final score)
+      -> REPETITION CHECK        (global history: file / category / meaning)
+      -> FINAL SFX or NO SFX     (never force a weak match)
 
-Core principle: semantic EVENTS, not keywords. A detector fires only when
-the signals describe a real sound-producing event. When in doubt the
-engine decides NO SFX (confidence < 0.60).
+Works across ALL video niches: no niche-specific hardcoded rules anywhere.
 
-Decision format per scene:
+Per-scene decision format:
   {"sfx_required": bool, "reason": str, "confidence": float,
-   "events": [{"type", "sfx_category", "start_time", "duration",
-               "volume", "fade_in", "fade_out"}]}
+   "classification": "REQUIRED"|"OPTIONAL"|"NO_SFX",
+   "events": [{"type", "sfx_category", "sfx", "start_time", "duration",
+               "volume", "gain_db", "fade_in", "fade_out"}],
+   "debug": {...}}
+
+NO SFX is a successful result, never an error.
 """
 from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # ---------------------------------------------------------------------------
 # Confidence bands (user spec)
@@ -32,7 +36,37 @@ from dataclasses import dataclass, field
 CONF_VERY_STRONG = 0.90   # 0.90 - 1.00
 CONF_STRONG = 0.75        # 0.75 - 0.89
 CONF_POSSIBLE = 0.60      # 0.60 - 0.74
-CONF_FLOOR = 0.60         # below -> prefer NO SFX (rule 15)
+CONF_FLOOR = 0.60         # below -> prefer NO SFX
+
+# Scene classifications
+REQUIRED = "REQUIRED"     # scene needs this sound (clear sound event)
+OPTIONAL = "OPTIONAL"     # sound plausible / enhancing (needs high score)
+NO_SFX_CLASS = "NO_SFX"   # scene class C: add nothing, always
+
+# ---------------------------------------------------------------------------
+# Engine configuration — every limit from the user spec, tunable in one place
+# ---------------------------------------------------------------------------
+@dataclass
+class SFXConfig:
+    exact_file_cooldown_s: float = 20.0   # E: no same file within 20 s
+    max_file_uses: int = 2                # E: max 2x per video ...
+    allow_repetition: bool = False        # E: ... unless user enables this
+    category_cooldown_s: float = 15.0     # F: 10-20 s between same category
+    similarity_cooldown_s: float = 15.0   # H: same meaning = same group
+    min_confidence_required: float = 0.60 # A: REQUIRED threshold
+    min_confidence_optional: float = 0.75 # A: high-confidence B only
+    min_confidence_cinematic: float = 0.85  # I: generic cinematic bar
+    max_major_per_scene: int = 1          # K
+    max_events_per_10s: int = 3           # K
+    max_cinematic_per_10s: int = 1        # K
+    max_transition_per_8s: int = 1        # K
+    narration_duck_db: float = -4.0       # rule: never overpower narration
+    merge_gap_s: float = 5.0              # G: consecutive same-event scenes
+    enable_transition_sfx: bool = True
+    debug: bool = False
+
+
+DEFAULT_CONFIG = SFXConfig()
 
 # ---------------------------------------------------------------------------
 # Taxonomy registry — extensible via register_category() with NO core changes
@@ -43,14 +77,15 @@ class SFXCategory:
     label: str
     description: str
     # sfx names (audio_design.SFX_BUILDERS keys) in preference order.
-    # Real recordings first. EMPTY list + no synth_fallback => the engine
-    # will never play this category (rule: never play a wrong sound).
+    # Real recordings first. EMPTY list => the engine never plays this
+    # category (rule: never play a wrong sound).
     assets: list = field(default_factory=list)
     default_duration: float = 1.0
     default_volume: float = 0.5          # linear 0..1, pre-ducking
-    peak_offset: float = 0.05            # peak sits this far into the sound
+    peak_offset: float = 0.05           # peak sits this far into the sound
     layer_with: list = field(default_factory=list)  # category ids
-    ambience: bool = False               # continuous bed while scene lasts
+    ambience: bool = False              # continuous bed while scene lasts
+    cinematic: bool = False             # generic cinematic sound (sect. I)
 
 
 CATEGORIES: dict[str, SFXCategory] = {}
@@ -62,9 +97,9 @@ def register_category(cat: SFXCategory) -> None:
 
 
 def _reg(cid, label, desc, assets, dur=1.0, vol=0.5, peak=0.05,
-         layer=(), amb=False):
+         layer=(), amb=False, cin=False):
     register_category(SFXCategory(cid, label, desc, list(assets), dur, vol,
-                                  peak, list(layer), amb))
+                                  peak, list(layer), amb, cin))
 
 
 # --- Nature / weather / water / animals ------------------------------------
@@ -139,20 +174,22 @@ _reg("space", "Space / launch", "rocket rumble, deep launch beds",
      ["rumble"], dur=2.5, vol=0.65, peak=0.4, layer=["explosions"])
 # --- Navigation / camera --------------------------------------------------------------
 _reg("maps", "Maps / navigation", "map motion", ["swoosh"], dur=0.6,
-     vol=0.35)
+     vol=0.35, cin=True)
 _reg("camera_move", "Camera movement", "pans, aerials, drone moves",
-     ["whoosh"], dur=0.8, vol=0.35)
-_reg("zoom", "Zoom", "zoom in/out motion", ["swoosh"], dur=0.6, vol=0.32)
-# --- Editorial --------------------------------------------------------------------------
+     ["whoosh"], dur=0.8, vol=0.35, cin=True)
+_reg("zoom", "Zoom", "zoom in/out motion", ["swoosh"], dur=0.6, vol=0.32,
+     cin=True)
+# --- Editorial (generic cinematic — section I: very high threshold) ---------------------
 _reg("transitions", "Transitions", "scene cuts and wipes", ["whoosh"],
-     dur=0.45, vol=0.30, peak=0.22)
+     dur=0.45, vol=0.30, peak=0.22, cin=True)
 _reg("reveals", "Reveals", "big on-screen reveals", ["impact"], dur=1.0,
-     vol=0.45, peak=0.05)
+     vol=0.45, peak=0.05, cin=True)
 _reg("tension", "Tension", "build-up before a payoff", ["riser"], dur=1.6,
-     vol=0.45, peak=1.4)
+     vol=0.45, peak=1.4, cin=True)
 _reg("suspense", "Suspense", "uneasy beds", ["riser"], dur=2.0, vol=0.35,
-     peak=1.8)
-_reg("mystery", "Mystery", "quiet intrigue", ["riser"], dur=2.0, vol=0.28)
+     peak=1.8, cin=True)
+_reg("mystery", "Mystery", "quiet intrigue", ["riser"], dur=2.0, vol=0.28,
+     cin=True)
 _reg("horror", "Horror atmosphere", "dark dread beds", ["wind"], dur=3.0,
      vol=0.30, amb=True)
 # --- Ambience ------------------------------------------------------------------------------
@@ -170,7 +207,29 @@ _reg("fire", "Fire", "flames, burning — no suitable asset",
      [], dur=2.0, vol=0.4, amb=True)
 
 # ---------------------------------------------------------------------------
-# Scene context — the four inputs
+# Semantic similarity groups (section H): compare MEANING, not filenames.
+# "cinematic boom 01" / "cinematic boom 02" / "cinematic impact 01" are one
+# repetition group. Hard groups block re-use inside the similarity cooldown;
+# soft groups only add a penalty.
+# ---------------------------------------------------------------------------
+SIMILARITY_GROUPS = {
+    "heavy_hit": ({"boom", "impact", "punch"}, True),
+    "air_sweep": ({"whoosh", "swoosh"}, True),
+    "build": ({"riser"}, True),
+    "ui_blip": ({"tick", "pop", "ding", "digital", "camera", "sparkle"},
+                False),
+}
+
+
+def _similarity_group(asset: str):
+    for gid, (members, hard) in SIMILARITY_GROUPS.items():
+        if asset in members:
+            return gid, hard
+    return None, False
+
+
+# ---------------------------------------------------------------------------
+# Scene context — the four inputs (+ neighbours for prev/next analysis)
 # ---------------------------------------------------------------------------
 @dataclass
 class SceneContext:
@@ -188,10 +247,13 @@ class SceneContext:
     narration_present: bool = True
     action_repeat: bool = False      # "another", "again", "second" ...
     visual_signal: bool = False      # any visual metadata at all
+    prev: object = None              # previous SceneContext (set by planner)
+    next: object = None              # next SceneContext (set by planner)
+    scene_id: int = 0
 
 
-# Action verb families. "narrated" = verb in narration only (LOWER
-# confidence); "visual" = motion word in the clip metadata itself.
+# Action verb families. "visual" = the verb (or the event noun acting as one)
+# appears in the clip metadata itself; "narrated" = narration only.
 _ACTION_VERBS = {
     "open": ["open", "opens", "opened", "opening", "unlock"],
     "close": ["close", "closes", "closed", "closing", "shut"],
@@ -214,10 +276,13 @@ _ACTION_VERBS = {
     "cheer": ["cheer", "cheers", "cheering", "applaud", "chant"],
     "rain": ["rain", "raining", "pour"],
     "burn": ["burn", "burns", "burning", "fire", "flames"],
+    "erupt": ["erupt", "erupts", "erupted", "erupting", "eruption"],
+    "crash": ["crash", "crashes", "crashed", "collision", "collide",
+              "collided", "wreck"],
 }
-_MOTION_TAGS = ["zoom", "pan", "aerial", "drone", "driving", "flying",
-                "moving", "motion", "tracking", "orbit", "timelapse",
-                "slowmo", "slow-motion"]
+# Camera-motion tags: movement OF the camera, not of subjects.
+_CAMERA_TAGS = ["zoom", "pan", "aerial", "drone", "tracking", "orbit",
+                "timelapse", "dolly", "crane", "gimbal", "tilt"]
 _REPEAT_WORDS = ["another", "again", "second", "once more", "repeated"]
 
 
@@ -236,8 +301,8 @@ def extract_actions(narration: str, visual_text: str):
             found.append((verb, "visual"))
         elif n_hit:
             found.append((verb, "narrated"))
-    for m in _MOTION_TAGS:
-        if _wb(vis, m) and not any(v == "zoom" and m == "zoom" for v, _ in found):
+    for m in _CAMERA_TAGS:
+        if _wb(vis, m):
             found.append(("camera_move", "visual"))
     return found
 
@@ -251,7 +316,7 @@ def build_scene_contexts(scenes, analyses, timings, vtags, video_mood="neutral")
         vtext = (vtags[i] if vtags and i < len(vtags) else "") or ""
         narr = getattr(sa, "text", "") or getattr(sc, "text", "") or ""
         actions = extract_actions(narr, vtext)
-        ctxs.append(SceneContext(
+        c = SceneContext(
             narration=narr,
             keywords=list(getattr(sa, "keywords", []) or []),
             numbers=list(getattr(sa, "numbers", []) or []),
@@ -265,24 +330,38 @@ def build_scene_contexts(scenes, analyses, timings, vtags, video_mood="neutral")
             narration_present=bool(narr.strip()),
             action_repeat=any(_wb(narr.lower(), w) for w in _REPEAT_WORDS),
             visual_signal=bool(vtext.strip()),
-        ))
-    for c in ctxs:
+            scene_id=i,
+        )
         c.duration = max(0.2, c.end - c.start)
+        ctxs.append(c)
     return ctxs
 
 
 # ---------------------------------------------------------------------------
-# Detector candidates
+# Audio events — WHAT IS HAPPENING, before what it sounds like.
+# HARD RULE: a noun is NOT an event. Detectors require event evidence
+# (an action, a state change, an appearing/disappearing thing), never a
+# bare noun in narration or tags.
 # ---------------------------------------------------------------------------
 @dataclass
-class Candidate:
-    category: str | None     # None => explicit NO-SFX verdict
-    confidence: float
-    reason: str
-    anchor: str = "action"   # action | start | end | cut
+class AudioEvent:
+    event_type: str
+    description: str
+    classification: str            # REQUIRED | OPTIONAL | NONE
+    category_hint: str | None = None
+    confidence: float = 0.0        # for explicit NONE verdicts
+    anchor: str = "action"         # action | start | end | cut
     anchor_frac: float = 0.25
     volume_scale: float = 1.0
     layer: bool = False
+    # ranking evidence, 0..1
+    semantic: float = 0.7
+    visual: float = 0.7
+    action: float = 0.7
+    timing: float = 0.8
+    context: float = 0.7
+    cinematic: bool = False        # generic cinematic sound? (section I)
+    justification: float = 0.0     # 0..1: how strongly the edit calls for it
 
 
 def _acts(ctx, *verbs):
@@ -299,172 +378,488 @@ def _nhas(ctx, *words):
     return any(_wb(nt, w) for w in words)
 
 
-# --- individual detectors: semantic events, never bare keywords -------------
-def _d_talking_head(ctx):
-    """Person standing and talking, no meaningful action -> NO SFX."""
+# --- event detectors -------------------------------------------------------
+def _ev_talking_head(ctx, prev, nxt, env):
     if _vhas(ctx, "talking", "speaking", "interview", "anchor", "podcast",
-             "person talking", "man speaking", "woman speaking"):
+             "person talking", "man speaking", "woman speaking",
+             "news anchor", "presenter"):
         if not _acts(ctx, "open", "close", "slam", "break", "launch",
-                     "explode", "hit", "fall", "drive", "fly", "cheer",
-                     "appear", "zoom"):
-            return Candidate(None, 0.95,
-                             "Person talking on screen; no meaningful "
-                             "physical action.", anchor="start")
-    return None
+                     "explode", "erupt", "hit", "fall", "drive", "fly",
+                     "cheer", "appear", "zoom", "crash", "camera_move"):
+            return [AudioEvent("talking_head",
+                               "Person talking on screen; no meaningful "
+                               "physical action.", "NONE", confidence=0.95)]
+    return []
 
 
-def _d_explosion(ctx):
-    vis = _vhas(ctx, "explosion", "blast", "missile", "airstrike",
-                "bombing", "fireball", "detonat")
-    narr = _nhas(ctx, "explosion", "detonat", "airstrike", "bombing")
+def _ev_explosion(ctx, prev, nxt, env):
+    vt = ctx.visual_text.lower()
+    active = _vhas(ctx, "explosion", "fireball", "detonat", "missile",
+                   "airstrike", "bombing")
+    if not active:
+        return []  # narration-only mention => NO EVENT (hard rule)
+    aftermath = any(_wb(vt, w) for w in
+                    ("aftermath", "ruins", "rubble", "debris"))
+    live_fire = any(_wb(vt, w) for w in
+                    ("fire", "fireball", "burning", "flames"))
+    if aftermath and not live_fire:
+        # The event already passed — unless the previous scene showed the
+        # blast itself, in which case this is a continuation (handled by
+        # dedup), not a new event either way.
+        return [AudioEvent("explosion_aftermath",
+                           "Explosion aftermath on screen; the blast itself "
+                           "already passed.", "NONE", confidence=0.80)]
     acts = _acts(ctx, "explode")
-    if vis:
-        # aftermath / ruins / debris WITHOUT active fire = the event
-        # already passed; a new boom here would mistime the sound
-        # (rule 9/10). Active fire keeps it a live event.
-        vt = ctx.visual_text.lower()
-        aftermath = any(_wb(vt, w) for w in
-                        ("aftermath", "ruins", "rubble", "debris"))
-        live_fire = any(_wb(vt, w) for w in
-                        ("fire", "fireball", "burning", "flames"))
-        if aftermath and not live_fire:
-            return Candidate("explosions", 0.55,
-                             "Explosion aftermath on screen; the event "
-                             "already passed.", anchor="action",
-                             anchor_frac=0.15)
-        if narr or acts:
-            return Candidate("explosions", 0.95,
-                             "Explosion visible on screen, confirmed by "
-                             "narration.", anchor="action", anchor_frac=0.15)
-        return Candidate("explosions", 0.85,
-                         "Explosion visible on screen.", anchor="action",
-                         anchor_frac=0.15)
-    return None  # narration-only mention stays below the floor (rule 15)
+    narr = _nhas(ctx, "explosion", "detonat", "airstrike", "bombing",
+                 "exploded", "blast")
+    vis_action = bool(acts and acts[0][1] == "visual")
+    return [AudioEvent(
+        "explosion", "Explosion visible on screen.",
+        "REQUIRED", category_hint="explosions",
+        anchor="action", anchor_frac=0.15,
+        semantic=1.0 if narr else 0.6,
+        visual=1.0 if vis_action else 0.85,
+        action=1.0 if acts else 0.7,
+        timing=0.95, context=0.9)]
 
 
-def _d_crowd(ctx):
-    if _vhas(ctx, "crowd", "protest", "rally", "audience", "demonstration",
-             "march", "supporters", "cheering"):
-        return Candidate("crowd", 0.85, "Crowd visible on screen.",
-                         anchor="start", volume_scale=0.9)
-    return None
+def _ev_eruption(ctx, prev, nxt, env):
+    if not _vhas(ctx, "volcano", "eruption"):
+        return []
+    active = _vhas(ctx, "erupting", "eruption", "lava", "ash")
+    if not active:
+        return []  # noun only ("volcano") => NO EVENT (hard rule)
+    acts = _acts(ctx, "erupt", "explode", "burn")
+    vis_action = bool(acts and acts[0][1] == "visual")
+    return [AudioEvent(
+        "eruption", "Volcano erupting on screen.",
+        "REQUIRED" if vis_action else "OPTIONAL",
+        category_hint="explosions", anchor="action", anchor_frac=0.2,
+        semantic=0.9 if _nhas(ctx, "erupt") else 0.6,
+        visual=1.0 if vis_action else 0.8, action=1.0 if acts else 0.6,
+        timing=0.9, context=0.85)]
 
 
-def _d_door(ctx):
+def _ev_crash(ctx, prev, nxt, env):
+    if not _vhas(ctx, "crash", "collision", "wreck"):
+        return []
+    acts = _acts(ctx, "crash", "hit", "fall")
+    vis_action = bool(acts and acts[0][1] == "visual")
+    if not acts and not _nhas(ctx, "crash", "collision", "collided"):
+        return []  # noun only => NO EVENT
+    return [AudioEvent(
+        "crash", "Collision visible on screen.",
+        "REQUIRED" if vis_action else "OPTIONAL",
+        category_hint="crashes", anchor="action", anchor_frac=0.2,
+        semantic=0.9, visual=1.0 if vis_action else 0.75,
+        action=1.0 if acts else 0.6, timing=0.9, context=0.8)]
+
+
+def _ev_door(ctx, prev, nxt, env):
     if not _vhas(ctx, "door", "gate", "entrance"):
-        return None
+        return []
     acts = _acts(ctx, "open", "close", "slam")
-    if acts and acts[0][1] == "visual":
-        return Candidate("doors", 0.92, "Door action visible on screen.",
-                         anchor="action", anchor_frac=0.3)
-    if acts:
-        return Candidate("doors", 0.78,
-                         "Door on screen; opening/closing narrated.",
-                         anchor="action", anchor_frac=0.3)
-    return Candidate("doors", 0.62, "Door visible; movement implied.",
-                     anchor="action", anchor_frac=0.4, volume_scale=0.7)
+    if not acts:
+        return []  # a door just sitting there makes no sound (hard rule)
+    vis_action = acts[0][1] == "visual"
+    return [AudioEvent(
+        "door_action", "Door opens/closes on screen.",
+        "REQUIRED" if vis_action else "OPTIONAL",
+        category_hint="doors", anchor="action", anchor_frac=0.3,
+        semantic=0.9, visual=1.0 if vis_action else 0.7,
+        action=1.0, timing=0.95, context=0.7)]
 
 
-def _d_glass(ctx):
+def _ev_glass(ctx, prev, nxt, env):
     acts = _acts(ctx, "break")
-    if acts and _vhas(ctx, "glass", "window", "mirror"):
-        conf = 0.90 if acts[0][1] == "visual" else 0.80
-        return Candidate("glass", conf, "Glass breaking on screen.",
-                         anchor="action", anchor_frac=0.3)
-    if _nhas(ctx, "shattered", "smashed") and _vhas(ctx, "glass"):
-        return Candidate("glass", 0.72, "Shattered glass shown.",
-                         anchor="action", anchor_frac=0.3)
-    return None
+    if not acts or not _vhas(ctx, "glass", "window", "mirror"):
+        return []
+    vis_action = acts[0][1] == "visual"
+    return [AudioEvent(
+        "glass_break", "Glass breaking on screen.",
+        "REQUIRED" if vis_action else "OPTIONAL",
+        category_hint="glass", anchor="action", anchor_frac=0.3,
+        semantic=0.9, visual=1.0 if vis_action else 0.75,
+        action=1.0, timing=0.95, context=0.7)]
 
 
-def _d_thunder(ctx):
-    if _vhas(ctx, "lightning", "thunderstorm", "storm"):
-        return Candidate("weather", 0.85, "Lightning/storm visible.",
-                         anchor="action", anchor_frac=0.2)
-    return None
+def _ev_thunder(ctx, prev, nxt, env):
+    if not _vhas(ctx, "lightning", "thunderstorm"):
+        return []  # "rain"/"storm" in narration alone => NO EVENT
+    return [AudioEvent(
+        "thunderstorm", "Lightning visible; thunder follows.",
+        "REQUIRED", category_hint="weather",
+        anchor="action", anchor_frac=0.2,
+        semantic=0.9 if _nhas(ctx, "lightning", "thunder", "storm") else 0.6,
+        visual=1.0, action=0.6, timing=0.85, context=0.8)]
 
 
-def _d_rocket(ctx):
-    if not _vhas(ctx, "rocket", "spacecraft", "missile", "shuttle"):
-        return None
+def _ev_rocket(ctx, prev, nxt, env):
+    if not _vhas(ctx, "rocket", "spacecraft", "shuttle"):
+        return []
     acts = _acts(ctx, "launch")
-    if acts:
-        return Candidate("space", 0.93, "Rocket launch on screen.",
-                         anchor="action", anchor_frac=0.1, layer=True)
-    return Candidate("space", 0.66, "Rocket on screen; launch implied.",
-                     anchor="action", anchor_frac=0.2, volume_scale=0.7)
+    if not acts:
+        return []  # rocket on the pad, noun only => NO EVENT
+    vis_action = acts[0][1] == "visual"
+    return [AudioEvent(
+        "rocket_launch", "Rocket launching on screen.",
+        "REQUIRED" if vis_action else "OPTIONAL",
+        category_hint="space", anchor="action", anchor_frac=0.1,
+        layer=True, semantic=1.0, visual=1.0 if vis_action else 0.8,
+        action=1.0, timing=0.95, context=0.85)]
 
 
-def _d_map_zoom(ctx):
+def _ev_map_zoom(ctx, prev, nxt, env):
     if not _vhas(ctx, "map"):
-        return None
+        return []
     acts = _acts(ctx, "zoom")
-    if acts:
-        conf = 0.82 if acts[0][1] == "visual" else 0.74
-        return Candidate("zoom", conf, "Map zoom motion.", anchor="action",
-                         anchor_frac=0.2, volume_scale=0.8)
-    if ("camera_move", "visual") in ctx.actions:
-        return Candidate("maps", 0.68, "Map with camera motion.",
-                         anchor="action", anchor_frac=0.2, volume_scale=0.7)
-    return None
+    if not acts:
+        return []  # static map => NO EVENT
+    vis_action = acts[0][1] == "visual"
+    return [AudioEvent(
+        "map_zoom", "Map zoom motion on screen.",
+        "OPTIONAL", category_hint="zoom",
+        anchor="action", anchor_frac=0.2, volume_scale=0.8,
+        semantic=0.6, visual=1.0 if vis_action else 0.7, action=1.0,
+        timing=0.95, context=0.7, cinematic=True,
+        justification=0.8 if vis_action else 0.5)]
 
 
-def _d_photo(ctx):
-    """Historical photograph: NO random sound. Only a subtle shutter when
-    the photo visibly appears/lands — otherwise nothing."""
+def _ev_camera_move(ctx, prev, nxt, env):
+    if not any(v == "camera_move" and s == "visual"
+               for v, s in ctx.actions):
+        return []
+    motion_words = [m for m in _CAMERA_TAGS if _wb(ctx.visual_text.lower(), m)]
+    strong = len(motion_words) >= 1 and _vhas(
+        ctx, "aerial", "drone", "fast", "sweep", "flyover")
+    return [AudioEvent(
+        "camera_move", "Camera in motion (%s)." % "/".join(motion_words[:2]),
+        "OPTIONAL", category_hint="camera_move",
+        anchor="start", volume_scale=0.8,
+        semantic=0.5, visual=1.0 if strong else 0.8, action=0.9,
+        timing=0.8, context=0.7, cinematic=True,
+        justification=0.8 if strong else 0.45)]
+
+
+def _ev_crowd(ctx, prev, nxt, env):
+    if not _vhas(ctx, "crowd", "protest", "rally", "audience",
+                 "demonstration", "march", "supporters"):
+        return []
+    cheering = _vhas(ctx, "cheer", "applause", "chant") or \
+        _nhas(ctx, "cheer", "applause", "chant", "roar")
+    return [AudioEvent(
+        "crowd", "Crowd on screen.",
+        "REQUIRED" if cheering else "OPTIONAL",
+        category_hint="crowd", anchor="start", volume_scale=0.9,
+        semantic=0.85 if _nhas(ctx, "crowd", "rally", "protest",
+                               "supporters") else 0.6,
+        visual=1.0, action=0.8 if cheering else 0.5, timing=0.8,
+        context=0.85)]
+
+
+def _ev_siren(ctx, prev, nxt, env):
+    if not _vhas(ctx, "siren", "police", "ambulance", "emergency",
+                 "fire truck", "patrol"):
+        return []  # "emergency" in narration alone => NO EVENT
+    return [AudioEvent(
+        "siren_vehicle", "Emergency vehicle on screen.",
+        "OPTIONAL", category_hint="sirens",
+        anchor="start", volume_scale=0.9,
+        semantic=0.7 if _nhas(ctx, "siren", "police", "ambulance",
+                              "emergency") else 0.5,
+        visual=1.0, action=0.7, timing=0.8, context=0.7)]
+
+
+def _ev_photo(ctx, prev, nxt, env):
     if not _vhas(ctx, "photo", "photograph", "archival", "portrait",
                  "historical"):
-        return None
+        return []
     acts = _acts(ctx, "appear")
-    if acts:
-        return Candidate("ui", 0.62,
-                         "Photograph appears; subtle shutter justified.",
-                         anchor="action", anchor_frac=0.2, volume_scale=0.5)
-    return Candidate(None, 0.80,
-                     "Still photograph on screen; no sound event.")
+    if not acts:
+        # Still photograph: NO random sound, ever (user spec example).
+        return [AudioEvent("still_photo",
+                           "Still photograph on screen; no sound event.",
+                           "NONE", confidence=0.85)]
+    return [AudioEvent(
+        "photo_appear", "Photograph appears on screen.",
+        "OPTIONAL", category_hint="ui",
+        anchor="action", anchor_frac=0.2, volume_scale=0.5,
+        semantic=0.6, visual=0.9, action=0.8, timing=0.85, context=0.6)]
 
 
-def _d_stat(ctx):
-    """Important number/text: subtle click ONLY when the visual animation
-    supports it. Visual-animation signal is weak in this pipeline, so we
-    require a magnitude number + emphasis context, else NO SFX."""
+def _ev_stat(ctx, prev, nxt, env):
     if not ctx.numbers:
-        return None
+        return []
     emphasis = _nhas(ctx, "revealed", "announced", "confirmed", "record",
-                     "broke", "soaring", "plummet", "unprecedented")
-    visual_text_cue = _vhas(ctx, "text", "graphic", "stat", "chart",
-                            "infographic", "title")
-    if emphasis and visual_text_cue:
-        return Candidate("ui", 0.66,
-                         "Key figure emphasized with on-screen graphic.",
-                         anchor="action", anchor_frac=0.3, volume_scale=0.6)
+                     "broke", "soaring", "plummet", "unprecedented",
+                     "staggering", "massive")
+    visual_cue = _vhas(ctx, "text", "graphic", "stat", "chart",
+                       "infographic", "title", "number")
+    if not (emphasis and visual_cue):
+        # A number merely mentioned, or no on-screen graphic => the
+        # visual animation does not support a cue => NO EVENT.
+        return []
+    return [AudioEvent(
+        "stat_reveal", "Key figure emphasized with on-screen graphic.",
+        "OPTIONAL", category_hint="ui",
+        anchor="action", anchor_frac=0.3, volume_scale=0.6,
+        semantic=0.85, visual=0.9, action=0.7, timing=0.85, context=0.7)]
+
+
+def _ev_tension(ctx, prev, nxt, env):
+    if ctx.mood not in ("suspense", "dramatic", "tense"):
+        return []
+    if not _nhas(ctx, "but then", "suddenly", "what happened next",
+                 "the truth", "nobody expected", "little did"):
+        return []
+    visual_tension = _vhas(ctx, "storm", "dark", "shadow", "confrontation",
+                           "countdown", "ticking")
+    return [AudioEvent(
+        "tension_build", "Tension building before a payoff.",
+        "OPTIONAL", category_hint="tension",
+        anchor="end", volume_scale=0.8,
+        semantic=0.7, visual=0.6 if visual_tension else 0.3, action=0.3,
+        timing=0.8, context=0.9, cinematic=True,
+        justification=0.7 if visual_tension else 0.3)]
+
+
+def _ev_vehicle(ctx, prev, nxt, env):
+    # Honest event with no suitable asset: detected so the pipeline can
+    # explain WHY nothing plays, then dropped at candidate stage.
+    if not _vhas(ctx, "car", "vehicle", "truck", "traffic"):
+        return []
+    acts = _acts(ctx, "drive")
+    if not acts:
+        return []  # parked car, noun only => NO EVENT
+    return [AudioEvent(
+        "vehicle_drive", "Vehicle driving on screen (no suitable asset).",
+        "OPTIONAL", category_hint="vehicles",
+        anchor="start", semantic=0.8, visual=0.9, action=0.9, timing=0.7,
+        context=0.7)]
+
+
+DETECTORS = [_ev_talking_head, _ev_explosion, _ev_eruption, _ev_crash,
+             _ev_door, _ev_glass, _ev_thunder, _ev_rocket, _ev_map_zoom,
+             _ev_camera_move, _ev_crowd, _ev_siren, _ev_photo, _ev_stat,
+             _ev_tension, _ev_vehicle]
+
+
+def detect_events(ctx, prev=None, nxt=None, env=None):
+    """SCRIPT + VISUAL -> EVENT DETECTION. Returns AudioEvent list."""
+    prev = prev if prev is not None else getattr(ctx, "prev", None)
+    nxt = nxt if nxt is not None else getattr(ctx, "next", None)
+    env = env or {}
+    found = []
+    for det in DETECTORS:
+        try:
+            found.extend(det(ctx, prev, nxt, env) or [])
+        except Exception:
+            continue
+    return found
+
+
+def _event_strength(ev: AudioEvent) -> float:
+    return (ev.semantic + ev.visual + ev.action) / 3.0
+
+
+def pick_primary(events):
+    """Classify the scene: REQUIRED > OPTIONAL > NONE (strong NONE vetoes)."""
+    if not events:
+        return None
+    reqs = [e for e in events if e.classification == REQUIRED]
+    if reqs:
+        return max(reqs, key=_event_strength)
+    nones = [e for e in events if e.classification == "NONE"]
+    if any(e.confidence >= 0.90 for e in nones):
+        # Scene class C: explicit no-sound verdict wins over weak optionals.
+        return max(nones, key=lambda e: e.confidence)
+    opts = [e for e in events if e.classification == OPTIONAL]
+    if opts:
+        return max(opts, key=_event_strength)
+    if nones:
+        return max(nones, key=lambda e: e.confidence)
     return None
 
 
-def _d_alarm(ctx):
-    if _vhas(ctx, "siren", "police", "ambulance", "emergency", "fire truck"):
-        return Candidate("sirens", 0.85, "Emergency vehicle on screen.",
-                         anchor="start", volume_scale=0.9)
-    return None
+# ---------------------------------------------------------------------------
+# Candidate ranking — 9 factors (section C)
+# ---------------------------------------------------------------------------
+def _bundled_names():
+    try:
+        from . import audio_design as ad
+        return set(getattr(ad, "BUNDLED_SFX_FILES", {}).keys())
+    except Exception:
+        return set()
 
 
-def _d_tension(ctx):
-    if ctx.mood in ("suspense", "dramatic", "tense") and _nhas(
-            ctx, "but then", "suddenly", "what happened next", "the truth",
-            "nobody expected"):
-        return Candidate("tension", 0.70, "Tension build before a payoff.",
-                         anchor="end", volume_scale=0.8)
-    return None
+def candidates_for(event: AudioEvent):
+    """EVENT -> SFX CATEGORY -> SFX CANDIDATES (every playable asset)."""
+    cat = CATEGORIES.get(event.category_hint or "")
+    if not cat:
+        return []
+    try:
+        from . import audio_design as ad
+        builders = set(getattr(ad, "SFX_BUILDERS", {}).keys())
+    except Exception:
+        builders = set()
+    return [(cat.id, a) for a in cat.assets if a in builders]
 
 
-def _d_vehicle(ctx):
-    # No suitable vehicle assets exist -> honest NO SFX (rule 15).
-    return None
+def rank_candidate(event, category_id, asset, ctx, history, config):
+    """Score one candidate on the 9 factors. Returns dict with final score
+    or a hard block reason (repetition rules are blocks, not nudges)."""
+    factors = {}
+    # --- hard repetition blocks (sections D/E/F/H) -------------------------
+    # (only past placements count; future-dated records are ignored)
+    lu = history.last_file_time(asset)
+    if lu is not None and 0 <= (ctx.start - lu) < config.exact_file_cooldown_s:
+        return {"blocked": f"exact file '{asset}' used "
+                f"{ctx.start - lu:.1f}s ago (< {config.exact_file_cooldown_s:.0f}s)",
+                "factors": factors}
+    if not config.allow_repetition and \
+            history.file_uses(asset, before=ctx.start) >= config.max_file_uses:
+        return {"blocked": f"file '{asset}' already used "
+                f"{config.max_file_uses}x in this video", "factors": factors}
+    lc = history.last_category_time(category_id)
+    if lc is not None and 0 <= (ctx.start - lc) < config.category_cooldown_s:
+        return {"blocked": f"category '{category_id}' used "
+                f"{ctx.start - lc:.1f}s ago (< {config.category_cooldown_s:.0f}s)",
+                "factors": factors}
+    gid, hard = _similarity_group(asset)
+    if hard:
+        lg = history.last_group_time(gid, exclude_asset=asset)
+        if lg is not None and \
+                0 <= (ctx.start - lg) < config.similarity_cooldown_s:
+            return {"blocked": f"similar sound already used "
+                    f"{ctx.start - lg:.1f}s ago (group '{gid}')",
+                    "factors": factors}
+    # --- the 9 factors ------------------------------------------------------
+    factors["semantic_match"] = event.semantic
+    factors["visual_match"] = event.visual
+    factors["action_match"] = event.action
+    factors["timing_match"] = event.timing
+    factors["context_match"] = event.context
+    factors["quality_score"] = 1.0 if asset in _bundled_names() else 0.6
+    factors["repetition_penalty"] = round(
+        min(0.45, 0.15 * history.category_uses(category_id,
+                                               before=ctx.start)), 3)
+    factors["overuse_penalty"] = round(
+        min(0.5, 0.10 * max(0, history.total_events() - 4)), 3)
+    factors["generic_sfx_penalty"] = (
+        0.0 if (not event.cinematic or event.justification >= 0.7) else 0.35)
+    final = (0.25 * factors["semantic_match"]
+             + 0.25 * factors["visual_match"]
+             + 0.20 * factors["action_match"]
+             + 0.10 * factors["timing_match"]
+             + 0.10 * factors["context_match"]
+             + 0.10 * factors["quality_score"]
+             - factors["repetition_penalty"]
+             - factors["overuse_penalty"]
+             - factors["generic_sfx_penalty"])
+    factors["final"] = round(max(0.0, min(1.0, final)), 3)
+    return {"blocked": None, "factors": factors}
 
 
-DETECTORS = [_d_talking_head, _d_explosion, _d_crowd, _d_door, _d_glass,
-             _d_thunder, _d_rocket, _d_map_zoom, _d_photo, _d_stat,
-             _d_alarm, _d_tension, _d_vehicle]
+def _threshold_for(event, config):
+    if event.cinematic and event.justification < 0.7:
+        return config.min_confidence_cinematic
+    if event.classification == REQUIRED:
+        return config.min_confidence_required
+    return config.min_confidence_optional
+
+
+# ---------------------------------------------------------------------------
+# Global SFX history — ONE history for the entire video (section D)
+# ---------------------------------------------------------------------------
+@dataclass
+class SFXRecord:
+    file: str
+    category: str
+    event_type: str
+    scene_id: int
+    start: float
+    end: float
+    confidence: float = 0.0
+    classification: str = OPTIONAL
+    cinematic: bool = False
+
+
+class SFXHistory:
+    """Every selection checks this BEFORE placement."""
+
+    def __init__(self, config: SFXConfig):
+        self.config = config
+        self.records: list[SFXRecord] = []
+
+    # -- lookups ------------------------------------------------------------
+    def _times(self, pred):
+        return [r.start for r in self.records if pred(r)]
+
+    def last_file_time(self, asset):
+        ts = self._times(lambda r: r.file == asset)
+        return max(ts) if ts else None
+
+    def file_uses(self, asset, before=None):
+        return sum(1 for r in self.records
+                   if r.file == asset and (before is None or r.start <= before))
+
+    def last_category_time(self, category_id):
+        ts = self._times(lambda r: r.category == category_id)
+        return max(ts) if ts else None
+
+    def category_uses(self, category_id, before=None):
+        return sum(1 for r in self.records
+                   if r.category == category_id
+                   and (before is None or r.start <= before))
+
+    def last_group_time(self, group_id, exclude_asset=None):
+        members = SIMILARITY_GROUPS[group_id][0]
+        ts = [r.start for r in self.records
+              if r.file in members and r.file != exclude_asset]
+        return max(ts) if ts else None
+
+    def total_events(self):
+        return len(self.records)
+
+    def events_in_window(self, t0, t1):
+        return [r for r in self.records if t0 <= r.start < t1]
+
+    def cinematic_in_window(self, t0, t1):
+        return [r for r in self.records
+                if t0 <= r.start < t1 and r.cinematic]
+
+    def transitions_in_window(self, t0, t1):
+        return [r for r in self.records
+                if t0 <= r.start < t1 and r.event_type == "transition_cut"]
+
+    def prev_similar_text(self, asset, category_id):
+        gid, _ = _similarity_group(asset)
+        cands = [r for r in self.records
+                 if r.file == asset or r.category == category_id
+                 or (gid and r.file in SIMILARITY_GROUPS[gid][0])]
+        if not cands:
+            return "none"
+        r = max(cands, key=lambda r: r.start)
+        return f"{r.file} ({r.category}) @ {r.start:.1f}s"
+
+    # -- mutation -------------------------------------------------------------
+    def record(self, rec: SFXRecord):
+        self.records.append(rec)
+
+    def remove_scene(self, scene_id):
+        self.records = [r for r in self.records if r.scene_id != scene_id]
+
+    # -- budget (section K) -----------------------------------------------------
+    def budget_allows(self, start, cinematic, classification):
+        cfg = self.config
+        if len(self.events_in_window(start, start + 10.0)) \
+                >= cfg.max_events_per_10s and classification != REQUIRED:
+            return False, "over 3 SFX events per 10s budget"
+        if cinematic and len(
+                self.cinematic_in_window(start, start + 10.0)) \
+                >= cfg.max_cinematic_per_10s:
+            return False, "over 1 generic cinematic per 10s budget"
+        return True, ""
 
 
 # ---------------------------------------------------------------------------
@@ -496,166 +891,360 @@ NO_SFX_DECISION = {"sfx_required": False,
                              "event is present."}
 
 
-def _anchor_time(ctx: SceneContext, cand: Candidate, cat: SFXCategory,
+def _no_sfx(reason, confidence=0.0, classification=NO_SFX_CLASS,
+            event=None, debug_extra=None):
+    d = {**NO_SFX_DECISION, "confidence": round(confidence, 2),
+         "reason": reason, "events": [],
+         "classification": classification}
+    dbg = {"detected_event": event.event_type if event else None,
+           "event_description": event.description if event else "",
+           "classification": classification,
+           "selected_sfx": None, "category": None,
+           "confidence": round(confidence, 2),
+           "why": "", "prev_similar": "none",
+           "repetition_penalty": 0.0, "final_score": round(confidence, 2),
+           "reason": reason, "decision": "NO SFX"}
+    if debug_extra:
+        dbg.update(debug_extra)
+    d["debug"] = dbg
+    return d
+
+
+def _anchor_time(ctx: SceneContext, event: AudioEvent, cat: SFXCategory,
                  duration: float) -> float:
-    if cand.anchor == "cut":
+    if event.anchor == "cut":
         return max(0.0, ctx.start - 0.08)          # pre-roll; peak on cut
-    if cand.anchor == "end":
+    if event.anchor == "end":
         return max(ctx.start, ctx.end - duration)  # riser lands on payoff
-    if cand.anchor == "start":
+    if event.anchor == "start":
         return ctx.start + 0.05
-    # "action": peak of the sound lands on the visual action moment
-    at = ctx.start + ctx.duration * cand.anchor_frac - cat.peak_offset
+    at = ctx.start + ctx.duration * event.anchor_frac - cat.peak_offset
     return max(ctx.start, at)
 
 
-def decide_scene(ctx: SceneContext, state: dict) -> dict:
-    """Full 16-rule decision for one scene. `state` carries cross-scene
-    memory (recent categories, event times) and is mutated."""
-    cands = [c for d in DETECTORS if (c := d(ctx)) is not None]
-    # explicit NO-SFX verdicts (talking head, still photo, ...)
-    vetoes = [c for c in cands if c.category is None]
-    cands = [c for c in cands if c.category is not None]
+def _decide_event(ctx, event, state, scene_id, config, history):
+    """Candidate generation -> ranking -> repetition check -> final."""
+    cands = candidates_for(event)
+    if not cands:
+        return _no_sfx(
+            f"Event '{event.event_type}' detected but category "
+            f"'{event.category_hint}' has no suitable asset — no wrong "
+            f"sound will play.", confidence=event.visual * 0.5,
+            classification=event.classification, event=event)
 
-    # asset check FIRST: drop anything with no suitable sound (rule 15)
-    viable = []
-    for c in cands:
-        if resolve_asset(c.category) is None:
+    ranked = []
+    blocked_reasons = []
+    for cat_id, asset in cands:
+        r = rank_candidate(event, cat_id, asset, ctx, history, config)
+        if r["blocked"]:
+            blocked_reasons.append(r["blocked"])
             continue
-        viable.append(c)
-    viable.sort(key=lambda c: -c.confidence)
-    best = viable[0] if viable else None
+        ranked.append((r["factors"]["final"], cat_id, asset, r["factors"]))
+    if not ranked:
+        return _no_sfx(
+            "All candidates blocked by repetition rules: "
+            + "; ".join(blocked_reasons[:2]),
+            confidence=0.5, classification=event.classification, event=event,
+            debug_extra={"prev_similar": history.prev_similar_text(
+                cands[0][1], cands[0][0])})
 
-    # a strong explicit NO-SFX beats a weak candidate
-    for v in vetoes:
-        if v.confidence >= CONF_VERY_STRONG and (
-                best is None or best.confidence < CONF_VERY_STRONG):
-            return {**NO_SFX_DECISION, "confidence": round(v.confidence, 2),
-                    "reason": v.reason, "events": []}
+    ranked.sort(key=lambda t: -t[0])
+    final, cat_id, asset, factors = ranked[0]
+    threshold = _threshold_for(event, config)
+    if final < threshold:
+        return _no_sfx(
+            f"Best candidate '{asset}' scored {final:.2f}, below the "
+            f"{threshold:.2f} threshold — weak match not forced.",
+            confidence=final, classification=event.classification,
+            event=event,
+            debug_extra={
+                "selected_sfx": asset, "category": cat_id,
+                "repetition_penalty": factors["repetition_penalty"],
+                "final_score": final,
+                "prev_similar": history.prev_similar_text(asset, cat_id)})
 
-    if best is None or best.confidence < CONF_FLOOR:
-        reason = NO_SFX_DECISION["reason"]
-        if best is not None:
-            reason = (f"Best candidate '{best.category}' confidence "
-                      f"{best.confidence:.2f} below floor 0.60.")
-        return {**NO_SFX_DECISION, "confidence":
-                round(best.confidence, 2) if best else 0.0,
-                "reason": reason, "events": []}
+    # Budget check (section K): safety limits, not targets.
+    ok, why_not = history.budget_allows(ctx.start, event.cinematic,
+                                        event.classification)
+    if not ok:
+        return _no_sfx(f"Global SFX budget reached ({why_not}); "
+                       f"event not important enough to override.",
+                       confidence=final, classification=event.classification,
+                       event=event,
+                       debug_extra={"selected_sfx": asset, "category": cat_id,
+                                    "final_score": final})
 
-    # rule 13/14: no repeat of the same category across consecutive scenes
-    # unless the action genuinely repeats. A second showing of the same
-    # event (e.g. another angle of the same explosion) is not a new event.
-    recent = state.get("recent_cats", [])
-    if best.category in recent[-2:] and not ctx.action_repeat \
-            and best.confidence <= 0.85:
-        return {**NO_SFX_DECISION, "confidence": round(best.confidence, 2),
-                "reason": f"'{best.category}' already used in a recent "
-                          f"scene; action does not repeat.", "events": []}
-
-    cat = CATEGORIES[best.category]
-    asset = resolve_asset(best.category)
-    # rule 11: duration matches the event; rule 12: ambience beds run
-    # continuously while the environment lasts
+    cat = CATEGORIES[cat_id]
     duration = ctx.duration if (cat.ambience or cat.default_duration <= 0) \
         else min(cat.default_duration, ctx.duration)
-
-    # rules 5/6: never overpower narration — duck when voice is present
-    volume = cat.default_volume * best.volume_scale
-    duck_db = -4.0 if ctx.narration_present else 0.0
-
-    start_time = _anchor_time(ctx, best, cat, duration)
-    events = [{
-        "type": best.category,
-        "sfx_category": best.category,
-        "sfx": asset,
+    volume = cat.default_volume * event.volume_scale
+    duck_db = config.narration_duck_db if ctx.narration_present else 0.0
+    start_time = _anchor_time(ctx, event, cat, duration)
+    base = {
+        "type": event.event_type, "sfx_category": cat_id, "sfx": asset,
         "start_time": round(start_time, 3),
         "duration": round(duration, 3),
         "volume": round(max(0.05, min(1.0, volume)), 3),
         "gain_db": volume_to_gain_db(volume, duck_db),
         "fade_in": round(min(0.05, duration * 0.2), 3),
         "fade_out": round(min(0.4, duration * 0.3), 3),
-    }]
-    # rule 8: layer only when the event realistically needs multiple sounds
-    if best.layer:
+    }
+    events = [base]
+    if event.layer:  # rule 8: layer only when the event needs it (one max)
         for partner in cat.layer_with:
             pcat = CATEGORIES.get(partner)
             passet = resolve_asset(partner)
             if not pcat or not passet or passet == asset:
                 continue
             events.append({
-                "type": partner, "sfx_category": partner, "sfx": passet,
-                "start_time": round(start_time, 3),
+                "type": event.event_type, "sfx_category": partner,
+                "sfx": passet, "start_time": round(start_time, 3),
                 "duration": round(duration, 3),
                 "volume": round(max(0.05, min(1.0, volume * 0.6)), 3),
                 "gain_db": volume_to_gain_db(volume * 0.6, duck_db),
                 "fade_in": round(min(0.1, duration * 0.2), 3),
-                "fade_out": round(min(0.6, duration * 0.3), 3),
-            })
-            break  # rule 7: never stack excessively — one layer max
+                "fade_out": round(min(0.6, duration * 0.3), 3)})
+            break
 
-    state.setdefault("recent_cats", []).append(best.category)
-    state.setdefault("event_times", []).append(start_time)
-    return {"sfx_required": True, "reason": best.reason,
-            "confidence": round(best.confidence, 2), "events": events}
+    for e in events:
+        history.record(SFXRecord(
+            file=e["sfx"], category=e["sfx_category"],
+            event_type=event.event_type, scene_id=scene_id,
+            start=e["start_time"], end=e["start_time"] + e["duration"],
+            confidence=final, classification=event.classification,
+            cinematic=event.cinematic))
+
+    why = (f"{event.description} "
+           f"(visual {event.visual:.2f}, semantic {event.semantic:.2f}, "
+           f"action {event.action:.2f})")
+    return {
+        "sfx_required": True, "reason": why,
+        "confidence": final, "classification": event.classification,
+        "events": events,
+        "debug": {
+            "detected_event": event.event_type,
+            "event_description": event.description,
+            "classification": event.classification,
+            "selected_sfx": asset, "category": cat_id,
+            "confidence": final, "why": why,
+            "prev_similar": history.prev_similar_text(asset, cat_id),
+            "repetition_penalty": factors["repetition_penalty"],
+            "final_score": final, "reason": why,
+            "decision": "USE SFX"},
+    }
+
+
+def _audio_env(ctx, history):
+    return {"narration": ctx.narration_present,
+            "recent_events": history.total_events()}
+
+
+def decide_scene(ctx: SceneContext, state: dict) -> dict:
+    """Decision-layer entry for ONE scene. `state` carries the global
+    SFXHistory under state["history"] (created on first use)."""
+    config = getattr(state.get("history"), "config", None) or DEFAULT_CONFIG
+    history = state.setdefault("history", SFXHistory(config))
+    env = _audio_env(ctx, history)
+    primary = pick_primary(detect_events(ctx, env=env))
+    if primary is None:
+        d = _no_sfx(NO_SFX_DECISION["reason"], confidence=0.2)
+    elif primary.classification == "NONE":
+        d = _no_sfx(primary.description, confidence=primary.confidence,
+                    event=primary)
+    else:
+        d = _decide_event(ctx, primary, state, ctx.scene_id, config, history)
+    d["debug"]["scene"] = ctx.scene_id
+    return d
 
 
 # ---------------------------------------------------------------------------
-# Video-level planning: transitions, density cap, one-per-beat
+# Transitions — cinematic sounds are NOT defaults (section I)
 # ---------------------------------------------------------------------------
-def plan_video_sfx(contexts, seed=0):
-    """Decide SFX for every scene. Returns (decisions, events) where events
-    are in the legacy pipeline format plus duration/fade keys."""
-    state = {"recent_cats": [], "event_times": []}
-    decisions = [decide_scene(c, state) for c in contexts]
+_TRANSITION_MOTION = ["whip", "swipe", "wipe", "zoom", "pan", "aerial",
+                      "drone", "fast", "montage", "spin", "flyover"]
 
-    # transition whooshes on cuts (rule: peak on the cut frame, pre-roll;
-    # skip when another SFX already owns the beat)
-    for i, ctx in enumerate(contexts):
-        if i == 0:
-            continue
+
+def _transition_justification(prev: SceneContext, ctx: SceneContext) -> float:
+    score = 0.40
+    pv = (prev.visual_text or "").lower()
+    cv = (ctx.visual_text or "").lower()
+    if any(_wb(pv, w) or _wb(cv, w) for w in _TRANSITION_MOTION):
+        score += 0.35
+    if prev.topic != ctx.topic and "general" not in (prev.topic, ctx.topic):
+        score += 0.20
+    if any(v == "camera_move" for v, _ in ctx.actions):
+        score += 0.15
+    return min(1.0, score)
+
+
+def _place_transitions(contexts, decisions, history, config):
+    if not config.enable_transition_sfx:
+        return
+    for i in range(1, len(contexts)):
+        ctx, prev = contexts[i], contexts[i - 1]
+        just = _transition_justification(prev, ctx)
+        ev = AudioEvent(
+            "transition_cut", "Scene cut at %.2fs." % ctx.start, OPTIONAL,
+            category_hint="transitions", anchor="cut",
+            semantic=round(just, 2),
+            visual=0.9 if just >= 0.75 else (0.7 if just >= 0.55 else 0.4),
+            action=0.7, timing=1.0,  # the cut frame is an exact anchor
+            context=0.7, cinematic=True, justification=just)
         at = round(max(0.0, ctx.start - 0.08), 3)
+        # one SFX per beat: skip when a scene SFX already owns the cut
         if any(abs(e["start_time"] - at) < 0.6
-               for d in decisions for e in d["events"]):
+               for d in decisions if d for e in d["events"]):
             continue
-        cat = CATEGORIES["transitions"]
-        asset = resolve_asset("transitions")
-        if asset is None:
+        # max 1 transition SFX per 8 s (section K)
+        if history.transitions_in_window(at - 8.0, at):
             continue
+        cands = candidates_for(ev)
+        if not cands:
+            continue
+        cat_id, asset = cands[0]
+        r = rank_candidate(ev, cat_id, asset, ctx, history, config)
+        if r["blocked"]:
+            continue
+        final = r["factors"]["final"]
+        if final < _threshold_for(ev, config):
+            continue
+        ok, _ = history.budget_allows(at, True, OPTIONAL)
+        if not ok:
+            continue
+        cat = CATEGORIES[cat_id]
+        duck = config.narration_duck_db if ctx.narration_present else 0.0
         decisions[i]["events"].append({
-            "type": "transitions", "sfx_category": "transitions",
-            "sfx": asset, "start_time": at, "duration": 0.45,
-            "volume": 0.30, "gain_db": volume_to_gain_db(0.30, -4.0),
+            "type": "transition_cut", "sfx_category": cat_id, "sfx": asset,
+            "start_time": at, "duration": cat.default_duration,
+            "volume": round(cat.default_volume, 3),
+            "gain_db": volume_to_gain_db(cat.default_volume, duck),
             "fade_in": 0.05, "fade_out": 0.15})
-        # NOTE: sfx_required stays as the scene-content decision — the
-        # whoosh belongs to the edit boundary, not the scene itself.
+        history.record(SFXRecord(
+            file=asset, category=cat_id, event_type="transition_cut",
+            scene_id=i, start=at, end=at + cat.default_duration,
+            confidence=final, classification=OPTIONAL, cinematic=True))
+        # NOTE: decisions[i]["sfx_required"] is untouched — the whoosh
+        # belongs to the edit boundary, not the scene's own content.
 
-    # density cap ~10 cues/min (rule: never sound artificially overloaded)
+
+# ---------------------------------------------------------------------------
+# Video-level planning
+# ---------------------------------------------------------------------------
+def _is_new_instance(ctx) -> bool:
+    """Explicit new occurrence of an event ('another explosion') vs the
+    same event continuing across scenes."""
+    if not ctx.action_repeat:
+        return False
+    return any(s == "visual" for _, s in ctx.actions)
+
+
+def _group_consecutive(contexts, primaries, config):
+    """Section G: consecutive scenes showing the SAME event become ONE
+    continuous event instead of one SFX per scene."""
+    groups = []  # [(scene_indices, AudioEvent|None)]
+    for i, ev in enumerate(primaries):
+        if ev is None or ev.classification == "NONE" or \
+                ev.event_type == "transition_cut":
+            groups.append(([i], ev))
+            continue
+        if groups and groups[-1][1] is not None \
+                and groups[-1][1].classification != "NONE" \
+                and groups[-1][1].event_type == ev.event_type \
+                and groups[-1][1].category_hint == ev.category_hint:
+            prev_i = groups[-1][0][-1]
+            gap = contexts[i].start - contexts[prev_i].end
+            if gap < config.merge_gap_s and not _is_new_instance(contexts[i]):
+                groups[-1][0].append(i)
+                continue
+        groups.append(([i], ev))
+    return groups
+
+
+def _merged_no_sfx(first_idx, idx):
+    d = _no_sfx("Same event continues from the previous scene — merged "
+                "into one continuous SFX instead of a new one per scene.",
+                confidence=0.7, event=None)
+    d["debug"]["detected_event"] = "continued_event"
+    return d
+
+
+def plan_video_sfx(contexts, seed=0, debug=False, config=None):
+    """Full decision-layer pipeline. Returns (decisions, events); events
+    are in the legacy pipeline format plus duration/fade keys."""
+    config = config or DEFAULT_CONFIG
+    history = SFXHistory(config)
+    state = {"history": history}
+    for i, c in enumerate(contexts):
+        c.prev = contexts[i - 1] if i else None
+        c.next = contexts[i + 1] if i + 1 < len(contexts) else None
+        c.scene_id = i
+
+    # 1-2. event detection + primary per scene (no placement yet)
+    primaries = []
+    for c in contexts:
+        env = _audio_env(c, history)
+        primaries.append(pick_primary(detect_events(c, env=env)))
+
+    # 3. dedup: merge consecutive same-event scenes (section G)
+    groups = _group_consecutive(contexts, primaries, config)
+    decisions = [None] * len(contexts)
+    for idxs, ev in groups:
+        first = idxs[0]
+        if ev is None or ev.classification == "NONE":
+            for i in idxs:
+                c = contexts[i]
+                if ev is None:
+                    decisions[i] = _no_sfx(
+                        NO_SFX_DECISION["reason"], confidence=0.2)
+                else:
+                    decisions[i] = _no_sfx(
+                        ev.description, confidence=ev.confidence, event=ev)
+                decisions[i]["debug"]["scene"] = i
+            continue
+        # one decision for the whole span: extend the first scene's window
+        span = replace(contexts[first],
+                       end=contexts[idxs[-1]].end)
+        span.duration = max(0.2, span.end - span.start)
+        d = _decide_event(span, ev, state, first, config, history)
+        d["debug"]["scene"] = first
+        d["debug"]["merged_scenes"] = idxs
+        decisions[first] = d
+        for i in idxs[1:]:
+            decisions[i] = _merged_no_sfx(first, i)
+            decisions[i]["debug"]["scene"] = i
+
+    # 4. transitions (cinematic — high bar, section I)
+    _place_transitions(contexts, decisions, history, config)
+
+    # per-event confidence/classification for the cap sort below
+    for d in decisions:
+        for e in d["events"]:
+            e.setdefault("confidence", d.get("confidence", 0.5))
+            e.setdefault("classification",
+                         d.get("classification", OPTIONAL))
+
+    # 5. global safety cap ~10 cues/min (never artificially overloaded)
     total = sum(len(d["events"]) for d in decisions)
     if contexts:
         span_min = max(0.25, (contexts[-1].end - contexts[0].start) / 60.0)
         cap = int(span_min * 10) + 2
         if total > cap:
-            # drop quietest transition whooshes first
+            flat = [(di, e) for di, d in enumerate(decisions)
+                    for e in d["events"]]
+            # drop lowest-confidence, non-REQUIRED first
+            flat.sort(key=lambda p: (
+                p[1].get("classification", OPTIONAL) == REQUIRED,
+                p[1].get("confidence", 0.5)))
+            drop_ids = set(id(e) for _, e in flat[:(total - cap)])
             for d in decisions:
-                tr = [e for e in d["events"]
-                      if e["sfx_category"] == "transitions"]
-                keep = [e for e in d["events"]
-                        if e["sfx_category"] != "transitions"]
-                d["events"] = keep + tr[:1]
-            total = sum(len(d["events"]) for d in decisions)
-            if total > cap:  # still over: trim from the end
-                flat = [(di, e) for di, d in enumerate(decisions)
-                        for e in d["events"]]
-                drop = set(id(e) for _, e in
-                           sorted(flat, key=lambda p: -p[1]["gain_db"])
-                           [:(total - cap)])
-                for d in decisions:
-                    d["events"] = [e for e in d["events"]
-                                   if id(e) not in drop]
-                    if not d["events"]:
-                        d.update(NO_SFX_DECISION)
-                        d["confidence"] = 0.0
-                        d["events"] = []
+                d["events"] = [e for e in d["events"]
+                               if id(e) not in drop_ids]
+                if not d["events"] and d["sfx_required"]:
+                    scene_no = d.get("debug", {}).get("scene", "?")
+                    d.update(_no_sfx("Dropped by the global density cap; "
+                                     "restraint beats overload.",
+                                     confidence=0.4))
+                    d["debug"]["scene"] = scene_no
 
     events = []
     for d in decisions:
@@ -666,4 +1255,41 @@ def plan_video_sfx(contexts, seed=0):
                            "fade_in": e["fade_in"], "fade_out": e["fade_out"],
                            "sfx_category": e["sfx_category"]})
     events.sort(key=lambda e: e["time"])
+    if debug or config.debug:
+        for d in decisions:
+            d["debug"]["enabled"] = True
     return decisions, events
+
+
+# ---------------------------------------------------------------------------
+# Debug mode (section M) — optional per-scene log
+# ---------------------------------------------------------------------------
+def format_debug_log(decisions) -> str:
+    """Render the user's debug format, one block per scene."""
+    blocks = []
+    for d in decisions:
+        g = d.get("debug", {})
+        blocks.append(
+            "Scene {scene}\n"
+            "Detected event: {ev}\n"
+            "Selected SFX: {sfx}\n"
+            "Category: {cat}\n"
+            "Confidence: {conf:.2f}\n"
+            "Why selected: {why}\n"
+            "Previous similar SFX: {prev}\n"
+            "Repetition penalty: {rep:.2f}\n"
+            "Final score: {score:.2f}\n"
+            "Reason: {reason}\n"
+            "Decision: {dec}".format(
+                scene=g.get("scene", "?"),
+                ev=g.get("detected_event") or "None",
+                sfx=g.get("selected_sfx") or "None",
+                cat=g.get("category") or "-",
+                conf=g.get("confidence", 0.0),
+                why=g.get("why") or "-",
+                prev=g.get("prev_similar", "none"),
+                rep=g.get("repetition_penalty", 0.0),
+                score=g.get("final_score", g.get("confidence", 0.0)),
+                reason=d.get("reason", ""),
+                dec=g.get("decision", "NO SFX")))
+    return "\n\n".join(blocks)
