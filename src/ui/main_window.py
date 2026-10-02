@@ -84,10 +84,8 @@ class _DragCaptionLabel(QLabel):
 
     def wheelEvent(self, ev):  # noqa: D102
         if self._owner._cap_move_mode:
-            pos = self._owner._cap_pos
             factor = 1.1 if ev.angleDelta().y() > 0 else 1 / 1.1
-            pos["scale"] = max(0.5, min(2.5, pos["scale"] * factor))
-            self._owner._apply_cap_pos_to_overlay()
+            self._owner._bump_cap_scale(factor)
             ev.accept()
         else:
             super().wheelEvent(ev)
@@ -1236,6 +1234,26 @@ class MainWindow(QMainWindow):
             "left/right), wheel se chhota/bara, double-click se reset.")
         self.move_cap_btn.toggled.connect(self._toggle_cap_move_mode)
         ctl.addWidget(self.move_cap_btn)
+        # Chhota/bara buttons: explicit resize that never depends on wheel
+        # events reaching the video widget. On Windows the QVideoWidget's
+        # native surface does not reliably deliver wheel events on the
+        # small embedded preview (same root cause as the old drag bug),
+        # so these buttons are the guaranteed resize path; the wheel in
+        # move mode remains as a shortcut where events do arrive.
+        self.cap_smaller_btn = QPushButton("A−")
+        self.cap_smaller_btn.setMaximumWidth(40)
+        self.cap_smaller_btn.setToolTip(
+            "Caption chhota karo (foran preview + burn mein)")
+        self.cap_smaller_btn.clicked.connect(
+            lambda: self._bump_cap_scale(1 / 1.1))
+        ctl.addWidget(self.cap_smaller_btn)
+        self.cap_bigger_btn = QPushButton("A+")
+        self.cap_bigger_btn.setMaximumWidth(40)
+        self.cap_bigger_btn.setToolTip(
+            "Caption bara karo (foran preview + burn mein)")
+        self.cap_bigger_btn.clicked.connect(
+            lambda: self._bump_cap_scale(1.1))
+        ctl.addWidget(self.cap_bigger_btn)
         self.fs_btn = QPushButton("⛶")
         self.fs_btn.setMaximumWidth(48)
         self.fs_btn.setToolTip("Full screen preview (Esc se wapas)")
@@ -1384,6 +1402,18 @@ class MainWindow(QMainWindow):
         ov.setContentsMargins(left, 0, right, bottom)
         ov.setStyleSheet(self._caption_overlay_style())
 
+    def _bump_cap_scale(self, factor: float):
+        """Resize captions by factor (A-/A+ buttons and the move-mode
+        wheel share this single path). Scale survives into the burn via
+        user_scale in _caption_template_for_render()."""
+        pos = getattr(self, "_cap_pos", None)
+        if pos is None:
+            return
+        old = pos.get("scale", 1.0)
+        pos["scale"] = max(0.5, min(2.5, old * factor))
+        self._apply_cap_pos_to_overlay()
+        self._log("Caption size: %.0f%%" % (pos["scale"] * 100))
+
     def _toggle_cap_move_mode(self, on: bool):
         """Enable/disable caption drag mode on the preview.
 
@@ -1423,8 +1453,8 @@ class MainWindow(QMainWindow):
         # widget, starving the event-filter drag path on the small preview.
         if on:
             self.video_hint.setText(
-                "Move mode: caption drag karo (move) • wheel (chhota/bara) "
-                "• double-click (reset) • dobara dabao to band karo")
+                "Move mode: caption drag karo (move) • A−/A+ ya wheel se "
+                "chhota/bara • double-click (reset) • dobara dabao to band karo")
         else:
             self.video_hint.setText(
                 "Tip: video par click karo — caption edit ho jayega")
@@ -1864,10 +1894,8 @@ class MainWindow(QMainWindow):
                     self._log("Caption position reset.")
                     return True
                 if et == QEvent.Wheel:
-                    pos = self._cap_pos
                     factor = (1.1 if event.angleDelta().y() > 0 else 1 / 1.1)
-                    pos["scale"] = max(0.5, min(2.5, pos["scale"] * factor))
-                    self._apply_cap_pos_to_overlay()
+                    self._bump_cap_scale(factor)
                     return True
             else:
                 if et == QEvent.MouseButtonPress:

@@ -1894,6 +1894,41 @@ def _entry_open(p, xi, yi):
     return "\\an5\\pos(%d,%d)\\fad(%d,%d)" % (xi, yi, fi, eo)
 
 
+def _entry_tags_no_exit(p, xi, yi):
+    """ENTRY animation tags WITHOUT the exit fade.
+
+    Used by the mirrored per-word base (see _METRIC_ANIMS): the exit
+    \\fad belongs on the last word's last phase, not on the entry.
+    """
+    e = p.get("entry", "pop")
+    ms = int(p.get("entry_ms", 180))
+    if e == "pop":
+        return ("\\an5\\pos(%d,%d)\\fscx120\\fscy120"
+                "\\t(0,%d,\\fscx100\\fscy100)" % (xi, yi, ms))
+    if e == "slide_up":
+        return ("\\an5\\move(%d,%d,%d,%d,0,%d)"
+                % (xi, yi + 60, xi, yi, ms))
+    fi = ms if e == "fade" else 0
+    return "\\an5\\pos(%d,%d)\\fad(%d,0)" % (xi, yi, fi)
+
+
+# Active-word animations whose override tags change glyph metrics
+# (\\fscx/\\fscy scale). The Layer-1 overlay renders the active word
+# with these tags while the other words are transparent placeholders;
+# the scaled word changes the total line width, so \\an5 re-centers the
+# overlay line and the highlight no longer sits over its base word --
+# the "ABOVEONE" collision / ghost-"S" overlap Uzair photographed on
+# 2026-10-02. Presets using these animations get a per-word MIRRORED
+# base (same words, same tags, primary color) so both layers are
+# metric-identical at every instant. Animations using only \\move /
+# \\alpha (fade, rise, fall, slide, jitter, wave) never change line
+# metrics and keep the classic chunk-level base card.
+_METRIC_ANIMS = frozenset({
+    "pop", "spring", "stomp", "wipe", "rotate", "glowpulse", "throb",
+    "sweep",
+})
+
+
 def _base_phrase_preset(p, disp, cap_size):
     """Visible base-layer phrase. Metric-identical to the overlay words."""
     n = len(disp)
@@ -1968,6 +2003,42 @@ def _overlay_text(p, disp, idx, cap_size, anim_tags, dim_mode):
     return _join_chunks(chunks)
 
 
+def _base_word_text(p, disp, idx, cap_size, anim_tags):
+    """Layer-0 mirror of one overlay word event.
+
+    Full phrase, every word visible in the base colors, word ``idx``
+    carrying the SAME animation tags as the overlay's active word
+    (\\fscx/\\fscy scale phases included). The line is therefore
+    metric-identical to the overlay line at every instant, so \\an5
+    centers both identically and the highlight sits pixel-exact over
+    its base word -- even mid-pop. Only used for _METRIC_ANIMS.
+    """
+    n = len(disp)
+    layout = p.get("layout", "standard")
+    em = p.get("emoji", "")
+    ac = p["active_color"]
+    areset = "" if "\\alpha" in anim_tags else "\\alpha&H00&"
+    chunks = []
+    for j, w in enumerate(disp):
+        fs = _layout_fs(p, layout, j, n, cap_size)
+        if layout == "two_tone" and n > 1 and j == n - 1:
+            col = ac
+        elif layout == "headline" and n > 1 and j > 0:
+            col = ac
+        else:
+            col = p["primary"]
+        pre_v, post_v = ((em + " ", " " + em) if em else ("", ""))
+        if j == idx:
+            chunks.append("{%s\\c%s%s%s}%s%s%s"
+                          % (areset, col, fs, anim_tags, pre_v, w, post_v))
+        else:
+            chunks.append("{\\c%s%s}%s%s%s"
+                          % (col, fs, pre_v, w, post_v))
+        if layout == "headline" and j == 0 and n > 1:
+            chunks.append("\\N")
+    return _join_chunks(chunks)
+
+
 def _render_typewriter_preset(p, chunks, ax, ay, cap_size, lead, floor_s,
                               hold_s):
     """Character-by-character reveal synced to word timestamps.
@@ -1987,8 +2058,15 @@ def _render_typewriter_preset(p, chunks, ax, ay, cap_size, lead, floor_s,
                                           _ts_ass(max(0.001, e)), xi, yi,
                                           txt))
 
-    for ch in chunks:
+    for ci, ch in enumerate(chunks):
         seg = ch["words"]
+        if ci + 1 < len(chunks):
+            # Next chunk's first visible instant: nothing from this chunk
+            # may linger past it (same overlap rule as the phrase cards).
+            next_start = max(0.0,
+                             chunks[ci + 1]["words"][0]["start"] + lead)
+        else:
+            next_start = None
         acc = []
         for wi, w in enumerate(seg):
             word = w["word"]
@@ -1997,24 +2075,42 @@ def _render_typewriter_preset(p, chunks, ax, ay, cap_size, lead, floor_s,
             dur = max(w["end"], w["start"] + floor_s) - ws
             step = min(dur / nch, 0.055)  # reveal speed cap ~55ms/char
             if wi + 1 < len(seg):
-                hold_until = max(seg[wi + 1]["start"] + lead, w["end"])
+                # Handoff: this word's reveal ends exactly when the next
+                # word's reveal starts (its 20ms lead). The completed word
+                # stays visible as the next reveal's prefix text.
+                hold_until = max(0.0, seg[wi + 1]["start"] + lead)
             else:
                 hold_until = w["end"] + hold_s
+                if next_start is not None:
+                    hold_until = min(hold_until, next_start)
+            # Degenerate timings still get a blink of visibility.
+            hold_until = max(hold_until, ws + 0.02)
             prefix = (" ".join(acc) + " ") if acc else ""
             for k in range(1, nch + 1):
                 cs = ws + (k - 1) * step
                 ce = ws + k * step
                 if k == nch:
-                    ce = max(ce, hold_until)
+                    ce = hold_until  # completed word holds until handoff
+                else:
+                    ce = min(ce, hold_until)  # reveal never bleeds past it
+                if ce <= cs:
+                    continue
                 txt = sanitize_ass_text(prefix + word[:k])
                 lines.append(_dlg(cs, ce, "%s{\\c%s}%s" % (txt, cur_c,
                                                            cursor)))
             acc.append(word)
         end = seg[-1]["end"] + hold_s
         full = sanitize_ass_text(" ".join(w["word"] for w in seg))
-        lines.append(_dlg(end, end + 0.25, full))
-        lines.append(_dlg(end + 0.25, end + 0.50,
-                          "%s{\\c%s}%s" % (full, cur_c, cursor)))
+        # Tail flashes must also yield to the next chunk: trim them so
+        # nothing from this chunk is visible once the next chunk starts.
+        tail_end = end + 0.50
+        if next_start is not None:
+            tail_end = min(tail_end, next_start)
+        if end < tail_end:
+            lines.append(_dlg(end, min(end + 0.25, tail_end), full))
+        if end + 0.25 < tail_end:
+            lines.append(_dlg(end + 0.25, tail_end,
+                              "%s{\\c%s}%s" % (full, cur_c, cursor)))
     return lines
 
 
@@ -2055,17 +2151,32 @@ def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
     chunks = chunk_words(words, max_words=p.get("max_words", 4),
                          max_dur=2.5, gap_break=0.4)
     dim_mode = (p.get("highlight") == "dim")
+    # Metric-changing active anims (pop/scale family): the overlay's
+    # scaled word would otherwise re-center the overlay line under
+    # \\an5 and collide with its base word ("ABOVEONE", ghost letters --
+    # Uzair's 2026-10-02 photos). These get a per-word mirrored base
+    # instead of the chunk-level card.
+    metric_anim = (not dim_mode
+                   and p.get("active_anim", "pop") in _METRIC_ANIMS)
     base_open = ""
     if p.get("highlight") == "outline":
         # hollow base: transparent fill, colored outline
         base_open = "\\1a&HFF&\\3c%s\\bord%d" % (p["active_color"],
                                                 p.get("outline", 3))
-    for ch in chunks:
+    for ci, ch in enumerate(chunks):
         seg = ch["words"]
         disp = [w["word"] for w in seg]
         card_s = max(0.0, seg[0]["start"] + lead)
         card_e = seg[-1]["end"] + hold_s
-        if not dim_mode:
+        if ci + 1 < len(chunks):
+            # ROOT CAUSE FIX (2026-10-02, Uzair's photos): the 200ms hold
+            # made the previous phrase linger ~220ms into the next phrase
+            # ("pale text abi ha aur uepr sa agala text a jata ha").
+            # Trim the hold so this card ends exactly when the next card
+            # starts. A genuine pause (gap > lead+hold) keeps its full hold.
+            next_s = max(0.0, chunks[ci + 1]["words"][0]["start"] + lead)
+            card_e = min(card_e, max(card_s, next_s))
+        if not dim_mode and not metric_anim:
             base_text = _base_phrase_preset(p, disp, cap_size)
             lines.append(
                 "Dialogue: 0,%s,%s,Cap,,0,0,0,,"
@@ -2075,7 +2186,20 @@ def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
         for i, w in enumerate(seg):
             ws = max(0.0, w["start"] + lead)
             we = max(w["end"], w["start"] + floor_s)
-            for ev in _anim_sub_events(p, xi, yi, ws, we):
+            # Clean highlight handoff: this word's highlight ends exactly
+            # when the next word's (20ms early) highlight starts, so two
+            # words are never highlighted at once -- including across the
+            # chunk boundary.
+            if i + 1 < len(seg):
+                _nw_start = seg[i + 1]["start"]
+            elif ci + 1 < len(chunks):
+                _nw_start = chunks[ci + 1]["words"][0]["start"]
+            else:
+                _nw_start = None
+            if _nw_start is not None:
+                we = min(we, max(ws, max(0.0, _nw_start + lead)))
+            sub = _anim_sub_events(p, xi, yi, ws, we)
+            for pi, ev in enumerate(sub):
                 pos_tags = ev["pos"]
                 if ev["fade_in"]:
                     pos_tags += "\\fad(%d,0)" % ev["fade_in"]
@@ -2085,6 +2209,40 @@ def _render_preset_captions(p, sentence_timings, word_timings, pw, ph,
                     "Dialogue: 1,%s,%s,Cap,,0,0,0,,{%s}%s"
                     % (_ts_ass(ev["s"]), _ts_ass(ev["e"]),
                        pos_tags, txt))
+                if metric_anim:
+                    # Mirrored Layer-0: same words, same phase tags,
+                    # primary color -- metric-identical line, so the
+                    # highlight lands pixel-exact on its base word.
+                    if i == 0 and pi == 0:
+                        bpos = _entry_tags_no_exit(p, xi, yi)
+                    else:
+                        bpos = "\\an5\\pos(%d,%d)" % (xi, yi)
+                    last_phase = (i == len(seg) - 1
+                                  and pi == len(sub) - 1)
+                    # The base keeps the card's 200ms hold AND stays
+                    # gapless across the chunk (the old card was one
+                    # continuous event): the last phase bridges any
+                    # pause to the next word's start / card_e.
+                    if last_phase:
+                        be = card_e
+                    elif pi == len(sub) - 1:
+                        _nws = max(0.0, seg[i + 1]["start"] + lead)
+                        be = max(ev["e"], _nws)
+                    else:
+                        be = ev["e"]
+                    btail = ""
+                    if last_phase:
+                        _eo = (int(p.get("exit_ms", 120))
+                               if p.get("exit") == "fade" else 0)
+                        if _eo:
+                            btail = "\\fad(0,%d)" % _eo
+                    btxt = _base_word_text(p, disp, i, cap_size,
+                                           ev["tags"])
+                    lines.append(
+                        "Dialogue: 0,%s,%s,Cap,,0,0,0,,"
+                        "{%s%s}%s%s"
+                        % (_ts_ass(ev["s"]), _ts_ass(be),
+                           bpos, btail, base_open, btxt))
     return lines
 
 
