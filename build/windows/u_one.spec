@@ -29,6 +29,7 @@ datas = [
     (str(ROOT / "config.yaml"), "."),
     (str(ROOT / "README.txt"), "."),
     (str(ASSETS / "fonts"), "assets/fonts"),
+    (str(ASSETS / "sfx"), "assets/sfx"),
 ]
 
 a = Analysis(

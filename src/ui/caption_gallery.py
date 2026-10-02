@@ -146,6 +146,18 @@ def render_template_preview(key: str) -> bytes:
         y = (_CARD_H - size) / 2 - 4
         _text(x, y, frag, font, primary)
         d.rectangle([x + w1 + 2, y, x + w1 + 12, y + size], fill=secondary)
+    elif (tmpl.get("layout") == "headline" and tmpl.get("accent")
+          and len(w_the) > 1):
+        # Popline: BIG first word, small pink line underneath
+        accent = _ass_to_rgb(tmpl["accent"])
+        bigf = _load_font(tmpl["font"], 46,
+                          bool(tmpl["bold"]), bool(tmpl["italic"]))
+        smallf = _load_font(tmpl["font"], 22,
+                            bool(tmpl["bold"]), bool(tmpl["italic"]))
+        bw = d.textlength(w_the, font=bigf)
+        sw = d.textlength(w_quick, font=smallf)
+        _text((_CARD_W - bw) / 2, 28, w_the, bigf, secondary)
+        _text((_CARD_W - sw) / 2, 82, w_quick, smallf, accent)
     else:
         w1 = d.textlength(w_the + " ", font=font)
         w2 = d.textlength(w_quick, font=font)
@@ -168,6 +180,12 @@ def render_template_preview(key: str) -> bytes:
                 d.rounded_rectangle(
                     [x - 10, y - 8, x + total + 10, y + size + 10],
                     radius=10, fill=(0, 0, 0))
+        elif tmpl.get("box"):
+            # BorderStyle=3 opaque box (Opus Beasty / Pod P): dark box
+            # behind the whole phrase
+            d.rounded_rectangle(
+                [x - 10, y - 8, x + total + 10, y + size + 10],
+                radius=10, fill=(18, 18, 22))
         elif engine == "highlight_box":
             # marker stroke: black text with a thick yellow outline
             box_c = _ass_to_rgb(tmpl.get("box_color", "&H0000E6FF&"))
@@ -207,14 +225,56 @@ def render_template_preview(key: str) -> bytes:
                    stroke_width=outline_w, stroke_fill=secondary)
         elif engine == "wave":
             _text(x, y - 8, w_the + " ", font, secondary)
+        elif engine == "stomp":
+            # slammed-in word: draw oversized
+            bigf = _load_font(tmpl["font"], int(size * 1.3),
+                              bool(tmpl["bold"]), bool(tmpl["italic"]))
+            _text(x, y - 6, w_the + " ", bigf, secondary)
+        elif engine == "float":
+            _text(x, y - 10, w_the + " ", font, secondary)
+        elif engine == "drop":
+            bigf = _load_font(tmpl["font"], int(size * 1.2),
+                              bool(tmpl["bold"]), bool(tmpl["italic"]))
+            _text(x, y - 14, w_the + " ", bigf, secondary)
+        elif engine == "shake":
+            _text(x + 3, y, w_the + " ", font, secondary)
+        elif engine == "reveal":
+            _text(x, y, w_the + " ", font, secondary)
+            d.rectangle([x + w1 - 4, y, x + w1 + 2, y + size], fill=secondary)
+        elif engine == "rotate":
+            _text(x + 2, y - 2, w_the + " ", font, secondary)
+        elif engine == "colour":
+            # purple wash behind the active word, no motion
+            wash_c = _ass_to_rgb(tmpl.get("wash_c", tmpl["secondary"]))
+            d.rounded_rectangle(
+                [x - 6, y - 4, x + w1 + 2, y + size + 6],
+                radius=6, fill=wash_c)
+            d.text((x, y), w_the + " ", font=font, fill=primary,
+                   stroke_width=0)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        elif engine == "dim":
+            _text(x, y, w_the + " ", font, secondary)
+        elif (tmpl.get("layout") == "two_tone" and tmpl.get("accent")):
+            # Mozi: white setup + lime punchline (bigger)
+            _text(x, y, w_the + " ", font, primary)
         else:
             _text(x, y, w_the + " ", font, secondary)
         if engine == "underline":
             bar_c = _ass_to_rgb(tmpl.get("bar_c", tmpl["secondary"]))
             d.rectangle([x, y + size + 4, x + w1 - 4, y + size + 10],
                         fill=bar_c)
-        quick_fill = (125, 125, 125) if engine == "fade" else primary
-        _text(x + w1, y, w_quick, font, quick_fill)
+        if (tmpl.get("layout") == "two_tone" and tmpl.get("accent")):
+            accent = _ass_to_rgb(tmpl["accent"])
+            bigf = _load_font(tmpl["font"], int(size * 1.25),
+                              bool(tmpl["bold"]), bool(tmpl["italic"]))
+            d.text((x + w1, y - 4), w_quick, font=bigf, fill=accent,
+                   stroke_width=outline_w, stroke_fill=outline_c)
+        else:
+            quick_fill = (125, 125, 125) if engine in ("fade", "dim") \
+                else primary
+            _text(x + w1, y, w_quick, font, quick_fill)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

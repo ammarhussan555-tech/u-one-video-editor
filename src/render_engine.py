@@ -659,7 +659,21 @@ class RenderEngine:
         # Seed from the content so different videos get different SFX
         # variety, while the same project stays reproducible.
         seed = abs(hash(" ".join(sc.text for sc in self.scenes))) % (2 ** 31)
-        events = place_sfx(sas, self.scene_timings, seed=seed)
+        # Visual-first SFX: clip metadata (tags + query) per scene so the
+        # SFX follows what is ON SCREEN, not the narration alone.
+        vtags = []
+        for sc in self.scenes:
+            a = (self.assets or {}).get(sc.id)
+            if a is None:
+                vtags.append("")
+            else:
+                tags = a.get("tags", "") if isinstance(a, dict) \
+                    else getattr(a, "tags", "")
+                query = a.get("query", "") if isinstance(a, dict) \
+                    else getattr(a, "query", "")
+                vtags.append(f"{tags} {query}".strip())
+        events = place_sfx(sas, self.scene_timings, seed=seed,
+                           visual_tags=vtags)
         # CapCut-style: a subtle sound under each animated caption chunk,
         # matched to its entrance animation (pop/tick/swoosh/punch).
         if S.get("captions_enabled", True):

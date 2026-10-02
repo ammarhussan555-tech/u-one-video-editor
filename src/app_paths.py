@@ -59,6 +59,28 @@ def fonts_dir() -> Path | None:
     return None
 
 
+def sfx_dir() -> Path | None:
+    """Directory with U One's bundled real SFX (PD/CC0 WAVs), or None.
+
+    Resolves to the PyInstaller bundle (sys._MEIPASS/assets/sfx) when
+    frozen, else to <project>/assets/sfx in a dev checkout. See
+    assets/sfx/SOURCES.md for per-file source + license.
+    """
+    import sys
+    cands = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            cands.append(Path(meipass) / "assets" / "sfx")
+        cands.append(Path(sys.executable).parent / "assets" / "sfx")
+    # dev checkout: <project>/assets/sfx (this file is <project>/src/app_paths.py)
+    cands.append(Path(__file__).resolve().parent.parent / "assets" / "sfx")
+    for c in cands:
+        if c.is_dir() and any(c.glob("*.wav")):
+            return c
+    return None
+
+
 def work_root() -> Path:
     return app_dir("work")
 

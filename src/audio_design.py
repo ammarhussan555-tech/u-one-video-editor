@@ -200,6 +200,17 @@ SFX_BUILDERS = {
     "sparkle": sfx_sparkle, "punch": sfx_punch, "swoosh": sfx_swoosh,
 }
 
+# Real PD/CC0 recordings bundled in assets/sfx/ (see SOURCES.md).
+# These names use the recording when present; every other SFX name —
+# and any name whose file is missing — falls back to numpy synthesis.
+BUNDLED_SFX_FILES = {
+    "camera": "camera_real.wav",   # Holga shutter (PD)
+    "crowd": "crowd_real.wav",     # applause bed (PD)
+    "alert": "siren_real.wav",     # siren (PD)
+    "boom": "boom_real.wav",       # explosion (PD)
+    "ding": "ding_real.wav",       # church bell (CC0)
+}
+
 SFX_KEYWORDS = {
     "whoosh": ["suddenly", "fast", "launch", "fly", "transition", "speed"],
     "impact": ["crash", "collision", "hit", "blast"],
@@ -214,13 +225,60 @@ SFX_KEYWORDS = {
 }
 
 
+# Visual -> SFX mapping (2026-10-02, from ~/workspace/research/
+# sfx_visual_mapping.md Part 1 + sfx_200.md). The core principle: sound
+# follows the VISUAL beat — what is ON SCREEN drives the cue, not the
+# narration words alone. visual_tags[i] is the clip metadata
+# (Asset.tags + Asset.query) for scene i. Word-boundary matching so
+# "bell" never fires on "rebellion".
+VISUAL_SFX = [
+    # (sfx, [visual keywords])
+    ("boom", ["explosion", "blast", "detonat", "missile", "airstrike",
+              "bombing", "eruption"]),
+    ("crowd", ["crowd", "protest", "rally", "audience", "demonstration",
+               "march", "supporters", "cheer"]),
+    ("camera", ["photo", "camera", "snapshot", "picture", "archival",
+                "portrait"]),
+    ("alert", ["siren", "police", "ambulance", "emergency"]),
+    ("ding", ["bell", "trophy", "award", "victory", "celebrat"]),
+    ("whoosh", ["map", "aerial", "drone", "satellite"]),
+    ("impact", ["crash", "collision", "slam"]),
+    ("tick", ["countdown", "timer", "clock", "stopwatch"]),
+    ("digital", ["glitch", "hacker", "cyber"]),
+    ("thunder", ["thunder", "lightning", "storm"]),
+    ("swoosh", ["slide", "swipe", "transition"]),
+]
+
+
+def _visual_hit(vtext, kw):
+    """Word-boundary match for visual tags (avoids 'bell' in 'rebellion')."""
+    return re.search(r"\b" + re.escape(kw), vtext) is not None
+
+
 def ensure_sfx_library(sfx_dir):
-    # v2 (2026-10-01): whoosh redesigned (soft/lowpassed/short). Bump the
-    # version so stale harsh whoosh.wav files from v1 are regenerated.
+    # v3 (2026-10-02): real PD/CC0 recordings ship in assets/sfx/
+    # (see SOURCES.md) and are preferred over numpy synthesis.
+    # Synthesis remains the automatic fallback for any name without a
+    # bundled file. v2 synth files are kept (whoosh redesign).
     VERSION = "v2"
     os.makedirs(sfx_dir, exist_ok=True)
+    bundled = None
+    try:
+        from .app_paths import sfx_dir as _bundled_sfx_dir
+        _b = _bundled_sfx_dir()
+        bundled = str(_b) if _b else None
+    except Exception:  # noqa: BLE001 - dev edge: just synthesize
+        bundled = None
     paths = {}
     for name, fn in SFX_BUILDERS.items():
+        real = None
+        if bundled and name in BUNDLED_SFX_FILES:
+            cand = os.path.join(bundled, BUNDLED_SFX_FILES[name])
+            if os.path.isfile(cand):
+                real = cand
+        if real:
+            paths[name] = real
+            continue
         p = os.path.join(sfx_dir, f"{name}_{VERSION}.wav")
         old = os.path.join(sfx_dir, f"{name}.wav")
         if os.path.exists(old):
@@ -244,8 +302,14 @@ def _kw_hit(text, kw):
 
 
 def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
-              transition_whoosh=True):
-    """Contextual placement only: keyword match per scene, never on every scene.
+              transition_whoosh=True, visual_tags=None):
+    """Contextual placement: VISUALS first, narration keywords as fallback.
+
+    visual_tags[i] is the on-screen clip metadata (Asset.tags + query)
+    for scene i. Per the 2026-10-02 visual->SFX research, what is ON
+    SCREEN drives the cue (explosion visual -> boom, crowd visual ->
+    crowd bed, photo -> shutter) — narration keyword matching only fills
+    scenes with no visual hit. Never on every scene.
 
     Variety rules (2026-10-01): the same effect is never placed on two
     scenes in a row — among the keyword hits we prefer effects not used
@@ -264,12 +328,21 @@ def place_sfx(scene_analyses, timings, max_per_scene=1, seed=0,
     rng = random.Random(seed)
     events = []
     recent = []  # last few used sfx names; never repeat the tail
-    for sa, t in zip(scene_analyses, timings):
+    for si, (sa, t) in enumerate(zip(scene_analyses, timings)):
         text = (sa.text + " " + " ".join(sa.keywords)).lower()
+        vtext = ""
+        if visual_tags and si < len(visual_tags):
+            vtext = (visual_tags[si] or "").lower()
         hits = []
-        for sfx, words in SFX_KEYWORDS.items():
-            if any(_kw_hit(text, w) for w in words):
+        # 1) VISUAL-first: what is on screen drives the SFX.
+        for sfx, words in VISUAL_SFX:
+            if any(_visual_hit(vtext, w) for w in words):
                 hits.append(sfx)
+        # 2) narration keywords only when the visual says nothing.
+        if not hits:
+            for sfx, words in SFX_KEYWORDS.items():
+                if any(_kw_hit(text, w) for w in words):
+                    hits.append(sfx)
         fresh = [h for h in hits if h not in recent] or hits
         chosen = rng.sample(fresh, min(max_per_scene, len(fresh)))
         for sfx in chosen:
@@ -330,6 +403,16 @@ _ENGINE_SFX = {
     "sticker": ("punch", -16),       # tilted slap -> punch
     "glitch": ("tick", -19),         # digital jitter -> tick
     "pulse": ("tick", -21),          # rhythmic throb -> soft tick
+    # New engines (2026-10-02, real-tools set): each keeps its family's
+    # sound so the audio language stays consistent across styles.
+    "stomp": ("punch", -17),         # hard slam -> punch
+    "reveal": ("swoosh", -20),       # wipe open -> swoosh
+    "float": ("swoosh", -21),        # gentle rise -> soft swoosh
+    "drop": ("pop", -18),            # drop + bounce -> pop
+    "rotate": ("swoosh", -19),       # spin in -> swoosh
+    "colour": ("pop", -19),          # wash fades in -> soft pop
+    "dim": ("tick", -21),           # teleprompter dim -> soft tick
+    "shake": ("tick", -19),          # earthquake jitter -> tick
 }
 
 
@@ -425,7 +508,15 @@ def mix_audio(voice_path, music_path, sfx_events, sfx_library, out_path,
             sfx_inputs.append((idx, ev))
             idx += 1
 
-    fc = ["[0:a]aresample=44100,aformat=channel_layouts=stereo,asplit=2[vkey][vmix]"]
+    fc = []
+    mix_ins = []
+    if music_idx is not None:
+        # sidechain key needs a copy of the voice; without music the key
+        # output would be unconnected and the filtergraph fails
+        fc.append("[0:a]aresample=44100,aformat=channel_layouts=stereo,"
+                  "asplit=2[vkey][vmix]")
+    else:
+        fc.append("[0:a]aresample=44100,aformat=channel_layouts=stereo[vmix]")
     mix_ins = ["[vmix]"]
     if music_idx is not None:
         fc.append(

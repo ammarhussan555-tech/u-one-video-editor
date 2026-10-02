@@ -189,7 +189,20 @@ class Pipeline:
             self._stage(8, progress_cb=progress_cb)
             self.sfx_library = ensure_sfx_library(os.path.join(self.assets_dir, "sfx"))
             sas = [analyze_sentence(sc.text) for sc in self.scenes]
-            events = place_sfx(sas, self.scene_timings)
+            # Visual-first SFX: clip metadata (tags + query) per scene so
+            # the SFX follows what is ON SCREEN, not the narration alone.
+            vtags = []
+            for sc in self.scenes:
+                a = (self.assets or {}).get(sc.id)
+                if a is None:
+                    vtags.append("")
+                else:
+                    tags = a.get("tags", "") if isinstance(a, dict) \
+                        else getattr(a, "tags", "")
+                    query = a.get("query", "") if isinstance(a, dict) \
+                        else getattr(a, "query", "")
+                    vtags.append(f"{tags} {query}".strip())
+            events = place_sfx(sas, self.scene_timings, visual_tags=vtags)
             for ev in events:
                 lib = self.sfx_library[ev["sfx"]]
                 from src.voice import audio_duration as _ad

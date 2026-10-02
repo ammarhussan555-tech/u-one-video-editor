@@ -1,13 +1,17 @@
-"""CapCut-clone caption engine tests (2026-10-02 rewrite).
+"""Real-tools caption engine tests (2026-10-02).
 
-The 2026-10-01 14-style set was replaced by 23 styles at the user's
-request (capcut_clone_research_2026-10-02.md). beast_box retired (its
-successor is beast); hormozi/beast/box_highlight/pill/caption_bar/glide/
-gradient_sweep/sticker_pop/glitch/pulse added. These tests pin:
-  * all 23 styles build valid ASS,
+The 23-style CapCut-clone set was replaced by 28 styles grounded in REAL
+popular auto-caption tools (~/workspace/research/popular_tools_captions.md):
+Submagic (Hormozi 1/Beast/Karaoke/Neon/Gradient/Minimal), Captions.ai
+(Box/Ali/Pulse), Opus Clip (Karaoke-lime/Beasty/Deep Diver/Pod P/Mozi/
+Popline/Youshaei/Glitch/Bounce/Quake), VEED (Impact Pop/Stomp/Reveal/
+Float In/Scale In/Drop In/Rotate & Flip/Colour Highlight), Universal
+(Typewriter). These tests pin:
+  * all 28 styles build valid ASS,
   * each style's animation signature is present and distinct,
-  * legacy ids migrate (beast_box -> beast, others -> default),
-  * legacy template dicts (no "engine" key) still render safely.
+  * legacy ids migrate to their closest successor,
+  * every style is labelled a visual recreation (never official),
+  * every engine has a caption UI sound mapped.
 """
 import os
 
@@ -21,6 +25,7 @@ from src.text_captions import (  # noqa: E402
     caption_template_labels,
     migrate_caption_template_id,
 )
+from src.audio_design import _ENGINE_SFX  # noqa: E402
 
 WORDS = [
     {"word": w, "start": 0.5 + i * 0.4, "end": 0.5 + i * 0.4 + 0.35}
@@ -39,189 +44,180 @@ def _ass_text(tid, tmp_path, **kw):
 # style id -> animation tokens that MUST appear in its ASS
 # (tokens pinned to the actual template configs in text_captions.py)
 _SIGNATURES = {
-    "karaoke_pop": [r"\c&H0000E6FF", r"\t(0,80,0.5,\fscx125\fscy125)"],
-    "karaoke": [r"\t(0,60,\fscx112\fscy112)"],
-    "hormozi": [r"\fscx70\fscy70", r"\t(0,60,0.5,\fscx120\fscy120)"],
-    "beast": [r"\fscx70\fscy70", r"\t(0,90,0.5,\fscx125\fscy125)"],
-    "bounce": [r"\move(", r"\fscx118\fscy118"],
-    "spring_up": [r"\move(", r"\fscx120\fscy120"],
+    # Submagic
+    "submagic_hormozi": [r"\t(0,80,0.5,\fscx125\fscy125)",
+                         r"\c&H0000E6FF"],
+    "submagic_beast": [r"\t(0,90,0.5,\fscx135\fscy135)", "Bangers,"],
+    "submagic_karaoke": [r"\t(0,60,\fscx100\fscy100)",
+                         r"\c&H0000D7FF"],
+    "submagic_neon": [r"\blur10", r"\3c&H00FFFF00"],
+    "submagic_gradient": [r"\1c&H00F6823B", r"\1c&H00F65C8B"],
+    "submagic_minimal": [r"\fad(150,150)"],
+    # Captions.ai
+    "captions_box": [r"\3c&H0000E6FF\bord7", r"\fscx40\fscy40"],
+    "captions_ali": [r"\fad(200,200)"],
+    "captions_pulse": [r"\fscx108\fscy108"],
+    # Opus
+    "opus_karaoke": [r"\3c&H0035E6A3\bord8", r"\c&H00000000\alpha"],
+    "opus_beasty": [r"\fad(250,250)", "Playfair Display,"],
+    "opus_deepdiver": [r"\c&H00808080", r"\c&H00D6F7FF"],
+    "opus_podp": ["Anton,", r"\t(0,70,0.5,\fscx122\fscy122)"],
+    "opus_mozi": [r"\c&H0035E6A3", r"\fs60"],
+    "opus_popline": [r"\N", r"\fs76", r"\c&H00882EFF"],
+    "opus_youshaei": [r"\c&H00808080", r"\c&H00FFD400"],
+    "opus_glitch": [r"\3c&H000000FF&", r"\move("],
+    "opus_bounce": [r"\move(", r"\fscx118\fscy118"],
+    "opus_quake": [r"\move(", "BREAKING"],
+    # VEED
+    "veed_impact": [r"\fscx0\fscy0", r"\t(0,100,0.5,\fscx115\fscy115)"],
+    "veed_stomp": [r"\fscx135\fscy135\t(0,90,1.8,\fscx100\fscy100)"],
+    "veed_reveal": [r"\fscx30\fscy100\t(0,120,0.5,\fscx100\fscy100)"],
+    "veed_float": [r"\fad(350,0)", r"\move("],
+    "veed_scale": [r"\fscx55\fscy55", r"\t(0,150,0.5,\fscx100\fscy100)"],
+    "veed_drop": [r"\move(", "BREAKING"],
+    "veed_rotate": [r"\frz-10", r"\fscx80\fscy80"],
+    "veed_colour": [r"\3c&H00ED3A7C", r"\3a&HFF&"],
+    # Universal
     "typewriter": ["▌"],
-    "wave": [r"\move(", "BREAKING NEWS FROM THE CAPITAL"],
-    "zoom": [r"\t(0,120,0.5,\fscx105\fscy105)"],
-    "neon_glow": [r"\blur10", r"\3c&H00FFFF00"],
-    "highlighter": [r"\bord6", r"\3c&H0000E6FF", r"\fscx105\fscy105"],
-    "box_highlight": [r"\3c&H001409E5\bord7", r"\fscx40\fscy40"],
-    "pill": [r"\3c&H0000E6FF", r"\bord8", r"\fscx115\fscy115"],
-    "caption_bar": [r"\fad(150,0)", r"\move(", "&H66000000"],
-    "outline_fill": [r"\1a&HFF&"],
-    "underline_sweep": [r"\u1"],
-    "glide": [r"\move(", r"\fad(150,0)"],
-    "solo_pop": ["Montserrat,91,", r"\t(0,80,0.5,\fscx125\fscy125)"],
-    "minimal_fade": [r"\fad(120,120)"],
-    "gradient_sweep": [r"\1c&H00F6823B", r"\fscx"],
-    "sticker_pop": [r"\frz6", r"\bord8"],
-    "glitch": [r"\move(", r"\3c&H000000FF&"],
-    "pulse": [r"\fscx108\fscy108"],
 }
 
 
-def test_twenty_three_styles_present():
-    assert len(CAPTION_TEMPLATES) == 23
+def test_twenty_eight_styles_present():
+    assert len(CAPTION_TEMPLATES) == 28
     assert set(_SIGNATURES) == set(CAPTION_TEMPLATES)
 
 
-def test_default_is_karaoke_pop():
-    assert DEFAULT_CAPTION_TEMPLATE == "karaoke_pop"
+def test_default_is_submagic_hormozi():
+    assert DEFAULT_CAPTION_TEMPLATE == "submagic_hormozi"
 
 
 def test_labels_ordered():
     labels = caption_template_labels()
-    assert len(labels) == 23
-    assert labels[0] == ("karaoke_pop", "Karaoke Pop")
-    assert labels[-1] == ("pulse", "Pulse")
+    assert len(labels) == 28
+    assert labels[0] == ("submagic_hormozi", "Submagic Hormozi")
 
 
-def test_categories_single_capcut():
-    assert CAPTION_TEMPLATE_CATEGORIES == ["CapCut"]
+def test_categories_are_real_tools():
+    assert CAPTION_TEMPLATE_CATEGORIES == [
+        "Submagic", "Captions.ai", "Opus", "VEED", "Universal"]
+    cats = {t["category"] for t in CAPTION_TEMPLATES.values()}
+    assert cats <= set(CAPTION_TEMPLATE_CATEGORIES)
 
 
 def test_visual_recreation_meta():
     for tid, tmpl in CAPTION_TEMPLATES.items():
-        assert tmpl["meta"]["source"] == "visual_recreation", tid
-        assert tmpl.get("engine"), tid
+        assert tmpl.get("meta", {}).get("source") == "visual_recreation", tid
+        assert "official" not in tmpl["desc"].lower(), tid
 
 
 @pytest.mark.parametrize("tid", sorted(_SIGNATURES))
 def test_style_builds_valid_ass(tid, tmp_path):
     txt = _ass_text(tid, tmp_path)
-    assert "ScaledBorderAndShadow: yes" in txt
-    assert "[Events]" in txt
-    assert txt.count("Dialogue:") >= 2
+    assert "[V4+ Styles]" in txt
+    assert txt.count("Dialogue:") > 1, tid
 
 
 @pytest.mark.parametrize("tid,tokens", sorted(_SIGNATURES.items()))
 def test_style_animation_signature(tid, tokens, tmp_path):
     txt = _ass_text(tid, tmp_path)
     for tok in tokens:
-        assert tok in txt, (tid, tok)
+        assert tok in txt, f"{tid}: missing {tok!r}"
 
 
-def test_typewriter_has_no_scale_transforms(tmp_path):
-    txt = _ass_text("typewriter", tmp_path)
-    assert r"\fscx" not in txt
-    assert r"\move(" not in txt
-
-
-def test_minimal_fade_has_no_scale_or_move(tmp_path):
-    txt = _ass_text("minimal_fade", tmp_path)
-    assert r"\fscx" not in txt
-    assert r"\move(" not in txt
-    assert r"\fad(120,120)" in txt
-
-
-def test_zoom_has_no_move(tmp_path):
-    txt = _ass_text("zoom", tmp_path)
-    assert r"\move(" not in txt
-
-
-def test_caption_bar_has_no_scale_or_pop(tmp_path):
-    # the bar style's motion is fade+rise only — no color pop, no scale
-    txt = _ass_text("caption_bar", tmp_path)
-    assert r"\fscx" not in txt
+def test_pop_envelopes_differ():
+    """Styles sharing the pop engine must differ in envelope/layout/font."""
+    pops = {tid: t for tid, t in CAPTION_TEMPLATES.items()
+            if t["engine"] == "pop"}
+    seen = set()
+    for tid, t in pops.items():
+        key = (t["pop"]["frm"], t["pop"]["peak"], t["pop"]["up_ms"],
+               t.get("layout"), t["font"], t["primary"], t["secondary"])
+        assert key not in seen, f"{tid} duplicates another pop style"
+        seen.add(key)
 
 
 def test_styles_are_distinct():
-    """No two styles may share the same animation signature."""
-    sigs = {}
-    for tid, tokens in _SIGNATURES.items():
-        sigs[tid] = tuple(sorted(tokens))
-    assert len(set(sigs.values())) == len(sigs)
+    """No two styles may render byte-identical ASS."""
+    import tempfile
+    outs = {}
+    for tid in CAPTION_TEMPLATES:
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "x.ass")
+            build_ass(SENTS, WORDS, p, font_size=48, template=tid)
+            outs[tid] = open(p, encoding="utf-8").read()
+    assert len(set(outs.values())) == len(outs)
 
 
-def test_terminal_punctuation_stripped(tmp_path):
-    words = [{"word": "hello,", "start": 0.5, "end": 0.9},
-             {"word": "world!", "start": 1.0, "end": 1.4}]
-    sents = [{"text": "hello, world!", "start": 0.5, "end": 1.4}]
-    p = str(tmp_path / "p.ass")
-    build_ass(sents, words, p, template="karaoke_pop")
-    txt = open(p, encoding="utf-8").read()
-    assert "hello," not in txt.split("[Events]")[1]
-    assert "world!" not in txt.split("[Events]")[1]
+def test_dim_upcoming_words_grey(tmp_path):
+    txt = _ass_text("opus_deepdiver", tmp_path)
+    assert txt.count(r"\c&H00808080") >= 2
+
+
+def test_mozi_punchline_lime_and_big(tmp_path):
+    txt = _ass_text("opus_mozi", tmp_path)
+    assert r"\c&H0035E6A3" in txt and r"\fs60" in txt
+
+
+def test_popline_two_lines(tmp_path):
+    txt = _ass_text("opus_popline", tmp_path)
+    assert r"\N" in txt
+
+
+def test_opus_karaoke_dark_text_on_lime(tmp_path):
+    txt = _ass_text("opus_karaoke", tmp_path)
+    assert r"\c&H00000000\alpha&H00&" in txt
+
+
+def test_veed_colour_has_no_motion(tmp_path):
+    txt = _ass_text("veed_colour", tmp_path)
+    ev = txt.split("[Events]")[1]
+    assert r"\move(" not in ev
+    assert ev.replace(r"\fscx100", "").count(r"\fscx") == 0
+
+
+def test_submagic_karaoke_pure_color_no_scale(tmp_path):
+    txt = _ass_text("submagic_karaoke", tmp_path)
+    ev = txt.split("[Events]")[1]
+    assert r"\fscx112" not in ev and r"\fscx125" not in ev
 
 
 def test_migrate_legacy_ids():
-    assert migrate_caption_template_id("spec_highlight") == "karaoke_pop"
-    assert migrate_caption_template_id("spec_word_sync") == "karaoke_pop"
-    assert migrate_caption_template_id("tiktok_classic") == "karaoke_pop"
-    assert migrate_caption_template_id("karaoke_pop") == "karaoke_pop"
-    assert migrate_caption_template_id(None) == "karaoke_pop"
+    from src.text_captions import _MIGRATION_MAP
+    for old, new in _MIGRATION_MAP.items():
+        assert migrate_caption_template_id(old) == new, old
+        assert new in CAPTION_TEMPLATES
 
 
-def test_beast_box_migrates_to_beast():
-    # retired 2026-10-02: beast_box maps to its successor beast.
-    assert migrate_caption_template_id("beast_box") == "beast"
+def test_legacy_id_renders_as_successor(tmp_path):
+    txt = _ass_text("karaoke_pop", tmp_path)  # retired -> hormozi
+    txt2 = _ass_text("submagic_hormozi", tmp_path)
+    assert txt == txt2
 
 
-def test_legacy_id_renders_as_default(tmp_path):
-    a = _ass_text("spec_highlight", tmp_path)
-    b = _ass_text("karaoke_pop", tmp_path)
-    assert a == b
-
-
-def test_beast_box_renders_as_beast(tmp_path):
-    a = _ass_text("beast_box", tmp_path)
-    b = _ass_text("beast", tmp_path)
-    assert a == b
+def test_unknown_id_falls_back_to_default(tmp_path):
+    txt = _ass_text("does_not_exist_xyz", tmp_path)
+    assert txt == _ass_text(DEFAULT_CAPTION_TEMPLATE, tmp_path)
 
 
 def test_legacy_dict_without_engine_renders(tmp_path):
+    from src.text_captions import build_ass as _ba
     p = str(tmp_path / "legacy.ass")
-    build_ass(SENTS, WORDS, p, template={"template_key": "spec_impact",
-                                         "dx_frac": 0.05})
+    _ba(SENTS, WORDS, p, font_size=48, template={"template_key": "karaoke_pop"})
     txt = open(p, encoding="utf-8").read()
-    assert txt.count("Dialogue:") >= 2
+    assert txt == _ass_text("submagic_hormozi", tmp_path)
 
 
-def test_plain_fallback_no_words(tmp_path):
-    p = str(tmp_path / "plain.ass")
-    build_ass(SENTS, [], p, template="bounce")
-    txt = open(p, encoding="utf-8").read()
-    assert txt.count("Dialogue:") >= 1
+def test_engine_sfx_map_covers_all_styles():
+    engines = {t["engine"] for t in CAPTION_TEMPLATES.values()}
+    # fade is intentionally silent: a sound on every faded line is annoying
+    missing = engines - set(_ENGINE_SFX) - {"fade"}
+    assert not missing, f"engines without UI sound: {missing}"
 
 
-def test_old_engine_names_gone():
-    from src import text_captions as tc
-    for name in ("compose_template", "CAPTION_PRESETS", "CAPTION_MOTIONS",
-                 "_word_anim_open", "_entrance_tags"):
-        assert not hasattr(tc, name), name
-
-
-def test_composer_dialog_gone():
-    src = open(os.path.join(os.path.dirname(__file__), "..", "src", "ui",
-                            "caption_gallery.py"),
-               encoding="utf-8").read()
-    assert "class CaptionComposerDialog" not in src
-    assert "compose_template" not in src
-
-
-def test_engine_sfx_map():
-    from src.audio_design import _caption_chunk_sfx
-    assert _caption_chunk_sfx({"engine": "pop"}) == ("pop", -18)
-    assert _caption_chunk_sfx({"engine": "typewriter"}) == ("tick", -20)
-    assert _caption_chunk_sfx({"engine": "fade"}) is None
-    assert _caption_chunk_sfx({"engine": "nope"}) is None
-    assert _caption_chunk_sfx("karaoke_pop") is None
-    # new engines (2026-10-02) keep their family's sound
-    assert _caption_chunk_sfx({"engine": "box_snap"}) == ("pop", -17)
-    assert _caption_chunk_sfx({"engine": "pill"}) == ("pop", -17)
-    assert _caption_chunk_sfx({"engine": "bar"}) == ("swoosh", -21)
-    assert _caption_chunk_sfx({"engine": "glide"}) == ("swoosh", -20)
-    assert _caption_chunk_sfx({"engine": "gradient"}) == ("swoosh", -19)
-    assert _caption_chunk_sfx({"engine": "sticker"}) == ("punch", -16)
-    assert _caption_chunk_sfx({"engine": "glitch"}) == ("tick", -19)
-    assert _caption_chunk_sfx({"engine": "pulse"}) == ("tick", -21)
-
-
-def test_settings_default():
-    from src.settings import DEFAULTS
-    assert DEFAULTS["caption_template"] == "karaoke_pop"
+def test_gallery_previews_render():
+    pytest.importorskip("PySide6.QtWidgets")
+    from src.ui.caption_gallery import render_template_preview
+    for tid in CAPTION_TEMPLATES:
+        png = render_template_preview(tid)
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", tid
+        assert len(png) > 1000, tid

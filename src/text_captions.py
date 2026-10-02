@@ -11,42 +11,59 @@ from .ffmpeg_util import sanitize_ass_text
 
 
 # ---------------------------------------------------------------------------
-# CapCut-clone animated caption styles (2026-10-02).
+# ---------------------------------------------------------------------------
+# Caption styles grounded in REAL popular auto-caption tools (2026-10-02).
+# See the CAPTION_TEMPLATES block below for per-tool sourcing.
+# ---------------------------------------------------------------------------
+
+_VR_META = {"source": "visual_recreation"}
+
+# ---------------------------------------------------------------------------
+# Caption styles grounded in REAL popular auto-caption tools (2026-10-02).
 #
-# Specs: ~/workspace/research/capcut_clone_research_2026-10-02.md (final 23),
-#        ~/workspace/research/capcut_caption_spec.md,
-#        ~/workspace/research/chatgpt_capcut_consultation.md,
-#        ~/workspace/research/gemini_capcut_consultation.md
+# Research: ~/workspace/research/popular_tools_captions.md
+#   Submagic   — Hormozi 1 / Beast / Minimal / Karaoke / Neon / Gradient
+#                (style names from Submagic skill docs + reviews)
+#   Captions.ai — Box Highlight (signature "keyword in a colored box"),
+#                Ali (minimal white), Pulse (official template names)
+#   Opus Clip  — Karaoke (lime pill), Beasty, Deep Diver, Pod_P, Mozi,
+#                Popline, Youshaei (+ Glitch/Bounce/Shake engines from
+#                Opus-style clones)
+#   VEED       — Impact Pop, Stomp, Reveal, Float In, Scale In, Drop In,
+#                Rotate & Flip, Colour Highlight (official FAQ engine names)
+#   capite hex pairs (MIT clone): hormozi #FFFFFF/#00FFFF,
+#                mrbeast #FFFF00/#FF6600, podcast-viral lime #A3E635 ...
 #
-# HONESTY: CapCut does not publish its internal animation parameters. Every
-# number below is a visual-recreation target from the consultations +
-# community clones (caption-ai 33-style table, agent-caption presets,
-# mcp-cut, localcut, opencut-ai), NOT a documented CapCut internal. Each
-# style dict carries meta {"source": "visual_recreation"} — the UI must
-# never claim these are CapCut's exact in-app presets.
+# HONESTY: no tool publishes per-style keyframe numbers or exact in-app
+# hex values. Names + documented looks come from the sources above; all
+# ms/scale numbers are visual-recreation targets. Each style dict carries
+# meta {"source": "visual_recreation"} — the UI must never claim these are
+# any tool's exact in-app presets.
 #
 # Every style is a DISTINCT motion/layout/timing config — a color/font-only
 # difference is NOT a style (user boundary). Distinct mechanics:
-#   pop        = scale overshoot (karaoke_pop, hormozi, beast, zoom —
-#                different envelopes/layouts)
+#   pop        = scale overshoot (hormozi/beast/impact/pop with different
+#                envelopes, fonts, layouts)
 #   karaoke    = pure color-state sync, no scale
-#   spring     = scale overshoot + vertical spring (bounce, spring_up)
-#   typewriter = character alpha reveal
-#   wave       = continuous sine Y bob
-#   highlight_box = marker stroke behind the active word (highlighter)
-#   box_snap   = solid red box SNAPS 40->100% in 80ms, no overshoot
-#   pill       = yellow pill badge springs 60->115% (dark text on pill)
-#   bar        = persistent translucent bar; words fade+rise in, no color pop
-#   underline  = yellow underline + pop on the active word
-#   outline_fill = hollow -> solid fill state change
-#   glow       = bord/blur flash
-#   fade       = opacity only, no motion
-#   solo       = one giant word at a time
-#   glide      = words slide in from the right (X +60 -> 0)
-#   gradient   = teal -> blue -> violet color sweep + pop
-#   sticker    = tilted sticker slap (rotation wobble + pop)
-#   glitch     = RGB-split jitter (3 quick X steps, red/blue outlines)
-#   pulse      = rhythmic 100 -> 108 -> 100% throb while spoken
+#   dim        = karaoke-dim: upcoming words grey, active highlighted
+#                (deepdiver, youshaei)
+#   spring     = scale overshoot + vertical spring (bounce)
+#   shake      = rapid small X jitter, no color split (quake)
+#   stomp      = hard slam 135 -> 100%, no overshoot
+#   reveal     = horizontal unfold \fscx30 -> 100 (wipe feel)
+#   float      = gentle rise + fade, no scale
+#   drop       = falls from above with a small bounce
+#   rotate     = rotation wobble + pop
+#   colour     = background color wash fades in, no motion
+#   typewriter = character alpha reveal + cursor
+#   highlight  = marker wash behind the word (kept as 'colour' family)
+#   box_snap   = solid box SNAPS 40 -> 100% in 80ms (captions.ai keyword box)
+#   pill       = pill badge springs 60 -> 115% (lime for Opus Karaoke)
+#   glow       = bord/blur flash (neon)
+#   gradient   = teal -> blue -> violet sweep + pop
+#   fade       = opacity only: minimal / ali / beasty
+#   two_tone   = layout: white setup + lime punchline (mozi)
+#   headline   = layout: big word + small pink line (popline)
 #
 # Rendering model (proven, kept): layer 0 = full phrase card; layer 1 =
 # per-active-word overlay holding the FULL phrase with every other word
@@ -56,33 +73,47 @@ from .ffmpeg_util import sanitize_ass_text
 # transform \pos). \t() = milliseconds, \k = centiseconds, colors BGR.
 # ---------------------------------------------------------------------------
 
-_VR_META = {"source": "visual_recreation"}
-
 CAPTION_TEMPLATES = {
-    # -- 1. Karaoke Pop (DEFAULT): THE viral CapCut style -------------------
-    'karaoke_pop': {
-        'id': 'karaoke_pop', 'label': 'Karaoke Pop',
-        'category': 'CapCut',
-        'desc': 'THE viral style — white words, spoken word pops yellow '
-                '(CapCut Word Pop / Hormozi)',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
+    # ================= SUBMAGIC =================
+    # -- Hormozi 1 (DEFAULT): Montserrat Black, ALL CAPS, white + yellow
+    #    highlight, thick black stroke, 4-6 words / 2 lines, pop on active
+    'submagic_hormozi': {
+        'id': 'submagic_hormozi', 'label': 'Submagic Hormozi',
+        'category': 'Submagic',
+        'desc': 'Submagic Hormozi 1 — heavy caps, spoken word pops YELLOW',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 4,
         'font': 'Montserrat', 'size_scale': 1.0,
         'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
         'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
         'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        # scale 80 -> 125% over 80ms (cubic ease-out), settle -> 100% over 60ms
         'pop': {'frm': 80, 'peak': 125, 'up_ms': 80, 'total_ms': 140},
         'meta': _VR_META,
     },
-    # -- 2. Karaoke: full phrase, color-state sync ---------------------------
-    'karaoke': {
-        'id': 'karaoke', 'label': 'Karaoke',
-        'category': 'CapCut',
-        'desc': 'Full phrase on screen; spoken word glows gold — pure '
-                'color-state sync, almost no motion',
+    # -- Beast: Komika-style heavy cartoon caps, yellow base / orange
+    #    active, big pop (font mapped to bundled Bangers)
+    'submagic_beast': {
+        'id': 'submagic_beast', 'label': 'Submagic Beast',
+        'category': 'Submagic',
+        'desc': 'MrBeast energy — huge cartoon caps, spoken word pops ORANGE',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
+        'font': 'Bangers', 'size_scale': 1.15,
+        'primary': '&H0000D7FF', 'secondary': '&H000066FF',  # #FFD700/#FF6600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 6, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 200,
+        'pop': {'frm': 70, 'peak': 135, 'up_ms': 90, 'total_ms': 180},
+        'meta': _VR_META,
+    },
+    # -- Karaoke: pure color-state sync, no scale (Submagic Karaoke)
+    'submagic_karaoke': {
+        'id': 'submagic_karaoke', 'label': 'Submagic Karaoke',
+        'category': 'Submagic',
+        'desc': 'Full phrase on screen; spoken word glows gold — no motion',
         'engine': 'karaoke', 'layout': 'phrase', 'max_words': 5,
         'font': 'Montserrat', 'size_scale': 1.0,
         'primary': '&H00FFFFFF', 'secondary': '&H0000D7FF',  # #FFD700
@@ -91,368 +122,316 @@ CAPTION_TEMPLATES = {
         'alignment': 2, 'box': False,
         'highlight_mode': 'word',
         'lead_ms': -10, 'floor_ms': 140, 'hold_ms': 150,
-        # subtle pulse 100 -> 112 -> 100% over 120ms with the color change
-        'pulse': {'peak': 112, 'up_ms': 60, 'total_ms': 120},
+        'pulse': {'peak': 100, 'up_ms': 60, 'total_ms': 120},
         'meta': _VR_META,
     },
-    # -- 3. Hormozi: hard green punch ----------------------------------------
-    'hormozi': {
-        'id': 'hormozi', 'label': 'Hormozi',
-        'category': 'CapCut',
-        'desc': 'Alex Hormozi punch — all caps, thick stroke, spoken word '
-                'flashes GREEN with a hard fast pop',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 2,
-        'font': 'Montserrat', 'size_scale': 1.05,
-        'primary': '&H00FFFFFF', 'secondary': '&H0066FF00',  # #00FF66
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
-        # hard punch: 70 -> 120% over 60ms, settle -> 100% over 60ms
-        'pop': {'frm': 70, 'peak': 120, 'up_ms': 60, 'total_ms': 120},
-        'meta': _VR_META,
-    },
-    # -- 4. Beast: huge yellow pop --------------------------------------------
-    'beast': {
-        'id': 'beast', 'label': 'Beast',
-        'category': 'CapCut',
-        'desc': 'MrBeast energy — huge caps, spoken word pops YELLOW big',
-        'engine': 'pop', 'layout': 'compact', 'max_words': 2,
-        'font': 'Montserrat', 'size_scale': 1.35,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 200,
-        # big pop: 70 -> 125% over 90ms, settle over 110ms
-        'pop': {'frm': 70, 'peak': 125, 'up_ms': 90, 'total_ms': 200},
-        'meta': _VR_META,
-    },
-    # -- 5. Bounce: 1-3 words spring up from below ----------------------------
-    'bounce': {
-        'id': 'bounce', 'label': 'Bounce',
-        'category': 'CapCut',
-        'desc': 'Words spring up from below with overshoot — CapCut Bounce',
-        'engine': 'spring', 'layout': 'compact', 'max_words': 3,
-        'font': 'Montserrat', 'size_scale': 1.05,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -25, 'floor_ms': 150, 'hold_ms': 200,
-        # scale 72 -> 118 -> 94 -> 100% over 250ms; Y +20 -> -5 -> +2 -> 0px.
-        # Starts 25ms BEFORE word_start so the peak lands on the audio onset.
-        'spring': {'scales': [72, 118, 94, 100], 'ys': [20, -5, 2, 0],
-                   'total_ms': 250},
-        'meta': _VR_META,
-    },
-    # -- 6. Spring Up: full line, words spring in place -----------------------
-    'spring_up': {
-        'id': 'spring_up', 'label': 'Spring Up',
-        'category': 'CapCut',
-        'desc': 'Full line stays up; each word springs in place — '
-                'CapCut Spring',
-        'engine': 'spring', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Poppins', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -30, 'floor_ms': 150, 'hold_ms': 150,
-        # scale 85 -> 120 -> 97 -> 100% over 260ms; Y +12 -> -5 -> +1 -> 0px
-        'spring': {'scales': [85, 120, 97, 100], 'ys': [12, -5, 1, 0],
-                   'total_ms': 260},
-        'meta': _VR_META,
-    },
-    # -- 7. Typewriter ---------------------------------------------------------
-    'typewriter': {
-        'id': 'typewriter', 'label': 'Typewriter',
-        'category': 'CapCut',
-        'desc': 'Letters type in one by one with a blinking cursor — '
-                'CapCut Typewriter',
-        'engine': 'typewriter', 'layout': 'phrase', 'max_words': 6,
-        'font': 'Courier Prime', 'size_scale': 0.95,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 120, 'hold_ms': 400,
-        'char_ms': 40, 'cursor': '\u258c',
-        'meta': _VR_META,
-    },
-    # -- 8. Wave ----------------------------------------------------------------
-    'wave': {
-        'id': 'wave', 'label': 'Wave',
-        'category': 'CapCut',
-        'desc': 'Words bob in a sine wave as spoken — CapCut Wave',
-        'engine': 'wave', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Poppins', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
-        # Y 0 -> -12px peak over 150ms, back over 150ms; \fscy 100 -> 108%;
-        # phase offset ~65ms between words (from their own timestamps)
-        'wave': {'y_peak': -12, 'half_ms': 150, 'vscale': 108},
-        'meta': _VR_META,
-    },
-    # -- 9. Zoom: scale-only entrance -------------------------------------------
-    'zoom': {
-        'id': 'zoom', 'label': 'Zoom',
-        'category': 'CapCut',
-        'desc': 'Spoken word zooms in from small — CapCut Zoom',
-        'engine': 'pop', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE500
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -30, 'floor_ms': 140, 'hold_ms': 150,
-        # scale-only: 55 -> 105 -> 100% over 190ms, no Y movement
-        'pop': {'frm': 55, 'peak': 105, 'up_ms': 120, 'total_ms': 190},
-        'meta': _VR_META,
-    },
-    # -- 10. Neon Glow ------------------------------------------------------------
-    'neon_glow': {
-        'id': 'neon_glow', 'label': 'Neon Glow',
-        'category': 'CapCut',
-        'desc': 'Spoken word flashes neon cyan glow — CapCut Glow',
+    # -- Neon: cyan glow pulse on the active word
+    'submagic_neon': {
+        'id': 'submagic_neon', 'label': 'Submagic Neon',
+        'category': 'Submagic',
+        'desc': 'White core, CYAN neon glow flashes on the spoken word',
         'engine': 'glow', 'layout': 'compact', 'max_words': 3,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00444444', 'secondary': '&H00FFFFFF',
-        'glow_c': '&H00FFFF00',  # #00FFFF cyan
-        'outline_c': '&H00444444', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 200,
-        # 100 -> 105% over 80ms, exponential decay over 120ms; \bord/\blur
-        # flash: inactive bord2/blur1, active bord6/blur10
-        'glow': {'up_ms': 80, 'decay_ms': 120, 'scale_peak': 105},
-        'meta': _VR_META,
-    },
-    # -- 11. Highlighter: yellow marker behind ACTIVE word --------------------------
-    'highlighter': {
-        'id': 'highlighter', 'label': 'Highlighter',
-        'category': 'CapCut',
-        'desc': 'Yellow marker swipes behind the spoken word — '
-                'CapCut Highlight',
-        'engine': 'highlight_box', 'box_mode': 'active',
-        'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00000000',
-        'box_color': '&H0000E6FF',  # #FFE600 marker
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'wordbox',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
-        # marker pop 100 -> 105 -> 100% over 100ms
-        'pop': {'frm': 100, 'peak': 105, 'up_ms': 50, 'total_ms': 100},
-        'meta': _VR_META,
-    },
-    # -- 12. Box Highlight: red box SNAPS around the keyword -------------------------
-    'box_highlight': {
-        'id': 'box_highlight', 'label': 'Box Highlight',
-        'category': 'CapCut',
-        'desc': 'Solid red box SNAPS around the keyword in 80ms, no '
-                'overshoot — Captions.ai style',
-        'engine': 'box_snap', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
         'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'box_color': '&H001409E5',  # #E50914 red box
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- 13. Pill: springy yellow pill badge --------------------------------------------
-    'pill': {
-        'id': 'pill', 'label': 'Pill',
-        'category': 'CapCut',
-        'desc': 'Spoken word springs into a yellow pill badge — dark text '
-                'on the pill',
-        'engine': 'pill', 'layout': 'phrase', 'max_words': 4,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00000000',
-        'box_color': '&H0000E6FF',  # #FFE600 pill
+        'glow_c': '&H00FFFF00',  # #00FFFF
         'outline_c': '&H00000000', 'back_c': '&H90000000',
         'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
         'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
-        # springy badge: 60 -> 115% over 90ms, settle over 90ms
-        'pill': {'frm': 60, 'peak': 115, 'up_ms': 90, 'total_ms': 180},
+        'glow': {'up_ms': 80, 'scale_peak': 105, 'decay_ms': 120},
         'meta': _VR_META,
     },
-    # -- 14. Caption Bar: translucent bar, words fade-rise ---------------------------------
-    'caption_bar': {
-        'id': 'caption_bar', 'label': 'Caption Bar',
-        'category': 'CapCut',
-        'desc': 'Whole line sits on a translucent black bar; words '
-                'fade-rise in — no color pop',
-        'engine': 'bar', 'layout': 'phrase', 'max_words': 5,
+    # -- Gradient: teal -> blue -> violet sweep + pop (capite hex family)
+    'submagic_gradient': {
+        'id': 'submagic_gradient', 'label': 'Submagic Gradient',
+        'category': 'Submagic',
+        'desc': 'Teal to violet color sweep across the spoken word + pop',
+        'engine': 'gradient', 'layout': 'compact', 'max_words': 3,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
-        'outline_c': '&H00000000', 'back_c': '&H66000000',  # black 60%
-        'bold': -1, 'italic': 0, 'outline': 1, 'shadow': 0,
-        'alignment': 2, 'box': True, 'box_opacity': 0.60, 'box_pad': 16,
-        'highlight_mode': 'word',
-        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
-        'meta': _VR_META,
-    },
-    # -- 15. Outline Fill: hollow -> solid ----------------------------------------------
-    'outline_fill': {
-        'id': 'outline_fill', 'label': 'Outline Fill',
-        'category': 'CapCut',
-        'desc': 'Hollow outlined words; the spoken word fills solid',
-        'engine': 'outline_fill', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00FFFFFF', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00F5D020',  # teal-ish
+        'grad_mid': '&H00F6823B', 'grad_end': '&H00F65C8B',  # blue->violet
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
-        # fill-in pop 100 -> 106 -> 100% over 160ms
-        'pop': {'frm': 100, 'peak': 106, 'up_ms': 80, 'total_ms': 160},
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
+        'pop': {'frm': 80, 'peak': 120, 'up_ms': 80, 'total_ms': 150},
         'meta': _VR_META,
     },
-    # -- 16. Underline Sweep ----------------------------------------------------------------
-    'underline_sweep': {
-        'id': 'underline_sweep', 'label': 'Underline Sweep',
-        'category': 'CapCut',
-        'desc': 'Accent underline sweeps under the spoken word, left to right',
-        'engine': 'underline', 'layout': 'phrase', 'max_words': 5,
+    # -- Minimal: small clean white lower-third, fade only
+    'submagic_minimal': {
+        'id': 'submagic_minimal', 'label': 'Submagic Minimal',
+        'category': 'Submagic',
+        'desc': 'Small clean white lower-third — calm fade, no pop',
+        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
+        'font': 'Montserrat', 'size_scale': 0.8,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': 0, 'italic': 0, 'outline': 1, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word',
+        'lead_ms': 0, 'floor_ms': 200, 'hold_ms': 200,
+        'fade': {'in_ms': 150, 'out_ms': 150},
+        'meta': _VR_META,
+    },
+    # ================= CAPTIONS.AI =================
+    # -- Box Highlight: the Captions.ai signature — keyword in a colored
+    #    box that SNAPS in (40 -> 100% in 80ms, no overshoot)
+    'captions_box': {
+        'id': 'captions_box', 'label': 'Captions Box',
+        'category': 'Captions.ai',
+        'desc': 'Captions.ai signature — spoken keyword in a YELLOW box',
+        'engine': 'box_snap', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'box_color': '&H0000E6FF',  # #FFE600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- Ali: minimal white, thin shadow, calm — sentence case, NO stroke
+    'captions_ali': {
+        'id': 'captions_ali', 'label': 'Captions Ali',
+        'category': 'Captions.ai',
+        'desc': 'Ali Abdaal calm — sentence case, soft shadow, gentle fade',
+        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
+        'font': 'Montserrat', 'size_scale': 0.9,
+        'primary': '&H00FFFBEB', 'secondary': '&H00FFFBEB',  # soft cream
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': 0, 'italic': 0, 'outline': 0, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word',
+        'lead_ms': 0, 'floor_ms': 220, 'hold_ms': 220,
+        'fade': {'in_ms': 200, 'out_ms': 200},
+        'meta': _VR_META,
+    },
+    # -- Pulse: official Captions.ai template — rhythmic throb
+    'captions_pulse': {
+        'id': 'captions_pulse', 'label': 'Captions Pulse',
+        'category': 'Captions.ai',
+        'desc': 'Spoken word throbs rhythmically while it is spoken',
+        'engine': 'pulse', 'layout': 'compact', 'max_words': 3,
         'font': 'Montserrat', 'size_scale': 1.0,
         'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'bar_c': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 200, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # ================= OPUS CLIP =================
+    # -- Karaoke: Montserrat Black, spoken word in a LIME pill
+    #    (capite podcast-viral #A3E635)
+    'opus_karaoke': {
+        'id': 'opus_karaoke', 'label': 'Opus Karaoke',
+        'category': 'Opus',
+        'desc': 'Opus Karaoke — spoken word springs into a LIME pill',
+        'engine': 'pill', 'layout': 'compact', 'max_words': 4,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'box_color': '&H0035E6A3',  # #A3E635 lime
+        'pill_text': '&H00000000',  # dark text on the lime pill
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- Beasty: quiet literary — tiny serif italic in a dark rounded
+    #    pill around the whole line, gentle fade
+    'opus_beasty': {
+        'id': 'opus_beasty', 'label': 'Opus Beasty',
+        'category': 'Opus',
+        'desc': 'Opus Beasty — quiet serif italic inside a dark pill',
+        'engine': 'fade', 'layout': 'phrase', 'max_words': 6,
+        'font': 'Playfair Display', 'size_scale': 0.72,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'outline_c': '&H00000000', 'back_c': '&HB4000000',  # dark pill
+        'bold': 0, 'italic': -1, 'outline': 0, 'shadow': 0,
+        'alignment': 2, 'box': True,
+        'highlight_mode': 'word',
+        'lead_ms': 0, 'floor_ms': 250, 'hold_ms': 250,
+        'fade': {'in_ms': 250, 'out_ms': 250},
+        'meta': _VR_META,
+    },
+    # -- Deep Diver: Poppins, cream pill line, karaoke-dim — upcoming
+    #    words stay grey, spoken word goes bold cream
+    'opus_deepdiver': {
+        'id': 'opus_deepdiver', 'label': 'Opus Deep Diver',
+        'category': 'Opus',
+        'desc': 'Opus Deep Diver — teleprompter dim, spoken word CREAM',
+        'engine': 'dim', 'layout': 'phrase', 'max_words': 5,
+        'font': 'Poppins', 'size_scale': 0.95,
+        'primary': '&H00FFFFFF', 'secondary': '&H00D6F7FF',  # cream #FFF7D6
+        'dim_c': '&H00808080',
         'outline_c': '&H00000000', 'back_c': '&H90000000',
         'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word',
-        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
+        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
         'meta': _VR_META,
     },
-    # -- 17. Glide: words slide in from the right ----------------------------------------------
-    'glide': {
-        'id': 'glide', 'label': 'Glide',
-        'category': 'CapCut',
-        'desc': 'Spoken word glides in from the right — X +60 -> 0px, '
-                'ease-out 200ms',
-        'engine': 'glide', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+    # -- Pod P: Anton, HOT-PINK caps on dark, punchy pop
+    'opus_podp': {
+        'id': 'opus_podp', 'label': 'Opus Pod P',
+        'category': 'Opus',
+        'desc': 'Opus Pod P — hot-pink caps on dark, punchy pop',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
+        'font': 'Anton', 'size_scale': 1.05,
+        'primary': '&H00882EFF', 'secondary': '&H00FFFFFF',  # #FF2E88
+        'outline_c': '&H00000000', 'back_c': '&HB4000000',
+        'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'alignment': 2, 'box': True,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
+        'pop': {'frm': 75, 'peak': 122, 'up_ms': 70, 'total_ms': 140},
+        'meta': _VR_META,
+    },
+    # -- Mozi: two-color stacked punchline — white setup, LIME punchline
+    #    (Teko mapped to bundled Anton)
+    'opus_mozi': {
+        'id': 'opus_mozi', 'label': 'Opus Mozi',
+        'category': 'Opus',
+        'desc': 'Opus Mozi — white setup, LIME punchline, two-tone stack',
+        'engine': 'pop', 'layout': 'two_tone', 'max_words': 5,
+        'font': 'Anton', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # active yellow
+        'accent': '&H0035E6A3',  # #A3E635 lime punchline
         'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'bold': 0, 'italic': 0, 'outline': 3, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 150,
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
+        'pop': {'frm': 80, 'peak': 120, 'up_ms': 70, 'total_ms': 140},
         'meta': _VR_META,
     },
-    # -- 18. Solo Pop: ONE giant word at a time --------------------------------------------------
-    'solo_pop': {
-        'id': 'solo_pop', 'label': 'Solo Pop',
-        'category': 'CapCut',
-        'desc': 'ONE giant word at a time, punch-scaled on its timestamp',
-        'engine': 'solo', 'layout': 'solo', 'max_words': 1,
-        'font': 'Montserrat', 'size_scale': 1.9,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
-        'alignment': 5, 'box': False,
-        'highlight_mode': 'singleword', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 120,
-        # karaoke_pop envelope, bigger canvas
-        'pop': {'frm': 80, 'peak': 125, 'up_ms': 80, 'total_ms': 140},
-        'meta': _VR_META,
-    },
-    # -- 19. Minimal Fade: opacity only ---------------------------------------------------------------
-    'minimal_fade': {
-        'id': 'minimal_fade', 'label': 'Minimal Fade',
-        'category': 'CapCut',
-        'desc': 'Clean white words, gentle fade per word — no pop, no motion',
-        'engine': 'fade', 'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 0.85,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+    # -- Popline: two-size headline — BIG white word + small pink line
+    #    (Bebas Neue)
+    'opus_popline': {
+        'id': 'opus_popline', 'label': 'Opus Popline',
+        'category': 'Opus',
+        'desc': 'Opus Popline — big white word, small pink line under',
+        'engine': 'pop', 'layout': 'headline', 'max_words': 5,
+        'font': 'Bebas Neue', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'accent': '&H00882EFF',  # #FF2E88 pink line
         'outline_c': '&H00000000', 'back_c': '&H90000000',
         'bold': 0, 'italic': 0, 'outline': 2, 'shadow': 1,
         'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
-        'lead_ms': 0, 'floor_ms': 150, 'hold_ms': 150,
-        'fade': {'in_ms': 120, 'out_ms': 120},
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
+        'pop': {'frm': 80, 'peak': 120, 'up_ms': 70, 'total_ms': 140},
         'meta': _VR_META,
     },
-    # -- 20. Gradient Sweep: teal -> blue -> violet -------------------------------------------------------
-    'gradient_sweep': {
-        'id': 'gradient_sweep', 'label': 'Gradient Sweep',
-        'category': 'CapCut',
-        'desc': 'Teal -> blue -> violet sweep across the spoken word + pop',
-        'engine': 'gradient', 'layout': 'compact', 'max_words': 3,
+    # -- Youshaei: Montserrat Black, TEAL current word + dim grey upcoming
+    'opus_youshaei': {
+        'id': 'opus_youshaei', 'label': 'Opus Youshaei',
+        'category': 'Opus',
+        'desc': 'Opus Youshaei — spoken word TEAL, rest dimmed grey',
+        'engine': 'dim', 'layout': 'phrase', 'max_words': 5,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00E0B814',  # teal #14B8E0
-        'grad_mid': '&H00F6823B',   # blue #3B82F6
-        'grad_end': '&H00F65C8B',   # violet #8B5CF6
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFD400',  # #00D4FF teal
+        'dim_c': '&H00808080',
         'outline_c': '&H00000000', 'back_c': '&H90000000',
         'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
-        # pop 80 -> 118% over 70ms, settle over 70ms, color sweeps over 180ms
-        'pop': {'frm': 80, 'peak': 118, 'up_ms': 70, 'total_ms': 140},
+        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
         'meta': _VR_META,
     },
-    # -- 21. Sticker Pop: tilted sticker slap -----------------------------------------------------------------
-    'sticker_pop': {
-        'id': 'sticker_pop', 'label': 'Sticker Pop',
-        'category': 'CapCut',
-        'desc': 'Spoken word slaps on like a tilted sticker — rotation '
-                'wobble 6 -> -2 -> 0deg + pop',
-        'engine': 'sticker', 'layout': 'compact', 'max_words': 2,
-        'font': 'Montserrat', 'size_scale': 1.1,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
-        'alignment': 2, 'box': False,
-        'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
-        'meta': _VR_META,
-    },
-    # -- 22. Glitch: RGB-split jitter --------------------------------------------------------------------------------
-    'glitch': {
-        'id': 'glitch', 'label': 'Glitch',
-        'category': 'CapCut',
-        'desc': 'Digital glitch hit — RGB-split jitter: 3 quick X steps '
-                'with red/blue outlines',
+    # -- Glitch Infinite: RGB-split jitter on the spoken word
+    'opus_glitch': {
+        'id': 'opus_glitch', 'label': 'Opus Glitch',
+        'category': 'Opus',
+        'desc': 'Opus Glitch Infinite — RGB-split jitter on the word',
         'engine': 'glitch', 'layout': 'compact', 'max_words': 3,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
         'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 0,
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
         'alignment': 2, 'box': False,
         'highlight_mode': 'word', 'text_case': 'upper',
-        'lead_ms': -10, 'floor_ms': 140, 'hold_ms': 150,
+        'lead_ms': -15, 'floor_ms': 160, 'hold_ms': 150,
         'meta': _VR_META,
     },
-    # -- 23. Pulse: rhythmic throb ----------------------------------------------------------------------------------------
-    'pulse': {
-        'id': 'pulse', 'label': 'Pulse',
-        'category': 'CapCut',
-        'desc': 'Spoken word throbs 100 -> 108 -> 100% rhythmically while '
-                'it is spoken',
-        'engine': 'pulse', 'layout': 'phrase', 'max_words': 5,
+    # -- Seamless Bounce: springy bounce on the spoken word
+    'opus_bounce': {
+        'id': 'opus_bounce', 'label': 'Opus Bounce',
+        'category': 'Opus',
+        'desc': 'Opus Seamless Bounce — word springs up and settles',
+        'engine': 'spring', 'layout': 'compact', 'max_words': 3,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -25, 'floor_ms': 160, 'hold_ms': 150,
+        'spring': {'scales': [70, 118, 94, 100], 'ys': [18, -6, 2, 0],
+                   'total_ms': 240},
+        'meta': _VR_META,
+    },
+    # -- Baby Earthquake: the spoken word shakes
+    'opus_quake': {
+        'id': 'opus_quake', 'label': 'Opus Quake',
+        'category': 'Opus',
+        'desc': 'Opus Baby Earthquake — spoken word shakes hard',
+        'engine': 'shake', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 180, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # ================= VEED =================
+    # -- Impact Pop: grows from nothing — 0 -> 115 -> 100%
+    'veed_impact': {
+        'id': 'veed_impact', 'label': 'VEED Impact Pop',
+        'category': 'VEED',
+        'desc': 'VEED Impact Pop — word bursts from zero size',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 180,
+        'pop': {'frm': 0, 'peak': 115, 'up_ms': 100, 'total_ms': 180},
+        'meta': _VR_META,
+    },
+    # -- Stomp: hard slam 135 -> 100%, no overshoot
+    'veed_stomp': {
+        'id': 'veed_stomp', 'label': 'VEED Stomp',
+        'category': 'VEED',
+        'desc': 'VEED Stomp — word slams down hard, no bounce',
+        'engine': 'stomp', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- Reveal: horizontal unfold — \fscx 30 -> 100 (wipe feel)
+    'veed_reveal': {
+        'id': 'veed_reveal', 'label': 'VEED Reveal',
+        'category': 'VEED',
+        'desc': 'VEED Reveal — word wipes open left to right',
+        'engine': 'reveal', 'layout': 'compact', 'max_words': 4,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
         'outline_c': '&H00000000', 'back_c': '&H90000000',
         'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
         'alignment': 2, 'box': False,
@@ -460,15 +439,137 @@ CAPTION_TEMPLATES = {
         'lead_ms': -15, 'floor_ms': 150, 'hold_ms': 150,
         'meta': _VR_META,
     },
+    # -- Float In: gentle rise + fade, no scale
+    'veed_float': {
+        'id': 'veed_float', 'label': 'VEED Float In',
+        'category': 'VEED',
+        'desc': 'VEED Float In — word drifts up gently and fades in',
+        'engine': 'float', 'layout': 'compact', 'max_words': 4,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -30, 'floor_ms': 200, 'hold_ms': 200,
+        'meta': _VR_META,
+    },
+    # -- Scale In: smooth grow 55 -> 100%, no overshoot
+    'veed_scale': {
+        'id': 'veed_scale', 'label': 'VEED Scale In',
+        'category': 'VEED',
+        'desc': 'VEED Scale In — smooth grow, no overshoot',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 160, 'hold_ms': 180,
+        'pop': {'frm': 55, 'peak': 100, 'up_ms': 150, 'total_ms': 150},
+        'meta': _VR_META,
+    },
+    # -- Drop In: falls from above with a small bounce
+    'veed_drop': {
+        'id': 'veed_drop', 'label': 'VEED Drop In',
+        'category': 'VEED',
+        'desc': 'VEED Drop In — word drops from above, tiny bounce',
+        'engine': 'drop', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -25, 'floor_ms': 160, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- Rotate & Flip: rotation wobble + pop
+    'veed_rotate': {
+        'id': 'veed_rotate', 'label': 'VEED Rotate & Flip',
+        'category': 'VEED',
+        'desc': 'VEED Rotate & Flip — word spins in with a pop',
+        'engine': 'rotate', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 160, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- Colour Highlight: background wash fades in behind the word —
+    #    no motion at all (the color IS the style)
+    'veed_colour': {
+        'id': 'veed_colour', 'label': 'VEED Colour Highlight',
+        'category': 'VEED',
+        'desc': 'VEED Colour Highlight — purple wash fades in, no motion',
+        'engine': 'colour', 'layout': 'compact', 'max_words': 4,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'wash_c': '&H00ED3A7C',  # #7C3AED purple
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # ================= UNIVERSAL =================
+    # -- Typewriter: character reveal + block cursor (kept universal)
+    'typewriter': {
+        'id': 'typewriter', 'label': 'Typewriter',
+        'category': 'Universal',
+        'desc': 'Characters type in with a blinking block cursor',
+        'engine': 'typewriter', 'layout': 'phrase', 'max_words': 8,
+        'font': 'Courier Prime', 'size_scale': 0.95,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word',
+        'lead_ms': 0, 'floor_ms': 120, 'hold_ms': 300,
+        'meta': _VR_META,
+    },
 }
-CAPTION_TEMPLATE_CATEGORIES = ['CapCut']
 
-DEFAULT_CAPTION_TEMPLATE = "karaoke_pop"
+CAPTION_TEMPLATE_CATEGORIES = ['Submagic', 'Captions.ai', 'Opus', 'VEED', 'Universal']
 
-#: Every retired caption-style id migrates. The 2026-10-01 14-style set's
-#: beast_box maps to its spiritual successor beast; everything else that is
-#: gone (8 spec_* structural styles, 101 legacy templates, preset/motion
-#: ids) falls back to the default.
+DEFAULT_CAPTION_TEMPLATE = "submagic_hormozi"
+
+#: Every retired caption-style id migrates to its closest successor.
+#: The 2026-10-02 23-style CapCut-clone set -> the real-tools set:
+_MIGRATION_MAP = {
+    'karaoke_pop': 'submagic_hormozi',
+    'karaoke': 'submagic_karaoke',
+    'hormozi': 'submagic_hormozi',
+    'beast': 'submagic_beast',
+    'bounce': 'opus_bounce',
+    'spring_up': 'veed_float',
+    'typewriter': 'typewriter',
+    'wave': 'veed_float',
+    'zoom': 'veed_scale',
+    'neon_glow': 'submagic_neon',
+    'highlighter': 'veed_colour',
+    'box_highlight': 'captions_box',
+    'pill': 'opus_karaoke',
+    'caption_bar': 'opus_beasty',
+    'outline_fill': 'submagic_karaoke',
+    'underline_sweep': 'veed_reveal',
+    'glide': 'veed_impact',
+    'solo_pop': 'veed_impact',
+    'minimal_fade': 'submagic_minimal',
+    'gradient_sweep': 'submagic_gradient',
+    'sticker_pop': 'veed_rotate',
+    'glitch': 'opus_glitch',
+    'pulse': 'captions_pulse',
+    'beast_box': 'submagic_beast',
+}
+
+#: Older retired ids (8 spec_* structural styles, 101 legacy templates,
+#: preset/motion ids) fall back to the default.
 _LEGACY_STYLE_IDS = frozenset({
     'spec_word_sync', 'spec_highlight', 'spec_impact', 'spec_aesthetic',
     'spec_minimal', 'spec_dynamic', 'spec_standard', 'spec_dual',
@@ -476,20 +577,18 @@ _LEGACY_STYLE_IDS = frozenset({
     'preset_classic', 'preset_glow', 'preset_monoline', 'preset_textbox',
     'preset_trending', 'motion_default', 'motion_bounce', 'motion_negrow',
     'motion_flip3d', 'motion_typewriter', 'motion_karaoke',
-    'beast_box',
 })
 
 
 def migrate_caption_template_id(old_id):
     """Map any saved/legacy caption-style id to a current style id.
 
-    beast_box (retired 2026-10-02) maps to its successor beast. Unknown
-    ids (including every retired spec_*/preset_*/motion_* id and the old
-    101-template ids) fall back to DEFAULT_CAPTION_TEMPLATE.
+    Retired 23-style ids map to their closest real-tools successor
+    (_MIGRATION_MAP). Unknown ids fall back to DEFAULT_CAPTION_TEMPLATE.
     """
     if isinstance(old_id, str):
-        if old_id == "beast_box":
-            return "beast"
+        if old_id in _MIGRATION_MAP:
+            return _MIGRATION_MAP[old_id]
         if old_id in CAPTION_TEMPLATES:
             return old_id
     return DEFAULT_CAPTION_TEMPLATE
@@ -1653,6 +1752,29 @@ def _cap_base_open(tmpl):
     return ""
 
 
+def _base_phrase(tmpl, disp, cap_size):
+    """Visible base-layer phrase with the style's layout (mirrors the
+    overlay's per-word structure so libass aligns both layers exactly)."""
+    layout = tmpl.get("layout") or "compact"
+    accent_c = tmpl.get("accent")
+    n = len(disp)
+    if layout == "two_tone" and accent_c and n > 1:
+        # Mozi: white setup, LIME punchline (bigger)
+        return ("{\\c%s}%s {\\c%s\\fs%d}%s"
+                % (tmpl["primary"], " ".join(disp[:-1]),
+                   accent_c, int(cap_size * 1.25), disp[-1]))
+    if layout == "headline" and accent_c and n > 1:
+        # Popline: BIG first word, small pink line underneath
+        return ("{\\fs%d}%s\\N{\\fs%d\\c%s}%s"
+                % (int(cap_size * 1.6), disp[0],
+                   int(cap_size * 0.7), accent_c, " ".join(disp[1:])))
+    if (tmpl.get("engine") or "pop") == "dim":
+        # Deep Diver / Youshaei: whole line starts dimmed grey
+        return "{\\c%s}%s" % (tmpl.get("dim_c", "&H00808080&"),
+                                " ".join(disp))
+    return " ".join(disp)
+
+
 def _cap_active_events(tmpl, disp, idx, ax, ay, ws, we, cap_size):
     """Layer-1 overlay events for the active word.
 
@@ -1662,22 +1784,80 @@ def _cap_active_events(tmpl, disp, idx, ax, ay, ws, we, cap_size):
     "Dialogue: ..." strings.
     """
     engine = tmpl.get("engine") or "pop"
+    layout = tmpl.get("layout") or "compact"
     active_c = tmpl["secondary"]
-    before = " ".join(disp[:idx])
-    after = " ".join(disp[idx + 1:])
+    dim_c = tmpl.get("dim_c", "&H00808080&")
+    accent_c = tmpl.get("accent")
+    pill_text_c = tmpl.get("pill_text")
     word = disp[idx]
     xi, yi = int(round(ax)), int(round(ay))
     out = []
 
-    def _text(active_tags):
-        t = "{\\alpha&HFF&}"
-        if before:
-            t += before + " "
-        t += "{\\c%s\\alpha&H00&%s}%s" % (active_c, active_tags, word)
-        t += "{\\alpha&HFF&}"
-        if after:
-            t += " " + after
+    def _inactive_chunk(words, color=None, fs=None):
+        """Inactive words for the overlay (fully transparent, layout-only)."""
+        t = ""
+        if words:
+            open_tags = "{\\alpha&HFF&"
+            if color:
+                open_tags += "\\c%s" % color
+            if fs:
+                open_tags += "\\fs%d" % fs
+            open_tags += "}"
+            t = open_tags + " ".join(words)
         return t
+
+    def _text(active_tags):
+        # Per-word roles; inactive words are fully transparent (layout
+        # only) so libass positions the active word exactly over the base
+        # layer. Layouts: standard / two_tone (Mozi) / headline (Popline)
+        # / dim (Deep Diver, Youshaei).
+        n = len(disp)
+        chunks = []
+        for j, w in enumerate(disp):
+            is_active = (j == idx)
+            fs_tag = ""
+            if layout == "two_tone" and accent_c and j == n - 1:
+                fs_tag = "\\fs%d" % int(cap_size * 1.25)
+                col = accent_c if is_active else accent_c
+            elif layout == "headline" and accent_c and n > 1:
+                fs_tag = "\\fs%d" % (int(cap_size * 1.6) if j == 0
+                                     else int(cap_size * 0.7))
+                col = None
+            else:
+                col = None
+            if is_active:
+                text_c = (pill_text_c if (engine == "pill" and pill_text_c)
+                          else active_c)
+                if layout == "two_tone" and accent_c and j == n - 1:
+                    text_c = accent_c  # punchline keeps its lime + pop
+                if layout == "headline" and accent_c and n > 1 and j > 0:
+                    pass  # active small word: active_c below
+                chunks.append("{\\c%s\\alpha&H00&%s%s}%s"
+                              % (text_c, fs_tag, active_tags, w))
+            else:
+                open_tags = "{\\alpha&HFF&"
+                if layout == "two_tone" and accent_c and j == n - 1:
+                    open_tags += "\\c%s" % accent_c
+                elif layout == "headline" and accent_c and n > 1 and j > 0:
+                    open_tags += "\\c%s" % accent_c
+                elif engine == "dim" and j > idx:
+                    open_tags += "\\c%s" % dim_c
+                elif engine == "dim":
+                    open_tags += "\\c%s" % tmpl["primary"]
+                open_tags += fs_tag + "}"
+                chunks.append(open_tags + w)
+            if layout == "headline" and accent_c and n > 1 and j == 0:
+                chunks.append("\\N")
+        # join, keeping the \N line break tight (no spaces around it)
+        text = ""
+        for _c in chunks:
+            if _c == "\\N":
+                text = text.rstrip() + "\\N"
+            elif text.endswith("\\N"):
+                text += _c
+            else:
+                text += (" " if text else "") + _c
+        return text
 
     def _dlg(s, e, pos_tags, active_tags, fade_in=100):
         if fade_in:
@@ -1829,6 +2009,53 @@ def _cap_active_events(tmpl, disp, idx, ax, ay, ws, we, cap_size):
                      "\\t(%d,%d,\\fscx100\\fscy100)"
                      % (s0, s0 + 150, s0 + 150, s0 + 300))
         out.append(_dlg(ws, we, pos, tags))
+    elif engine == "stomp":
+        # VEED Stomp: hard slam 135 -> 100% in 90ms, no overshoot
+        tags = ("\\fscx135\\fscy135\\t(0,90,1.8,\\fscx100\\fscy100)")
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "reveal":
+        # VEED Reveal: horizontal unfold \fscx 30 -> 100 (wipe feel)
+        tags = ("\\fscx30\\fscy100\\t(0,120,0.5,\\fscx100\\fscy100)")
+        out.append(_dlg(ws, we, pos, tags, fade_in=60))
+    elif engine == "float":
+        # VEED Float In: gentle rise 30px + fade over 400ms, no scale
+        mv = "\\an5\\move(%d,%d,%d,%d,0,400)" % (xi, yi + 30, xi, yi)
+        out.append(_dlg(ws, we, mv, "", fade_in=350))
+    elif engine == "drop":
+        # VEED Drop In: falls from above, tiny bounce at the end
+        es1 = ws + 0.14
+        mv1 = "\\an5\\move(%d,%d,%d,%d,0,140)" % (xi, yi - 40, xi, yi + 6)
+        out.append(_dlg(ws, es1, mv1, "", fade_in=80))
+        mv2 = "\\an5\\move(%d,%d,%d,%d,0,80)" % (xi, yi + 6, xi, yi)
+        out.append(_dlg(es1, we, mv2, "", fade_in=0))
+    elif engine == "rotate":
+        # VEED Rotate & Flip: rotation wobble -10 -> 0deg + pop
+        tags = ("\\frz-10\\fscx80\\fscy80"
+                "\\t(0,120,0.5,\\frz0\\fscx118\\fscy118)"
+                "\\t(120,200,1.8,\\fscx100\\fscy100)")
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "colour":
+        # VEED Colour Highlight: purple wash fades in behind the word —
+        # no motion at all (the color IS the style)
+        wc = tmpl.get("wash_c", "&H00ED3A7C&")
+        tags = ("\\3c%s\\bord10\\3a&HFF&\\t(0,150,\\3a&H00&)" % wc)
+        out.append(_dlg(ws, we, pos, tags, fade_in=0))
+    elif engine == "dim":
+        # Opus karaoke-dim: subtle 100 -> 106 -> 100% (the dimming is the
+        # style; _text() grays the upcoming words)
+        tags = ("\\t(0,60,\\fscx106\\fscy106)"
+                "\\t(60,120,\\fscx100\\fscy100)")
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "shake":
+        # Opus Baby Earthquake: rapid small X jitter, then hold
+        jx = 4
+        for si in range(4):
+            es = ws + si * 0.06
+            ee = ws + (si + 1) * 0.06
+            x0 = xi + (jx if si % 2 == 0 else -jx)
+            mv = "\\an5\\move(%d,%d,%d,%d,0,60)" % (x0, yi, xi, yi)
+            out.append(_dlg(es, ee, mv, "", fade_in=0))
+        out.append(_dlg(ws + 0.24, we, pos, "", fade_in=0))
     return out
 
 
@@ -1938,11 +2165,13 @@ def _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead, floor_s,
 
 def _render_capcut_captions(tmpl, sentence_timings, word_timings, pw, ph,
                             cap_size, mv, dx_px, dy_px):
-    """Dialogue lines for one of the 23 CapCut-clone caption engines.
+    """Dialogue lines for one of the real-tools caption engines.
 
-    Layer 0: the full phrase card (with the style's base overrides).
-    Layer 1: per active word, the full phrase with only that word
-    visible — laid out by libass itself, so alignment is always exact.
+    Styles are grounded in Submagic / Captions.ai / Opus Clip / VEED
+    (see CAPTION_TEMPLATES header). Layer 0: the full phrase card (with
+    the style's base overrides). Layer 1: per active word, the full
+    phrase with only that word visible — laid out by libass itself, so
+    alignment is always exact.
     """
     lines = []
     engine = tmpl.get("engine") or "pop"
@@ -1977,7 +2206,7 @@ def _render_capcut_captions(tmpl, sentence_timings, word_timings, pw, ph,
         disp = [w["word"] for w in seg]
         card_s = max(0.0, seg[0]["start"] + lead)
         card_e = seg[-1]["end"] + hold_s
-        base_text = " ".join(disp)
+        base_text = _base_phrase(tmpl, disp, cap_size)
         lines.append(
             "Dialogue: 0,%s,%s,Cap,,0,0,0,,"
             "{\\an5\\pos(%d,%d)%s\\fad(100,0)}%s"
