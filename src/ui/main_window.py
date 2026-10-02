@@ -2449,8 +2449,7 @@ class MainWindow(QMainWindow):
     def _set_caption_edit_enabled(self, on):
         """Enable/disable the whole post-render caption editing cluster."""
         for w in (self.edit_template_btn, self.edit_size_slider,
-                  self.edit_apply_btn, self.gen_captions_btn,
-                  self.edit_compose_btn):
+                  self.edit_apply_btn, self.gen_captions_btn):
             w.setEnabled(on)
 
     def _use_edit_session(self, session):
