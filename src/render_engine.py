@@ -672,8 +672,21 @@ class RenderEngine:
                 query = a.get("query", "") if isinstance(a, dict) \
                     else getattr(a, "query", "")
                 vtags.append(f"{tags} {query}".strip())
-        events = place_sfx(sas, self.scene_timings, seed=seed,
-                           visual_tags=vtags)
+        # Universal Semantic SFX Engine: decides per scene whether a sound
+        # is needed from script + visual content + visual action + mood.
+        # Falls back to the legacy keyword placer if it cannot run.
+        try:
+            from .semantic_sfx import (build_scene_contexts,
+                                       plan_video_sfx)
+            _sctx = build_scene_contexts(
+                self.scenes, sas, self.scene_timings, vtags,
+                video_mood=getattr(self.analysis, "mood", "neutral"))
+            _decisions, events = plan_video_sfx(_sctx, seed=seed)
+            self.sfx_decisions = _decisions
+        except Exception as e:  # noqa: BLE001 - legacy path is the fallback
+            self._msg(f"Semantic SFX unavailable ({e}); using legacy placer.")
+            events = place_sfx(sas, self.scene_timings, seed=seed,
+                               visual_tags=vtags)
         # CapCut-style: a subtle sound under each animated caption chunk,
         # matched to its entrance animation (pop/tick/swoosh/punch).
         if S.get("captions_enabled", True):
@@ -685,7 +698,7 @@ class RenderEngine:
             events.sort(key=lambda e: e["time"])
         for ev in events:
             lib = sfx_lib[ev["sfx"]]
-            d = audio_duration(lib) or 1.0
+            d = ev.get("duration") or (audio_duration(lib) or 1.0)
             tl.add("sfx", ev["time"], ev["time"] + d, kind="sfx",
                    label=f"SFX: {ev['sfx']}",
                    payload={"path": lib, **ev})
@@ -701,7 +714,10 @@ class RenderEngine:
                payload={"path": music_path})
         mixed = os.path.join(self.audio_dir, "mixed.m4a")
         sfx_ev = [{"time": c.payload["time"], "sfx": c.payload["sfx"],
-                   "gain_db": c.payload.get("gain_db", -10)}
+                   "gain_db": c.payload.get("gain_db", -10),
+                   "duration": c.payload.get("duration"),
+                   "fade_in": c.payload.get("fade_in"),
+                   "fade_out": c.payload.get("fade_out")}
                   for c in tl.by_track("sfx")]
         mix_audio(self.voice_path, music_path, sfx_ev, sfx_lib,
                   mixed, total_dur)

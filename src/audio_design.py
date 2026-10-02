@@ -191,6 +191,44 @@ def sfx_swoosh(d=0.5):
     return 0.45 * x + 0.18 * sweep * _env(n, 0.4, 0.08)
 
 
+def sfx_glass_break(d=0.8):
+    """Glass shatter: bright noise burst + detuned metallic pings."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    burst = _noise(d) * _env(n, 0.001, 0.001)
+    # crude highpass via diff to keep only the bright crash
+    burst = np.diff(burst, prepend=0.0)
+    pings = np.zeros(n)
+    rng = np.random.default_rng(7)
+    for f in (2093, 2637, 3136, 3520, 4186):
+        ph = rng.random() * 2 * np.pi
+        pings += np.sin(2 * np.pi * f * t + ph) * np.exp(-t * (9 + rng.random() * 6))
+    pings *= _env(n, 0.001, 0.001)
+    x = 0.55 * burst / (np.max(np.abs(burst)) + 1e-9) + 0.45 * pings
+    return 0.7 * x / (np.max(np.abs(x)) + 1e-9)
+
+
+def sfx_door(d=0.6):
+    """Door movement: low wooden thud + latch click."""
+    n = int(SR * d)
+    t = np.arange(n) / SR
+    thud = np.sin(2 * np.pi * 72 * t) * np.exp(-t * 12)
+    click_n = int(0.05 * SR)
+    click = np.zeros(n)
+    click[:click_n] = _noise(0.05) * _env(click_n, 0.001, 0.001)
+    x = 0.8 * thud + 0.4 * click
+    return 0.75 * x / (np.max(np.abs(x)) + 1e-9)
+
+
+def sfx_rumble(d=2.5):
+    """Deep launch rumble: brown noise swell, sub-heavy."""
+    n = int(SR * d)
+    x = _noise(d, brown=True)
+    x = _lowpass(x, cutoff_hz=220.0)
+    x = x / (np.max(np.abs(x)) + 1e-9)
+    return 0.85 * x * _raised_cosine(n, peak_pos=0.7)
+
+
 SFX_BUILDERS = {
     "whoosh": sfx_whoosh, "impact": sfx_impact, "boom": sfx_boom,
     "riser": sfx_riser, "alert": sfx_alert, "thunder": sfx_thunder,
@@ -198,6 +236,7 @@ SFX_BUILDERS = {
     "crowd": sfx_crowd,
     "pop": sfx_pop, "ding": sfx_ding, "tick": sfx_tick,
     "sparkle": sfx_sparkle, "punch": sfx_punch, "swoosh": sfx_swoosh,
+    "glass_break": sfx_glass_break, "door": sfx_door, "rumble": sfx_rumble,
 }
 
 # Real PD/CC0 recordings bundled in assets/sfx/ (see SOURCES.md).
@@ -526,8 +565,24 @@ def mix_audio(voice_path, music_path, sfx_events, sfx_library, out_path,
         mix_ins.append("[mduck]")
     for i, (si, ev) in enumerate(sfx_inputs):
         ms = int(ev["time"] * 1000)
-        fc.append(f"[{si}:a]aresample=44100,aformat=channel_layouts=stereo,"
-                  f"adelay={ms}|{ms},volume={ev.get('gain_db', -10)}dB[s{i}]")
+        chain = f"[{si}:a]aresample=44100,aformat=channel_layouts=stereo"
+        # Semantic-engine events carry duration + fades: trim the source to
+        # the decided duration and fade in/out. Legacy events (no keys)
+        # keep the old behavior untouched.
+        dur = ev.get("duration")
+        if dur:
+            d = max(0.1, float(dur))
+            fi = max(0.0, float(ev.get("fade_in", 0.0)))
+            fo = min(max(0.0, float(ev.get("fade_out", 0.0))), d * 0.9)
+            chain += f",atrim=duration={d}"
+            if fi > 0:
+                chain += f",afade=t=in:st=0:d={fi}"
+            if fo > 0:
+                chain += f",afade=t=out:st={max(0.0, d - fo)}:d={fo}"
+            chain += ",asetpts=PTS-STARTPTS"
+        chain += (f",adelay={ms}|{ms},"
+                  f"volume={ev.get('gain_db', -10)}dB[s{i}]")
+        fc.append(chain)
         mix_ins.append(f"[s{i}]")
     n = len(mix_ins)
     fc.append(f"{''.join(mix_ins)}amix=inputs={n}:duration=longest:dropout_transition=0:normalize=0,"
