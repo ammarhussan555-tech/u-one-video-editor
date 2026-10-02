@@ -34,12 +34,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 class _DragCaptionLabel(QLabel):
-    """Caption overlay that can be click-dragged and wheel-resized.
+    """Caption overlay: purely visual, permanently mouse-transparent.
 
-    Active only in caption move-mode (toggled by the "Move captions"
-    button). Drag moves the caption; mouse wheel scales it; double-click
-    resets. Reports changes through the owner's _cap_pos dict so the
-    render (build_ass dx_frac/dy_frac/user_scale) matches the preview.
+    All move-mode interaction (click-drag to move, wheel to resize,
+    double-click to reset) is handled by the main-window event filter on
+    the video widget itself (see _toggle_cap_move_mode) -- NOT here.
+    On Windows the QVideoWidget's native video surface does not reliably
+    deliver mouse events to Qt child widgets on the small embedded
+    preview, so this label keeps WA_TransparentForMouseEvents set at all
+    times and never takes part in hit-testing.
+
+    The mouse handlers below are retained only as a harmless fallback
+    for exotic platforms where a child of the video widget might still
+    receive events; they must never be relied upon.
     """
 
     def __init__(self, owner, parent=None):
@@ -1309,7 +1316,12 @@ class MainWindow(QMainWindow):
         ov = _DragCaptionLabel(self, self.video_widget)
         ov.setAlignment(Qt.AlignHCenter | Qt.AlignBottom)
         ov.setWordWrap(True)
-        ov.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks -> video
+        # PERMANENT by design (see _toggle_cap_move_mode): the overlay never
+        # takes part in mouse hit-testing, so every click/drag/wheel over the
+        # preview reaches the video widget's event filter -- the only input
+        # path that works reliably over the native video surface on the
+        # small embedded preview.
+        ov.setAttribute(Qt.WA_TransparentForMouseEvents)
         ov.setContentsMargins(20, 0, 20, 24)
         ov.setStyleSheet(self._caption_overlay_style())
         ov.setGeometry(self.video_widget.rect())
@@ -1337,26 +1349,40 @@ class MainWindow(QMainWindow):
     def _toggle_cap_move_mode(self, on: bool):
         """Enable/disable caption drag mode on the preview.
 
-        Drag/wheel/double-click are handled BOTH by the overlay label
-        itself (_DragCaptionLabel, when it receives mouse events) AND by
-        the main window event filter on the video widget (fallback for
-        native video surfaces that swallow child-widget events). Belt
-        and suspenders: whichever path delivers the event, the caption
-        moves.
+        ROOT CAUSE FIX (2026-10-02): ALL move-mode input (drag / wheel /
+        double-click) is handled by the main-window event filter installed
+        on the video widget itself. The caption overlay label stays
+        PERMANENTLY mouse-transparent (pure visual) in both modes.
+
+        Why the old code broke the small preview: on Windows the
+        QVideoWidget renders through a native video surface, so mouse
+        events over it do not reliably reach the Qt child overlay label
+        on the small embedded preview. The old code flipped the overlay
+        to mouse-opaque in move mode, which (a) made the event-filter
+        drag path unreachable -- Qt delivers the press to the topmost
+        mouse-opaque child, so the filter's ``obj is self.video_widget``
+        check never fired -- and (b) left the only remaining path (the
+        overlay's own handlers) depending on child-widget event delivery
+        that the native surface breaks. Net result: drag did nothing on
+        the small preview (it happened to work in full screen). Clicks on
+        the video widget itself demonstrably DO reach the event filter on
+        the small preview (click-to-edit-caption works there), so routing
+        move-mode input through that same path fixes the small preview
+        without changing full screen.
         """
         self._cap_move_mode = on
         self._cap_drag_start = None
         if self.video_widget is not None:
             self.video_widget.setCursor(
                 Qt.OpenHandCursor if on else Qt.ArrowCursor)
-        # In move mode the overlay label accepts mouse events directly
-        # (its own drag handlers); otherwise it stays transparent so
-        # clicks reach the video widget (caption editor).
-        ov = getattr(self, "caption_overlay", None)
-        if ov is not None:
-            ov.setAttribute(Qt.WA_TransparentForMouseEvents, not on)
-            if on:
-                ov.setCursor(Qt.OpenHandCursor)
+            if not on:
+                # Defensive: never leave a stuck mouse grab behind when
+                # move mode is switched off mid-drag.
+                self.video_widget.releaseMouse()
+        # NOTE: the overlay deliberately stays WA_TransparentForMouseEvents
+        # in both modes (set once in _ensure_caption_overlay). Do NOT flip
+        # it here -- that was the bug: it stole hit-testing from the video
+        # widget, starving the event-filter drag path on the small preview.
         if on:
             self.video_hint.setText(
                 "Move mode: caption drag karo (move) • wheel (chhota/bara) "
@@ -1761,6 +1787,11 @@ class MainWindow(QMainWindow):
                         and event.button() == Qt.LeftButton):
                     self._cap_drag_start = event.globalPosition().toPoint()
                     self.video_widget.setCursor(Qt.ClosedHandCursor)
+                    # Explicit grab: this filter consumes the press, so take
+                    # the mouse grab explicitly to guarantee the matching
+                    # move/release events keep arriving for the whole drag
+                    # (even if the cursor leaves the widget mid-drag).
+                    self.video_widget.grabMouse()
                     return True
                 if (et == QEvent.MouseMove
                         and self._cap_drag_start is not None):
@@ -1777,6 +1808,7 @@ class MainWindow(QMainWindow):
                     return True
                 if et == QEvent.MouseButtonRelease:
                     self._cap_drag_start = None
+                    self.video_widget.releaseMouse()
                     self.video_widget.setCursor(Qt.OpenHandCursor)
                     return True
                 if et == QEvent.MouseButtonDblClick:
