@@ -153,15 +153,48 @@ def render_template_preview(key: str) -> bytes:
         x = (_CARD_W - total) / 2
         y = (_CARD_H - size) / 2 - 4
         if tmpl.get("box_mode") == "persistent":
-            # black box behind the whole phrase
-            d.rounded_rectangle(
-                [x - 10, y - 8, x + total + 10, y + size + 10],
-                radius=10, fill=(0, 0, 0))
+            if engine == "bar":
+                # translucent bar behind the whole phrase (TikTok bar)
+                bar = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                bd = ImageDraw.Draw(bar)
+                bd.rounded_rectangle(
+                    [x - 12, y - 10, x + total + 12, y + size + 12],
+                    radius=12, fill=(0, 0, 0, 128))
+                img = Image.alpha_composite(img.convert("RGBA"), bar
+                                            ).convert("RGB")
+                d = ImageDraw.Draw(img)
+            else:
+                # black box behind the whole phrase
+                d.rounded_rectangle(
+                    [x - 10, y - 8, x + total + 10, y + size + 10],
+                    radius=10, fill=(0, 0, 0))
         elif engine == "highlight_box":
             # marker stroke: black text with a thick yellow outline
             box_c = _ass_to_rgb(tmpl.get("box_color", "&H0000E6FF&"))
             d.text((x, y), w_the + " ", font=font, fill=(0, 0, 0),
                    stroke_width=5, stroke_fill=box_c)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        elif engine == "box_snap":
+            # solid box: dark text on the colored box behind the active word
+            box_c = _ass_to_rgb(tmpl.get("box_color", "&H001409E5&"))
+            d.rounded_rectangle(
+                [x - 8, y - 6, x + w1 + 2, y + size + 8],
+                radius=8, fill=box_c)
+            d.text((x, y), w_the + " ", font=font, fill=(255, 255, 255),
+                   stroke_width=0)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+        elif engine == "pill":
+            # yellow pill badge: dark text on the pill
+            pill_c = _ass_to_rgb(tmpl.get("box_color", "&H0000E6FF&"))
+            d.rounded_rectangle(
+                [x - 10, y - 6, x + w1 + 4, y + size + 8],
+                radius=(size + 14) // 2, fill=pill_c)
+            d.text((x, y), w_the + " ", font=font, fill=(30, 30, 30),
+                   stroke_width=0)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             return buf.getvalue()
@@ -235,6 +268,14 @@ class _TemplateCard(QWidget):
                 "fade": "◐ fade",
                 "typewriter": "⌨ typewriter",
                 "solo": "🔍 solo pop",
+                "box_snap": "⬛ box snap",
+                "pill": "💊 pill pop",
+                "bar": "📶 caption bar",
+                "glide": "➡ glide",
+                "gradient": "🌈 gradient",
+                "sticker": "🏷 sticker",
+                "glitch": "⚡ glitch",
+                "pulse": "💓 pulse",
             }.get(tmpl.get("engine", ""), "")
             if badge_txt:
                 badge = QLabel(badge_txt)

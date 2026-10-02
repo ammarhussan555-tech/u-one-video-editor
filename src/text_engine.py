@@ -9,6 +9,9 @@ from .text_captions import (
     headline_preset_labels,
     select_main_text, classify_main_text, MAIN_TEXT_TYPES,
     MAIN_TEXT_STYLE, story_box_color,
+    MAIN_TEXT_COLORS, main_text_color_for, MAIN_TEXT_POSITION,
+    MAIN_TEXT_SAFE_ZONE, main_text_position_for,
+    migrate_caption_template_id, _IMPORTANCE_FLOOR,
 )
 
 __all__ = ["make_overlay_text", "make_overlay", "build_srt", "build_ass",
@@ -18,4 +21,7 @@ __all__ = ["make_overlay_text", "make_overlay", "build_srt", "build_ass",
            "headline_accent_for", "detect_niche",
            "headline_preset_labels",
            "select_main_text", "classify_main_text", "MAIN_TEXT_TYPES",
-           "MAIN_TEXT_STYLE", "story_box_color"]
+           "MAIN_TEXT_STYLE", "story_box_color",
+           "MAIN_TEXT_COLORS", "main_text_color_for", "MAIN_TEXT_POSITION",
+           "MAIN_TEXT_SAFE_ZONE", "main_text_position_for",
+           "migrate_caption_template_id"]

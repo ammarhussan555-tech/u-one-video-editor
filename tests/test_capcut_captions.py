@@ -1,11 +1,12 @@
-"""CapCut-style caption engine tests (2026-10-01 rewrite).
+"""CapCut-clone caption engine tests (2026-10-02 rewrite).
 
-The old 8+5+5 spec engine (compose_template / CAPTION_PRESETS /
-CAPTION_MOTIONS / spec_* templates / CaptionComposerDialog) was removed.
-These tests pin the new 14-style engine:
-  * every style builds valid ASS,
+The 2026-10-01 14-style set was replaced by 23 styles at the user's
+request (capcut_clone_research_2026-10-02.md). beast_box retired (its
+successor is beast); hormozi/beast/box_highlight/pill/caption_bar/glide/
+gradient_sweep/sticker_pop/glitch/pulse added. These tests pin:
+  * all 23 styles build valid ASS,
   * each style's animation signature is present and distinct,
-  * legacy template ids migrate to the default style,
+  * legacy ids migrate (beast_box -> beast, others -> default),
   * legacy template dicts (no "engine" key) still render safely.
 """
 import os
@@ -36,26 +37,36 @@ def _ass_text(tid, tmp_path, **kw):
 
 
 # style id -> animation tokens that MUST appear in its ASS
+# (tokens pinned to the actual template configs in text_captions.py)
 _SIGNATURES = {
     "karaoke_pop": [r"\c&H0000E6FF", r"\t(0,80,0.5,\fscx125\fscy125)"],
     "karaoke": [r"\t(0,60,\fscx112\fscy112)"],
+    "hormozi": [r"\fscx70\fscy70", r"\t(0,60,0.5,\fscx120\fscy120)"],
+    "beast": [r"\fscx70\fscy70", r"\t(0,90,0.5,\fscx125\fscy125)"],
     "bounce": [r"\move(", r"\fscx118\fscy118"],
     "spring_up": [r"\move(", r"\fscx120\fscy120"],
     "typewriter": ["▌"],
     "wave": [r"\move(", "BREAKING NEWS FROM THE CAPITAL"],
     "zoom": [r"\t(0,120,0.5,\fscx105\fscy105)"],
     "neon_glow": [r"\blur10", r"\3c&H00FFFF00"],
-    "highlighter": [r"\bord6", r"\3c&H0000E6FF"],
-    "beast_box": [r"\c&H0000E6FF", "&HA6000000"],
-    "underline_sweep": [r"\u1"],
+    "highlighter": [r"\bord6", r"\3c&H0000E6FF", r"\fscx105\fscy105"],
+    "box_highlight": [r"\3c&H001409E5\bord7", r"\fscx40\fscy40"],
+    "pill": [r"\3c&H0000E6FF", r"\bord8", r"\fscx115\fscy115"],
+    "caption_bar": [r"\fad(150,0)", r"\move(", "&H66000000"],
     "outline_fill": [r"\1a&HFF&"],
+    "underline_sweep": [r"\u1"],
+    "glide": [r"\move(", r"\fad(150,0)"],
     "solo_pop": ["Montserrat,91,", r"\t(0,80,0.5,\fscx125\fscy125)"],
     "minimal_fade": [r"\fad(120,120)"],
+    "gradient_sweep": [r"\1c&H00F6823B", r"\fscx"],
+    "sticker_pop": [r"\frz6", r"\bord8"],
+    "glitch": [r"\move(", r"\3c&H000000FF&"],
+    "pulse": [r"\fscx108\fscy108"],
 }
 
 
-def test_fourteen_styles_present():
-    assert len(CAPTION_TEMPLATES) == 14
+def test_twenty_three_styles_present():
+    assert len(CAPTION_TEMPLATES) == 23
     assert set(_SIGNATURES) == set(CAPTION_TEMPLATES)
 
 
@@ -65,8 +76,9 @@ def test_default_is_karaoke_pop():
 
 def test_labels_ordered():
     labels = caption_template_labels()
-    assert len(labels) == 14
+    assert len(labels) == 23
     assert labels[0] == ("karaoke_pop", "Karaoke Pop")
+    assert labels[-1] == ("pulse", "Pulse")
 
 
 def test_categories_single_capcut():
@@ -112,6 +124,12 @@ def test_zoom_has_no_move(tmp_path):
     assert r"\move(" not in txt
 
 
+def test_caption_bar_has_no_scale_or_pop(tmp_path):
+    # the bar style's motion is fade+rise only — no color pop, no scale
+    txt = _ass_text("caption_bar", tmp_path)
+    assert r"\fscx" not in txt
+
+
 def test_styles_are_distinct():
     """No two styles may share the same animation signature."""
     sigs = {}
@@ -139,9 +157,20 @@ def test_migrate_legacy_ids():
     assert migrate_caption_template_id(None) == "karaoke_pop"
 
 
+def test_beast_box_migrates_to_beast():
+    # retired 2026-10-02: beast_box maps to its successor beast.
+    assert migrate_caption_template_id("beast_box") == "beast"
+
+
 def test_legacy_id_renders_as_default(tmp_path):
     a = _ass_text("spec_highlight", tmp_path)
     b = _ass_text("karaoke_pop", tmp_path)
+    assert a == b
+
+
+def test_beast_box_renders_as_beast(tmp_path):
+    a = _ass_text("beast_box", tmp_path)
+    b = _ass_text("beast", tmp_path)
     assert a == b
 
 
@@ -182,6 +211,15 @@ def test_engine_sfx_map():
     assert _caption_chunk_sfx({"engine": "fade"}) is None
     assert _caption_chunk_sfx({"engine": "nope"}) is None
     assert _caption_chunk_sfx("karaoke_pop") is None
+    # new engines (2026-10-02) keep their family's sound
+    assert _caption_chunk_sfx({"engine": "box_snap"}) == ("pop", -17)
+    assert _caption_chunk_sfx({"engine": "pill"}) == ("pop", -17)
+    assert _caption_chunk_sfx({"engine": "bar"}) == ("swoosh", -21)
+    assert _caption_chunk_sfx({"engine": "glide"}) == ("swoosh", -20)
+    assert _caption_chunk_sfx({"engine": "gradient"}) == ("swoosh", -19)
+    assert _caption_chunk_sfx({"engine": "sticker"}) == ("punch", -16)
+    assert _caption_chunk_sfx({"engine": "glitch"}) == ("tick", -19)
+    assert _caption_chunk_sfx({"engine": "pulse"}) == ("tick", -21)
 
 
 def test_settings_default():

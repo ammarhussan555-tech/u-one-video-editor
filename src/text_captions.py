@@ -11,39 +11,49 @@ from .ffmpeg_util import sanitize_ass_text
 
 
 # ---------------------------------------------------------------------------
-# CapCut-faithful animated caption styles (2026-10-01).
+# CapCut-clone animated caption styles (2026-10-02).
 #
-# Specs: ~/workspace/research/capcut_caption_spec.md (self-research),
+# Specs: ~/workspace/research/capcut_clone_research_2026-10-02.md (final 23),
+#        ~/workspace/research/capcut_caption_spec.md,
 #        ~/workspace/research/chatgpt_capcut_consultation.md,
 #        ~/workspace/research/gemini_capcut_consultation.md
 #
 # HONESTY: CapCut does not publish its internal animation parameters. Every
-# number below is a visual-recreation target from the consultations, NOT a
-# documented CapCut internal. Each style dict carries
-# meta {"source": "visual_recreation"} — the UI must never claim these are
-# CapCut's exact in-app presets.
+# number below is a visual-recreation target from the consultations +
+# community clones (caption-ai 33-style table, agent-caption presets,
+# mcp-cut, localcut, opencut-ai), NOT a documented CapCut internal. Each
+# style dict carries meta {"source": "visual_recreation"} — the UI must
+# never claim these are CapCut's exact in-app presets.
 #
-# Architecture (ChatGPT + Gemini agree): 4 core motion pipelines —
-#   pop     = scale overshoot (karaoke_pop, zoom)
-#   spring  = scale overshoot + vertical spring (bounce, spring_up)
-#   karaoke = color-state change synced to phonetic timing (karaoke)
-#   typewriter = character alpha reveal (typewriter)
-# The other styles differ by LAYOUT / TIMING / HIGHLIGHT MECHANICS, never
-# by color/font alone: wave (continuous sine), highlight_box (box behind
-# active word vs persistent phrase box), underline (sweep bar), outline_fill
-# (hollow->solid fill state), glow (blur/bord flash), fade (opacity only),
-# solo (one giant word).
+# Every style is a DISTINCT motion/layout/timing config — a color/font-only
+# difference is NOT a style (user boundary). Distinct mechanics:
+#   pop        = scale overshoot (karaoke_pop, hormozi, beast, zoom —
+#                different envelopes/layouts)
+#   karaoke    = pure color-state sync, no scale
+#   spring     = scale overshoot + vertical spring (bounce, spring_up)
+#   typewriter = character alpha reveal
+#   wave       = continuous sine Y bob
+#   highlight_box = marker stroke behind the active word (highlighter)
+#   box_snap   = solid red box SNAPS 40->100% in 80ms, no overshoot
+#   pill       = yellow pill badge springs 60->115% (dark text on pill)
+#   bar        = persistent translucent bar; words fade+rise in, no color pop
+#   underline  = yellow underline + pop on the active word
+#   outline_fill = hollow -> solid fill state change
+#   glow       = bord/blur flash
+#   fade       = opacity only, no motion
+#   solo       = one giant word at a time
+#   glide      = words slide in from the right (X +60 -> 0)
+#   gradient   = teal -> blue -> violet color sweep + pop
+#   sticker    = tilted sticker slap (rotation wobble + pop)
+#   glitch     = RGB-split jitter (3 quick X steps, red/blue outlines)
+#   pulse      = rhythmic 100 -> 108 -> 100% throb while spoken
 #
-# ASS correctness (from the consultations):
-#   \t() intervals are MILLISECONDS, \k centiseconds, colors BGR
-#   (&HAABBGGRR), every animated word center-anchored (\an5) so scaling
-#   happens in place, active word on its own layer above the base phrase
-#   so highlighting never reflows the sentence, PlayResX/PlayResY set,
-#   ScaledBorderAndShadow yes.
-#
-# Each template defines an ASS "Cap" style. Colours are ASS &HAABBGGRR.
-# size_scale multiplies the base font size. box=True draws an opaque
-# background box behind the text (BorderStyle 3).
+# Rendering model (proven, kept): layer 0 = full phrase card; layer 1 =
+# per-active-word overlay holding the FULL phrase with every other word
+# fully transparent ({\alpha&HFF&}) so libass lays both layers out
+# identically — no fragile word-width measurement. Words center-anchored
+# (\an5). Y-motion uses event-level \move (NOT \t on \pos — libass can't
+# transform \pos). \t() = milliseconds, \k = centiseconds, colors BGR.
 # ---------------------------------------------------------------------------
 
 _VR_META = {"source": "visual_recreation"}
@@ -85,7 +95,42 @@ CAPTION_TEMPLATES = {
         'pulse': {'peak': 112, 'up_ms': 60, 'total_ms': 120},
         'meta': _VR_META,
     },
-    # -- 3. Bounce: 1-3 words spring up from below ---------------------------
+    # -- 3. Hormozi: hard green punch ----------------------------------------
+    'hormozi': {
+        'id': 'hormozi', 'label': 'Hormozi',
+        'category': 'CapCut',
+        'desc': 'Alex Hormozi punch — all caps, thick stroke, spoken word '
+                'flashes GREEN with a hard fast pop',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 2,
+        'font': 'Montserrat', 'size_scale': 1.05,
+        'primary': '&H00FFFFFF', 'secondary': '&H0066FF00',  # #00FF66
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 200,
+        # hard punch: 70 -> 120% over 60ms, settle -> 100% over 60ms
+        'pop': {'frm': 70, 'peak': 120, 'up_ms': 60, 'total_ms': 120},
+        'meta': _VR_META,
+    },
+    # -- 4. Beast: huge yellow pop --------------------------------------------
+    'beast': {
+        'id': 'beast', 'label': 'Beast',
+        'category': 'CapCut',
+        'desc': 'MrBeast energy — huge caps, spoken word pops YELLOW big',
+        'engine': 'pop', 'layout': 'compact', 'max_words': 2,
+        'font': 'Montserrat', 'size_scale': 1.35,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 4, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 150, 'hold_ms': 200,
+        # big pop: 70 -> 125% over 90ms, settle over 110ms
+        'pop': {'frm': 70, 'peak': 125, 'up_ms': 90, 'total_ms': 200},
+        'meta': _VR_META,
+    },
+    # -- 5. Bounce: 1-3 words spring up from below ----------------------------
     'bounce': {
         'id': 'bounce', 'label': 'Bounce',
         'category': 'CapCut',
@@ -104,7 +149,7 @@ CAPTION_TEMPLATES = {
                    'total_ms': 250},
         'meta': _VR_META,
     },
-    # -- 4. Spring Up: full line, words spring in place ----------------------
+    # -- 6. Spring Up: full line, words spring in place -----------------------
     'spring_up': {
         'id': 'spring_up', 'label': 'Spring Up',
         'category': 'CapCut',
@@ -123,7 +168,7 @@ CAPTION_TEMPLATES = {
                    'total_ms': 260},
         'meta': _VR_META,
     },
-    # -- 5. Typewriter --------------------------------------------------------
+    # -- 7. Typewriter ---------------------------------------------------------
     'typewriter': {
         'id': 'typewriter', 'label': 'Typewriter',
         'category': 'CapCut',
@@ -140,7 +185,7 @@ CAPTION_TEMPLATES = {
         'char_ms': 40, 'cursor': '\u258c',
         'meta': _VR_META,
     },
-    # -- 6. Wave --------------------------------------------------------------
+    # -- 8. Wave ----------------------------------------------------------------
     'wave': {
         'id': 'wave', 'label': 'Wave',
         'category': 'CapCut',
@@ -158,7 +203,7 @@ CAPTION_TEMPLATES = {
         'wave': {'y_peak': -12, 'half_ms': 150, 'vscale': 108},
         'meta': _VR_META,
     },
-    # -- 7. Zoom: scale-only entrance -----------------------------------------
+    # -- 9. Zoom: scale-only entrance -------------------------------------------
     'zoom': {
         'id': 'zoom', 'label': 'Zoom',
         'category': 'CapCut',
@@ -175,7 +220,7 @@ CAPTION_TEMPLATES = {
         'pop': {'frm': 55, 'peak': 105, 'up_ms': 120, 'total_ms': 190},
         'meta': _VR_META,
     },
-    # -- 8. Neon Glow ----------------------------------------------------------
+    # -- 10. Neon Glow ------------------------------------------------------------
     'neon_glow': {
         'id': 'neon_glow', 'label': 'Neon Glow',
         'category': 'CapCut',
@@ -194,11 +239,11 @@ CAPTION_TEMPLATES = {
         'glow': {'up_ms': 80, 'decay_ms': 120, 'scale_peak': 105},
         'meta': _VR_META,
     },
-    # -- 9. Highlighter: yellow box behind ACTIVE word only --------------------
+    # -- 11. Highlighter: yellow marker behind ACTIVE word --------------------------
     'highlighter': {
         'id': 'highlighter', 'label': 'Highlighter',
         'category': 'CapCut',
-        'desc': 'Yellow marker box snaps behind the spoken word — '
+        'desc': 'Yellow marker swipes behind the spoken word — '
                 'CapCut Highlight',
         'engine': 'highlight_box', 'box_mode': 'active',
         'layout': 'phrase', 'max_words': 5,
@@ -210,46 +255,63 @@ CAPTION_TEMPLATES = {
         'alignment': 2, 'box': False,
         'highlight_mode': 'wordbox',
         'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
-        # box+word scale 100 -> 105 -> 100% over 100ms
+        # marker pop 100 -> 105 -> 100% over 100ms
         'pop': {'frm': 100, 'peak': 105, 'up_ms': 50, 'total_ms': 100},
         'meta': _VR_META,
     },
-    # -- 10. Beast Box: persistent black box behind the whole phrase -----------
-    'beast_box': {
-        'id': 'beast_box', 'label': 'Beast Box',
+    # -- 12. Box Highlight: red box SNAPS around the keyword -------------------------
+    'box_highlight': {
+        'id': 'box_highlight', 'label': 'Box Highlight',
         'category': 'CapCut',
-        'desc': 'Black box behind the whole line; spoken word pops yellow — '
-                'MrBeast style',
-        'engine': 'highlight_box', 'box_mode': 'persistent',
-        'layout': 'phrase', 'max_words': 5,
-        'font': 'Montserrat', 'size_scale': 1.12,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'outline_c': '&H00000000', 'back_c': '&HA6000000',  # black 65%
-        'bold': -1, 'italic': 0, 'outline': 0, 'shadow': 0,
-        'alignment': 2, 'box': True, 'box_opacity': 0.65, 'box_pad': 14,
-        'highlight_mode': 'wordbox', 'text_case': 'upper',
-        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 150,
-        # active word 100 -> 103 -> 100% over 100ms
-        'pop': {'frm': 100, 'peak': 103, 'up_ms': 50, 'total_ms': 100},
-        'meta': _VR_META,
-    },
-    # -- 11. Underline Sweep ----------------------------------------------------
-    'underline_sweep': {
-        'id': 'underline_sweep', 'label': 'Underline Sweep',
-        'category': 'CapCut',
-        'desc': 'Accent underline sweeps under the spoken word, left to right',
-        'engine': 'underline', 'layout': 'phrase', 'max_words': 5,
+        'desc': 'Solid red box SNAPS around the keyword in 80ms, no '
+                'overshoot — Captions.ai style',
+        'engine': 'box_snap', 'layout': 'phrase', 'max_words': 5,
         'font': 'Montserrat', 'size_scale': 1.0,
-        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
-        'bar_c': '&H0000E6FF',
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'box_color': '&H001409E5',  # #E50914 red box
         'outline_c': '&H00000000', 'back_c': '&H90000000',
-        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
         'alignment': 2, 'box': False,
-        'highlight_mode': 'word',
+        'highlight_mode': 'word', 'text_case': 'upper',
         'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
         'meta': _VR_META,
     },
-    # -- 12. Outline Fill: hollow -> solid --------------------------------------
+    # -- 13. Pill: springy yellow pill badge --------------------------------------------
+    'pill': {
+        'id': 'pill', 'label': 'Pill',
+        'category': 'CapCut',
+        'desc': 'Spoken word springs into a yellow pill badge — dark text '
+                'on the pill',
+        'engine': 'pill', 'layout': 'phrase', 'max_words': 4,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00000000',
+        'box_color': '&H0000E6FF',  # #FFE600 pill
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 0,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 180,
+        # springy badge: 60 -> 115% over 90ms, settle over 90ms
+        'pill': {'frm': 60, 'peak': 115, 'up_ms': 90, 'total_ms': 180},
+        'meta': _VR_META,
+    },
+    # -- 14. Caption Bar: translucent bar, words fade-rise ---------------------------------
+    'caption_bar': {
+        'id': 'caption_bar', 'label': 'Caption Bar',
+        'category': 'CapCut',
+        'desc': 'Whole line sits on a translucent black bar; words '
+                'fade-rise in — no color pop',
+        'engine': 'bar', 'layout': 'phrase', 'max_words': 5,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'outline_c': '&H00000000', 'back_c': '&H66000000',  # black 60%
+        'bold': -1, 'italic': 0, 'outline': 1, 'shadow': 0,
+        'alignment': 2, 'box': True, 'box_opacity': 0.60, 'box_pad': 16,
+        'highlight_mode': 'word',
+        'lead_ms': -10, 'floor_ms': 150, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # -- 15. Outline Fill: hollow -> solid ----------------------------------------------
     'outline_fill': {
         'id': 'outline_fill', 'label': 'Outline Fill',
         'category': 'CapCut',
@@ -266,7 +328,39 @@ CAPTION_TEMPLATES = {
         'pop': {'frm': 100, 'peak': 106, 'up_ms': 80, 'total_ms': 160},
         'meta': _VR_META,
     },
-    # -- 13. Solo Pop: ONE giant word at a time ----------------------------------
+    # -- 16. Underline Sweep ----------------------------------------------------------------
+    'underline_sweep': {
+        'id': 'underline_sweep', 'label': 'Underline Sweep',
+        'category': 'CapCut',
+        'desc': 'Accent underline sweeps under the spoken word, left to right',
+        'engine': 'underline', 'layout': 'phrase', 'max_words': 5,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'bar_c': '&H0000E6FF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 2, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word',
+        'lead_ms': -15, 'floor_ms': 140, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # -- 17. Glide: words slide in from the right ----------------------------------------------
+    'glide': {
+        'id': 'glide', 'label': 'Glide',
+        'category': 'CapCut',
+        'desc': 'Spoken word glides in from the right — X +60 -> 0px, '
+                'ease-out 200ms',
+        'engine': 'glide', 'layout': 'phrase', 'max_words': 5,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # -- 18. Solo Pop: ONE giant word at a time --------------------------------------------------
     'solo_pop': {
         'id': 'solo_pop', 'label': 'Solo Pop',
         'category': 'CapCut',
@@ -283,7 +377,7 @@ CAPTION_TEMPLATES = {
         'pop': {'frm': 80, 'peak': 125, 'up_ms': 80, 'total_ms': 140},
         'meta': _VR_META,
     },
-    # -- 14. Minimal Fade: opacity only ------------------------------------------
+    # -- 19. Minimal Fade: opacity only ---------------------------------------------------------------
     'minimal_fade': {
         'id': 'minimal_fade', 'label': 'Minimal Fade',
         'category': 'CapCut',
@@ -299,14 +393,82 @@ CAPTION_TEMPLATES = {
         'fade': {'in_ms': 120, 'out_ms': 120},
         'meta': _VR_META,
     },
+    # -- 20. Gradient Sweep: teal -> blue -> violet -------------------------------------------------------
+    'gradient_sweep': {
+        'id': 'gradient_sweep', 'label': 'Gradient Sweep',
+        'category': 'CapCut',
+        'desc': 'Teal -> blue -> violet sweep across the spoken word + pop',
+        'engine': 'gradient', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00E0B814',  # teal #14B8E0
+        'grad_mid': '&H00F6823B',   # blue #3B82F6
+        'grad_end': '&H00F65C8B',   # violet #8B5CF6
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
+        # pop 80 -> 118% over 70ms, settle over 70ms, color sweeps over 180ms
+        'pop': {'frm': 80, 'peak': 118, 'up_ms': 70, 'total_ms': 140},
+        'meta': _VR_META,
+    },
+    # -- 21. Sticker Pop: tilted sticker slap -----------------------------------------------------------------
+    'sticker_pop': {
+        'id': 'sticker_pop', 'label': 'Sticker Pop',
+        'category': 'CapCut',
+        'desc': 'Spoken word slaps on like a tilted sticker — rotation '
+                'wobble 6 -> -2 -> 0deg + pop',
+        'engine': 'sticker', 'layout': 'compact', 'max_words': 2,
+        'font': 'Montserrat', 'size_scale': 1.1,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -20, 'floor_ms': 140, 'hold_ms': 180,
+        'meta': _VR_META,
+    },
+    # -- 22. Glitch: RGB-split jitter --------------------------------------------------------------------------------
+    'glitch': {
+        'id': 'glitch', 'label': 'Glitch',
+        'category': 'CapCut',
+        'desc': 'Digital glitch hit — RGB-split jitter: 3 quick X steps '
+                'with red/blue outlines',
+        'engine': 'glitch', 'layout': 'compact', 'max_words': 3,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H00FFFFFF',
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 0,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -10, 'floor_ms': 140, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
+    # -- 23. Pulse: rhythmic throb ----------------------------------------------------------------------------------------
+    'pulse': {
+        'id': 'pulse', 'label': 'Pulse',
+        'category': 'CapCut',
+        'desc': 'Spoken word throbs 100 -> 108 -> 100% rhythmically while '
+                'it is spoken',
+        'engine': 'pulse', 'layout': 'phrase', 'max_words': 5,
+        'font': 'Montserrat', 'size_scale': 1.0,
+        'primary': '&H00FFFFFF', 'secondary': '&H0000E6FF',  # #FFE600
+        'outline_c': '&H00000000', 'back_c': '&H90000000',
+        'bold': -1, 'italic': 0, 'outline': 3, 'shadow': 1,
+        'alignment': 2, 'box': False,
+        'highlight_mode': 'word', 'text_case': 'upper',
+        'lead_ms': -15, 'floor_ms': 150, 'hold_ms': 150,
+        'meta': _VR_META,
+    },
 }
-
 CAPTION_TEMPLATE_CATEGORIES = ['CapCut']
 
 DEFAULT_CAPTION_TEMPLATE = "karaoke_pop"
 
-#: Every retired caption-style id (the 8 spec_* structural styles, the
-#: 101 legacy templates, old preset/motion ids) migrates to the default.
+#: Every retired caption-style id migrates. The 2026-10-01 14-style set's
+#: beast_box maps to its spiritual successor beast; everything else that is
+#: gone (8 spec_* structural styles, 101 legacy templates, preset/motion
+#: ids) falls back to the default.
 _LEGACY_STYLE_IDS = frozenset({
     'spec_word_sync', 'spec_highlight', 'spec_impact', 'spec_aesthetic',
     'spec_minimal', 'spec_dynamic', 'spec_standard', 'spec_dual',
@@ -314,17 +476,22 @@ _LEGACY_STYLE_IDS = frozenset({
     'preset_classic', 'preset_glow', 'preset_monoline', 'preset_textbox',
     'preset_trending', 'motion_default', 'motion_bounce', 'motion_negrow',
     'motion_flip3d', 'motion_typewriter', 'motion_karaoke',
+    'beast_box',
 })
 
 
 def migrate_caption_template_id(old_id):
     """Map any saved/legacy caption-style id to a current style id.
 
-    Unknown ids (including every retired spec_*/preset_*/motion_* id and
-    the old 101-template ids) fall back to DEFAULT_CAPTION_TEMPLATE.
+    beast_box (retired 2026-10-02) maps to its successor beast. Unknown
+    ids (including every retired spec_*/preset_*/motion_* id and the old
+    101-template ids) fall back to DEFAULT_CAPTION_TEMPLATE.
     """
-    if isinstance(old_id, str) and old_id in CAPTION_TEMPLATES:
-        return old_id
+    if isinstance(old_id, str):
+        if old_id == "beast_box":
+            return "beast"
+        if old_id in CAPTION_TEMPLATES:
+            return old_id
     return DEFAULT_CAPTION_TEMPLATE
 
 
@@ -374,25 +541,25 @@ def _box_back(opacity):
 # Per-type style at 1080p (Genspark §3 table). entrances ≤250ms, exits
 # strictly shorter than entrances (§4). y_frac is the anchor for \an8/\an9.
 MAIN_TEXT_STYLE = {
-    "STAT":    dict(size=64, sub=44, box_op=0.60, pad_lr=25, pad_tb=15,
+    "STAT":    dict(zone="upper-center", size=64, sub=44, box_op=0.60, pad_lr=25, pad_tb=15,
                     align=8, y_frac=0.30, enter_ms=180, exit_ms=120,
                     entrance="fade", case="upper"),
-    "NAME":    dict(size=54, sub=36, box_op=0.65, pad_lr=22, pad_tb=12,
+    "NAME":    dict(zone="upper-center-left", size=54, sub=36, box_op=0.65, pad_lr=22, pad_tb=12,
                     align=8, y_frac=0.32, enter_ms=200, exit_ms=150,
                     entrance="slide", case="title"),
-    "DATE":    dict(size=50, sub=36, box_op=0.55, pad_lr=16, pad_tb=10,
+    "DATE":    dict(zone="top-right", size=50, sub=36, box_op=0.55, pad_lr=16, pad_tb=10,
                     align=9, y_frac=0.20, enter_ms=180, exit_ms=120,
                     entrance="fade", case="upper"),
-    "KEYWORD": dict(size=50, sub=36, box_op=0.65, pad_lr=20, pad_tb=12,
+    "KEYWORD": dict(zone="upper-center", size=50, sub=36, box_op=0.65, pad_lr=20, pad_tb=12,
                     align=5, y_frac=0.40, enter_ms=200, exit_ms=150,
                     entrance="fade", case="upper"),
-    "QUOTE":   dict(size=56, sub=32, box_op=0.70, pad_lr=28, pad_tb=18,
+    "QUOTE":   dict(zone="center", size=56, sub=32, box_op=0.70, pad_lr=28, pad_tb=18,
                     align=5, y_frac=0.45, enter_ms=250, exit_ms=200,
                     entrance="fade", case="verbatim"),
-    "CHAPTER": dict(size=68, sub=38, box_op=0.78, pad_lr=34, pad_tb=22,
+    "CHAPTER": dict(zone="upper-center", size=68, sub=38, box_op=0.78, pad_lr=34, pad_tb=22,
                     align=5, y_frac=0.32, enter_ms=250, exit_ms=200,
                     entrance="slide", case="upper"),
-    "OUTCOME": dict(size=52, sub=36, box_op=0.65, pad_lr=22, pad_tb=14,
+    "OUTCOME": dict(zone="center", size=52, sub=36, box_op=0.65, pad_lr=22, pad_tb=14,
                     align=5, y_frac=0.42, enter_ms=200, exit_ms=150,
                     entrance="fade", case="upper"),
 }
@@ -444,6 +611,33 @@ _ATTRIBUTION_RES = (
 # §5c standalone pronouns — never shown alone.
 _PRONOUNS = frozenset(
     "it he she they him her them we you i me us".split())
+
+# ---------------------------------------------------------------------------
+# Importance scoring (2026-10-02 rebuild): the AI selects ONLY what is
+# important from the narration script — never random words or filler lines.
+# Priority: named entities > numbers-with-magnitude > outcome/decision words
+# > attributed quotes > dates. Candidates below _IMPORTANCE_FLOOR are
+# dropped: a weak pick emits NOTHING rather than a random-looking overlay.
+# ---------------------------------------------------------------------------
+
+#: Minimum importance for a candidate to become a card.
+_IMPORTANCE_FLOOR = 45.0
+
+# Common capitalised words that are NOT entities (news filler / labels).
+_NAME_STOPLIST = frozenset((
+    "breaking live today tonight exclusive watch update updates developing "
+    "report reports source sources official officials video photo photos "
+    "image images market economy government police company study studies "
+    "footage clip alert just in new".split()))
+
+# Quote fallback: "X said/announced/admitted that <clause>" — the clause is
+# a memorable statement even without quote marks in the script.
+_QUOTE_SAID_RE = re.compile(
+    r"\b(said|stated|announced|admitted|declared|warned|promised|"
+    r"confirmed|revealed)\b\s+(?:that\s+)?([^.,;!?]{12,90}?)"
+    r"(?=[.,;!?]|$)", re.I)
+_QUOTE_STRONG_VERBS = frozenset(
+    ("admitted", "announced", "declared", "warned"))
 
 # Words that license the RED accent: crisis / casualty / negative (§3).
 _CRISIS_WORDS = frozenset((
@@ -584,6 +778,20 @@ def _extract_candidates(text, keywords=(), phrases=()):
                               "magnitude": 0.0, "incidental": False,
                               "deadline": False})
 
+    # -- QUOTE fallback: "X said/announced/admitted that <clause>" --
+    # Narration scripts rarely carry quote marks; the clause after a
+    # speech verb is still a memorable verbatim statement.
+    for m in _QUOTE_SAID_RE.finditer(text):
+        clause = " ".join(m.group(2).split()).strip(" .,!?\"'")
+        words = clause.split()
+        if 3 <= len(words) <= 12 and _claim(m.start(2), m.end(2)):
+            strong = m.group(1).lower() in _QUOTE_STRONG_VERBS
+            cands.append({"raw": clause, "type": "QUOTE", "tier": 1,
+                          "sub": 0 if strong else 1,
+                          "start": m.start(2), "hero": "",
+                          "magnitude": 0.0, "incidental": False,
+                          "deadline": False})
+
     # -- DATE (Tier 2; deadline/event dates get the news-priority override) --
     for rx in _DATE_RES:
         for m in rx.finditer(text):
@@ -640,6 +848,7 @@ def _extract_candidates(text, keywords=(), phrases=()):
         name = " ".join(m.group(1).split())
         if (name.split()[0].lower() in _MAIN_FILLERS
                 or name.lower() in _STOP_EDGE
+                or any(w in _NAME_STOPLIST for w in name.lower().split())
                 or re.fullmatch(_MONTHS, name.split()[0], re.I)):
             continue
         if m.start() == 0 and " " not in name:
@@ -687,8 +896,14 @@ def _extract_candidates(text, keywords=(), phrases=()):
         num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}.get(
                    n.lower(), n)
-        label_words = [w for w in _content_words(text)[:2]]
-        label = "#%s %s" % (num, " ".join(label_words).upper())
+        # Label from the words AFTER the marker ("number three: strengthen
+        # the border" -> "STRENGTHEN THE BORDER"), not from the start of
+        # the scene — the old first-two-words heuristic was arbitrary.
+        tail = text[m.end():m.end() + 80]
+        if ":" in tail[:30]:
+            tail = tail.split(":", 1)[1]
+        label_words = [w for w in _content_words(tail)[:4]]
+        label = " ".join(label_words).upper() or "#%s" % num
         if _claim(m.start(), m.end()):
             cands.append({"raw": label.strip(), "type": "CHAPTER", "tier": 3,
                           "sub": 0, "start": m.start(), "hero": "#%s" % num,
@@ -775,20 +990,122 @@ def _adopt_emotion_word(scene_text, start, words, max_words, case):
 def _card_accent(card_text, ctype, scene_text):
     """Accent colour + hero words for a finished card.
 
-    White default; RED only for crisis/casualty/negative; CYAN for highly
-    technical KEYWORD cards. Accent lands on 1-3 hero words max — never
-    every word (the all-red bug).
+    Back-compat wrapper — the rules live in MAIN_TEXT_COLORS /
+    main_text_color_for() now (explicit per-type map, 2026-10-02).
     """
+    return main_text_color_for(ctype, card_text, scene_text)
+
+
+def _importance(c, text):
+    """News-importance score for one candidate (2026-10-02 rebuild).
+
+    named entities > numbers-with-magnitude > outcome/decision words >
+    attributed quotes > dates. Higher = more newsworthy. Candidates below
+    _IMPORTANCE_FLOOR are dropped entirely.
+    """
+    import math
+    tier_base = {1: 100.0, 2: 60.0, 3: 30.0}
+    s = tier_base.get(c.get("tier", 3), 30.0)
+    s += (3 - c.get("sub", 3)) * 5.0          # in-tier rank
+    words = c["raw"].split()
+    if len(words) > 1:
+        s += min(20.0, 10.0 * (len(words) - 1))  # multi-word = specific
+    elif c["type"] == "NAME":
+        s -= 25.0                             # single-token names are weak
+    mag = c.get("magnitude", 0.0) or 0.0
+    if mag > 0:
+        s += min(25.0, 5.0 * math.log10(1 + mag / 1e6))  # magnitude
+    if c.get("boost"):
+        s += 25.0                             # spoken >= 3x: auto-wins tier
+    if c.get("deadline"):
+        s += 20.0                             # news-priority override
+    low = c["raw"].lower()
+    if any(w in low for w in ("record", "first", "biggest", "largest",
+                              "worst", "historic")):
+        s += 10.0                             # newsworthy superlative + data
+    start = c.get("start", 0) or 0
+    s += max(0.0, 10.0 - start / max(1, len(text)) * 10.0)  # said early wins
+    # Bare 4-digit years are DATE-flavoured and carry little news value
+    # on their own ("In 2024, ..." should not beat a real name/stat).
+    # Strip trailing punctuation: the extractor keeps "2024,".
+    if (c["type"] == "STAT"
+            and re.fullmatch(r"(?:19|20)\d{2}",
+                             c["raw"].strip(".,!?\"'"))):
+        s -= 60.0
+    return s
+
+
+# ---------------------------------------------------------------------------
+# Explicit COLOR map per main-text type (2026-10-02).
+# White default; RED only for crisis/casualty/negative; CYAN for highly
+# technical KEYWORD cards. Accent lands on 1-3 hero words max — never
+# every word (the all-red bug).
+# ---------------------------------------------------------------------------
+MAIN_TEXT_COLORS = {
+    "STAT":    {"fill": _MT_WHITE, "accent_alt": _MT_YELLOW,
+                "crisis": _MT_RED,
+                "rule": "white; yellow only when white won't separate; "
+                        "RED only crisis/casualty/negative"},
+    "NAME":    {"fill": _MT_WHITE, "accent_alt": _MT_YELLOW,
+                "crisis": _MT_WHITE, "rule": "white always"},
+    "DATE":    {"fill": _MT_WHITE, "accent_alt": _MT_YELLOW,
+                "crisis": _MT_WHITE, "rule": "white always"},
+    "KEYWORD": {"fill": _MT_WHITE, "accent_alt": _MT_CYAN,
+                "crisis": _MT_WHITE,
+                "rule": "white; cyan for highly technical topics"},
+    "QUOTE":   {"fill": _MT_WHITE, "accent_alt": _MT_YELLOW,
+                "crisis": _MT_WHITE, "rule": "white, verbatim"},
+    "CHAPTER": {"fill": _MT_WHITE, "accent_alt": _MT_GOLD,
+                "crisis": _MT_RED,
+                "rule": "white; gold alt; red only crisis chapters"},
+    "OUTCOME": {"fill": _MT_WHITE, "accent_alt": _MT_YELLOW,
+                "crisis": _MT_RED,
+                "rule": "white; RED for negative outcomes"},
+}
+
+
+def main_text_color_for(ctype, card_text, scene_text):
+    """(accent_color, accent_words) for a finished card — the explicit
+    per-type color map. Returns (_MT_WHITE, []) for neutral cards."""
+    spec = MAIN_TEXT_COLORS.get(ctype, MAIN_TEXT_COLORS["STAT"])
     crisis = _crisis_in(card_text) or _crisis_in(scene_text)
-    if crisis:
+    if crisis and spec["crisis"] != _MT_WHITE:
         heroes = [w for w in card_text.split()
                   if w.strip(".,!?\"'").lower() in _EMOTION_WORDS][:3]
         if not heroes:
             heroes = card_text.split()[:1]
-        return _MT_RED, heroes
+        return spec["crisis"], heroes
     if ctype == "KEYWORD":
         return _MT_CYAN, card_text.split()[:2]
     return _MT_WHITE, []
+
+
+# ---------------------------------------------------------------------------
+# Explicit POSITION map per main-text type (2026-10-02).
+# Zones are named; the numeric anchors stay in MAIN_TEXT_STYLE.
+# Safe zones (spec §3): title-safe inner 80% (X 192-1728, Y 108-972 at
+# 1080p); the bottom 250px are OFF-LIMITS (YouTube UI + captions).
+# ---------------------------------------------------------------------------
+MAIN_TEXT_POSITION = {
+    "STAT":    {"zone": "upper-center", "x": "center 960", "y": "200-500"},
+    "NAME":    {"zone": "upper-center-left", "x": "400-960", "y": "250-450",
+                "note": "avoid the face"},
+    "DATE":    {"zone": "top-right", "x": "1100-1700", "y": "150-300",
+                "note": "center if chapter marker"},
+    "KEYWORD": {"zone": "upper-center", "x": "600-960", "y": "300-500"},
+    "QUOTE":   {"zone": "center", "x": "400-1100", "y": "380-600"},
+    "CHAPTER": {"zone": "upper-center", "x": "400-1100", "y": "250-400"},
+    "OUTCOME": {"zone": "center", "x": "400-1100", "y": "380-600"},
+}
+
+#: Safe zones at 1080p (spec §3).
+MAIN_TEXT_SAFE_ZONE = {"x_min": 192, "x_max": 1728, "y_min": 108,
+                       "y_max": 972, "bottom_reserved_px": 250}
+
+
+def main_text_position_for(ctype):
+    """Named screen zone for a main-text type."""
+    return MAIN_TEXT_POSITION.get(ctype, MAIN_TEXT_POSITION["STAT"])
 
 
 # ---------------------------------------------------------------------------
@@ -860,11 +1177,14 @@ def select_main_text(scene_text, duration=6.0, word_timings=None,
     for c in cands:
         c["boost"] = (c["tier"] == 1
                       and _repetition_count(c["raw"], text) >= 3)
+        c["importance"] = _importance(c, text)
 
-    # Priority order: tier, in-tier rank, repetition boost, magnitude,
-    # then earliest in the scene (narrative dominance).
-    cands.sort(key=lambda c: (0 if c["boost"] else c["tier"], c["sub"],
-                              -c["magnitude"], c["start"]))
+    # Importance order (2026-10-02 rebuild): named entities >
+    # numbers-with-magnitude > outcome/decision words > attributed quotes >
+    # dates. Candidates below the floor are dropped — a weak pick emits
+    # NOTHING rather than a random-looking overlay.
+    cands = [c for c in cands if c["importance"] >= _IMPORTANCE_FLOOR]
+    cands.sort(key=lambda c: (-c["importance"], c["start"]))
 
     # Density: how many cards fit this scene.
     want = _max_cards(duration)
@@ -1267,16 +1587,18 @@ def _ts_ass(sec):
 
 
 # ---------------------------------------------------------------------------
-# CapCut-style caption animation engines (2026-10-01).
+# CapCut-clone caption animation engines (2026-10-02: 23 styles).
 #
-# The old 8+5+5 spec engine (compose_template / CAPTION_PRESETS /
-# CAPTION_MOTIONS / spec_* templates) was removed at the user's request.
-# These 14 styles are visual recreations of CapCut's trending caption
-# looks (see CAPTION_TEMPLATES["..."]["meta"]["source"]). They are NOT
-# CapCut's internal parameters — CapCut does not publish those — but the
-# animation behavior categories they recreate (word pop, bounce, spring
-# entrances, karaoke highlighting, typewriter, wave, glow) ARE documented
-# CapCut text effects.
+# The 2026-10-01 14-style set was replaced at the user's request
+# (capcut_clone_research_2026-10-02.md): beast_box retired (its successor
+# is beast); hormozi/beast/box_highlight/pill/caption_bar/glide/
+# gradient_sweep/sticker_pop/glitch/pulse added. All 23 are visual
+# recreations of CapCut's trending caption looks (see each template's
+# meta["source"]). They are NOT CapCut's internal parameters — CapCut
+# does not publish those — but the animation behavior categories they
+# recreate (word pop, bounce, spring entrances, karaoke highlighting,
+# typewriter, wave, glow, box/pill highlights, glide, gradient sweep,
+# sticker rotation, glitch, pulse) ARE documented CapCut text effects.
 #
 # Rendering model (robust by design):
 #  * Layer 0: the full phrase card, static, per chunk.
@@ -1441,6 +1763,72 @@ def _cap_active_events(tmpl, disp, idx, ax, ay, ws, we, cap_size):
             "{\\an5\\pos(%d,%d)}" % (xi, yi),
             "{\\an5\\pos(%d,%d)\\fad(%d,%d)}" % (xi, yi, f["in_ms"],
                                                 f["out_ms"]), 1)
+    elif engine == "box_snap":
+        # solid box SNAPS 40 -> 100% in 80ms, no overshoot (Captions.ai
+        # keyword box). The box color rides on the outline stroke so no
+        # word-width measuring is needed.
+        mc = tmpl.get("box_color", "&H001409E5&")
+        tags = ("\\3c%s\\bord7\\fscx40\\fscy40"
+                "\\t(0,80,\\fscx100\\fscy100)" % mc)
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "pill":
+        # springy pill badge: 60 -> 115% over 90ms, settle over 90ms;
+        # dark text on the colored pill.
+        mc = tmpl.get("box_color", "&H0000E6FF&")
+        tags = ("\\3c%s\\bord8\\fscx60\\fscy60"
+                "\\t(0,90,0.5,\\fscx115\\fscy115)"
+                "\\t(90,180,1.8,\\fscx100\\fscy100)" % mc)
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "bar":
+        # words fade + rise 14px into the persistent translucent bar;
+        # deliberately no color pop — the motion is the style.
+        mv = "\\an5\\move(%d,%d,%d,%d,0,180)" % (xi, yi + 14, xi, yi)
+        out.append(_dlg(ws, we, mv, "", fade_in=150))
+    elif engine == "glide":
+        # slide in from the right: X +60 -> 0 over 200ms ease-out + fade
+        mv = "\\an5\\move(%d,%d,%d,%d,0,200)" % (xi + 60, yi, xi, yi)
+        out.append(_dlg(ws, we, mv, "", fade_in=150))
+    elif engine == "gradient":
+        # teal -> blue -> violet sweep across the spoken word + pop
+        gm = tmpl.get("grad_mid", "&H00F6823B&")
+        ge = tmpl.get("grad_end", "&H00F65C8B&")
+        tags = ("\\fscx%d\\fscy%d\\t(0,%d,0.5,\\fscx%d\\fscy%d)"
+                "\\t(%d,%d,1.8,\\fscx100\\fscy100)"
+                "\\t(0,90,\\1c%s)\\t(90,180,\\1c%s)"
+                % (pop["frm"], pop["frm"], pop["up_ms"],
+                   pop["peak"], pop["peak"], pop["up_ms"],
+                   pop["total_ms"], gm, ge))
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "sticker":
+        # tilted sticker slap: rotation wobble 6 -> -2 -> 0deg + pop,
+        # thick dark outline sells the label
+        tags = ("\\frz6\\3c&H00000000&\\bord8\\fscx70\\fscy70"
+                "\\t(0,90,0.5,\\fscx120\\fscy120\\frz-2)"
+                "\\t(90,160,1.8,\\fscx100\\fscy100\\frz0)")
+        out.append(_dlg(ws, we, pos, tags))
+    elif engine == "glitch":
+        # RGB-split jitter: 3 quick X steps with alternating red/blue
+        # outlines, then the clean word holds for the rest of its window
+        steps = [("&H000000FF&", 4), ("&H00FF0000&", -4),
+                 ("&H00000000&", 0)]
+        for gi, (gc, jx) in enumerate(steps):
+            es = ws + gi * 0.06
+            ee = (ws + (gi + 1) * 0.06) if gi < 2 else max(we, ws + 0.18)
+            mv = ("\\an5\\move(%d,%d,%d,%d,0,60)"
+                  % (xi + jx, yi, xi, yi))
+            out.append(_dlg(es, ee, mv, "\\3c%s\\bord4" % gc,
+                            fade_in=0))
+    elif engine == "pulse":
+        # rhythmic throb 100 -> 108 -> 100% across the spoken window
+        dur_ms = max(300, int((we - ws) * 1000))
+        n = min(4, max(1, dur_ms // 300))
+        tags = ""
+        for pi in range(n):
+            s0 = pi * 300
+            tags += ("\\t(%d,%d,\\fscx108\\fscy108)"
+                     "\\t(%d,%d,\\fscx100\\fscy100)"
+                     % (s0, s0 + 150, s0 + 150, s0 + 300))
+        out.append(_dlg(ws, we, pos, tags))
     return out
 
 
@@ -1550,7 +1938,7 @@ def _render_typewriter(tmpl, chunks, ax, ay, cap_size, lead, floor_s,
 
 def _render_capcut_captions(tmpl, sentence_timings, word_timings, pw, ph,
                             cap_size, mv, dx_px, dy_px):
-    """Dialogue lines for one of the 14 CapCut-style caption engines.
+    """Dialogue lines for one of the 23 CapCut-clone caption engines.
 
     Layer 0: the full phrase card (with the style's base overrides).
     Layer 1: per active word, the full phrase with only that word

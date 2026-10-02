@@ -320,6 +320,16 @@ _ENGINE_SFX = {
     "typewriter": ("tick", -20),
     "solo": ("punch", -16),
     # fade: silence - a sound on every faded line gets annoying.
+    # New engines (2026-10-02): each keeps its family's sound so the
+    # audio language stays consistent across all 23 styles.
+    "box_snap": ("pop", -17),        # snappy box -> punchy pop
+    "pill": ("pop", -17),            # springy badge -> pop
+    "bar": ("swoosh", -21),          # soft rise -> gentle swoosh
+    "glide": ("swoosh", -20),        # slide -> swoosh
+    "gradient": ("swoosh", -19),     # sweep -> swoosh
+    "sticker": ("punch", -16),       # tilted slap -> punch
+    "glitch": ("tick", -19),         # digital jitter -> tick
+    "pulse": ("tick", -21),          # rhythmic throb -> soft tick
 }
 
 
