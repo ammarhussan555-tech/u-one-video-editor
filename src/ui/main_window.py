@@ -503,10 +503,16 @@ class MainWindow(QMainWindow):
         # Restore the caption edit session from the previous run, if its
         # file still exists (work_dir is stable across restarts). This way
         # 'Edit Captions' keeps working after the app is closed/reopened.
+        # Also restore the preview video itself: without it the player
+        # stays empty (NoMedia) and Play's watchdog just gives up.
         try:
             _sess = os.path.join(self.work_dir, "caption_edit.json")
             if os.path.isfile(_sess):
-                self._use_edit_session(_sess)
+                if self._use_edit_session(_sess):
+                    _pv = getattr(self, "_current_video", "")
+                    if _pv and os.path.isfile(_pv):
+                        self._preview_play_file(_pv, autoplay=False)
+                        self._log(f"Preview restored: {_pv}")
         except Exception:  # noqa: BLE001 - optional convenience
             pass
 
@@ -719,6 +725,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No)
             if r == QMessageBox.Yes:
                 self.project = Project.load(newest)
+                # Don't keep the autosave path: future saves/autosaves
+                # must target the real project file, not stack
+                # ".autosave" suffixes on the recovery file.
+                _pp = self.project.path or ""
+                while _pp.endswith(".autosave"):
+                    _pp = _pp[:-len(".autosave")]
+                self.project.path = _pp
                 self.script_edit.setPlainText(self.project.script)
                 self.timeline_widget.set_timeline(self.project.timeline)
                 self._log(f"Recovered autosave: {newest}")
@@ -1711,11 +1724,13 @@ class MainWindow(QMainWindow):
             p.setSource(src)
         self._player_diag("source-reloaded")
 
-    def _preview_play_file(self, path):
+    def _preview_play_file(self, path, autoplay=True):
         """Load a file into the preview player and start playing it.
 
         Used after caption re-burns / timeline edits where the output may
-        land on the SAME path the player already has loaded.
+        land on the SAME path the player already has loaded. With
+        autoplay=False the file is only loaded (first frame shown), so
+        Play works immediately -- used for the startup restore.
         """
         if not path or not os.path.isfile(path):
             return
@@ -1733,6 +1748,8 @@ class MainWindow(QMainWindow):
         p.setSource(QUrl.fromLocalFile(path))
         self._current_video = path
         self._player_diag("preview-reload")
+        if not autoplay:
+            return
         try:
             p.play()  # if still loading, the backend defers until loaded
         except Exception as e:  # noqa: BLE001
@@ -2492,6 +2509,12 @@ class MainWindow(QMainWindow):
                 from src.caption_editor import load_edit_session
                 data = load_edit_session(session)
                 self._edit_session = session
+                # Remember the rendered video too, so the preview can be
+                # restored after a restart (and the generate-captions
+                # fallback knows which video to use).
+                _out_vid = data.get("output_video") or ""
+                if _out_vid and os.path.isfile(_out_vid):
+                    self._current_video = _out_vid
                 # Sync the editor controls with the render's caption style.
                 from src.text_captions import CAPTION_TEMPLATES as _CT3
                 from src.text_captions import (

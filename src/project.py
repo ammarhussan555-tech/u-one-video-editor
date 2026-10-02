@@ -79,6 +79,19 @@ class Project:
         return False
 
     # ---- autosave ----
+    @staticmethod
+    def _autosave_target(path):
+        """Autosave file for a project path.
+
+        Recovery loads the autosave file itself (Project.load sets
+        path to it), so without stripping, every cycle would stack
+        another ".autosave" suffix:
+        Untitled.uvp.json.autosave.autosave.autosave...
+        """
+        while path.endswith(".autosave"):
+            path = path[:-len(".autosave")]
+        return path + ".autosave"
+
     def start_autosave(self, interval=60, directory=None):
         if self._autosave_t and self._autosave_t.is_alive():
             return
@@ -92,7 +105,7 @@ class Project:
                                       for c in (self.name or "Untitled"))[:40]
                         target = os.path.join(directory, f"{safe}.uvp.json")
                     if target:
-                        self.save(target + ".autosave")
+                        self.save(self._autosave_target(target))
                 except Exception:  # noqa: BLE001
                     pass
 
