@@ -500,6 +500,15 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.project.start_autosave(60, directory=str(app_paths.projects_dir()))
         self._offer_autosave_recovery()
+        # Restore the caption edit session from the previous run, if its
+        # file still exists (work_dir is stable across restarts). This way
+        # 'Edit Captions' keeps working after the app is closed/reopened.
+        try:
+            _sess = os.path.join(self.work_dir, "caption_edit.json")
+            if os.path.isfile(_sess):
+                self._use_edit_session(_sess)
+        except Exception:  # noqa: BLE001 - optional convenience
+            pass
 
     def _apply_modern_theme(self):
         """Modern dark theme: deep backgrounds, cyan accent, rounded cards."""
@@ -2437,14 +2446,23 @@ class MainWindow(QMainWindow):
         self.stage_lbl.setText(f"{pct}% — {stage}{detail}")
         self._log(f"[{pct}%] {stage}{detail}")
 
-    def _on_finished(self, out):
-        self._render_buttons(True)
-        self.stage_lbl.setText("Done.")
-        self._log(f"Saved: {out}")
-        self._current_video = out  # timeline edits build on this file
-        # Enable post-render caption editing if a session was saved.
+    def _set_caption_edit_enabled(self, on):
+        """Enable/disable the whole post-render caption editing cluster."""
+        for w in (self.edit_template_btn, self.edit_size_slider,
+                  self.edit_apply_btn, self.gen_captions_btn,
+                  self.edit_compose_btn):
+            w.setEnabled(on)
+
+    def _use_edit_session(self, session):
+        """Load a caption edit session file and sync the editor controls.
+
+        Returns True on success. On ANY failure the session state is cleared
+        and the edit controls are DISABLED, so Apply can never run against
+        a stale/missing session (root cause of the 'Render a video first'
+        dead-end dialog).
+        """
+        ok = False
         try:
-            session = getattr(self.pipeline, "edit_session_path", "") or ""
             if session and os.path.isfile(session):
                 from src.caption_editor import load_edit_session
                 data = load_edit_session(session)
@@ -2472,22 +2490,31 @@ class MainWindow(QMainWindow):
                 self.caption_style_lbl.setText(label)
                 self.edit_template_lbl.setText(label)
                 self.edit_size_slider.setValue(int(data.get("font_size", 48)))
-                self.edit_template_btn.setEnabled(True)
-                self.edit_size_slider.setEnabled(True)
-                self.edit_apply_btn.setEnabled(True)
-                self.gen_captions_btn.setEnabled(True)
-                self.edit_compose_btn.setEnabled(True)
+                self._set_caption_edit_enabled(True)
                 # Cache timings for the live caption overlay.
                 self._cap_sentences = data.get("sentence_timings", [])
                 self._cap_words = data.get("word_timings", [])
                 self._refresh_caption_style()
                 self._log("Caption editor ready: template/size abhi preview "
                           "mein nazar aayega — Apply dabao to burn it in.")
-            else:
-                self._edit_session = ""
+                ok = True
         except Exception as e:  # noqa: BLE001 - editor is optional
             self._log(f"Caption editor unavailable: {e}")
+        if not ok:
             self._edit_session = ""
+            self._cap_sentences = []
+            self._cap_words = []
+            self._set_caption_edit_enabled(False)
+        return ok
+
+    def _on_finished(self, out):
+        self._render_buttons(True)
+        self.stage_lbl.setText("Done.")
+        self._log(f"Saved: {out}")
+        self._current_video = out  # timeline edits build on this file
+        # Enable post-render caption editing if a session was saved.
+        session = getattr(self.pipeline, "edit_session_path", "") or ""
+        self._use_edit_session(session)
         # Also place a copy in the user's Videos folder with a safe unique name.
         try:
             dest_dir = app_paths.default_output_dir()
@@ -2523,6 +2550,17 @@ class MainWindow(QMainWindow):
     def _apply_caption_edits(self):
         """Re-burn captions with the chosen template/size (fast, no re-render)."""
         if not self._edit_session or not os.path.isfile(self._edit_session):
+            # No dead end: if a video exists but has no caption timings,
+            # offer to generate them instead of just warning.
+            if self._current_video and os.path.isfile(self._current_video):
+                go = QMessageBox.question(
+                    self, "Edit Captions",
+                    "Is video ke liye caption timings nahi hain.\n"
+                    "Audio se captions generate karun?",
+                    QMessageBox.Yes | QMessageBox.No)
+                if go == QMessageBox.Yes:
+                    self._generate_captions_now()
+                return
             QMessageBox.warning(self, "Edit Captions",
                                 "Render a video first, then edit its captions.")
             return
@@ -3262,6 +3300,14 @@ class MainWindow(QMainWindow):
         self.script_edit.clear()
         self.timeline_widget.set_timeline(None)
         self.scene_list.clear()
+        # A new project has no rendered video: drop the stale caption
+        # session too, or Apply would run against a deleted file and show
+        # the 'Render a video first' dead-end.
+        self._edit_session = ""
+        self._current_video = ""
+        self._cap_sentences = []
+        self._cap_words = []
+        self._set_caption_edit_enabled(False)
 
     def _save_project(self):
         p, _ = QFileDialog.getSaveFileName(self, "Save project", "",
