@@ -1336,14 +1336,9 @@ class MainWindow(QMainWindow):
         self.stop_btn.setToolTip("Stop (shuru se)")
         self.stop_btn.clicked.connect(self._stop_play)
         ctl.addWidget(self.stop_btn)
-        self.move_cap_btn = QPushButton("✋")
-        self.move_cap_btn.setMaximumWidth(48)
-        self.move_cap_btn.setCheckable(True)
-        self.move_cap_btn.setToolTip(
-            "Caption move mode: video par caption ko drag karo (uper/neechay/"
-            "left/right), wheel se chhota/bara, double-click se reset.")
-        self.move_cap_btn.toggled.connect(self._toggle_cap_move_mode)
-        ctl.addWidget(self.move_cap_btn)
+        # NOTE (Uzair 2026-10-03): the hand (move-mode) button is REMOVED.
+        # CapCut way only: click the caption -> selection box with handles.
+        # (Kept: A-/A+ resize + arrow nudge buttons below for fine-tuning.)
         # Chhota/bara buttons: explicit resize that never depends on wheel
         # events reaching the video widget. On Windows the QVideoWidget's
         # native surface does not reliably deliver wheel events on the
@@ -1763,14 +1758,10 @@ class MainWindow(QMainWindow):
         self._layout_edit_visual()
         if self.video_widget is not None:
             self.video_widget.setCursor(Qt.OpenHandCursor)
-        try:
-            self.move_cap_btn.setChecked(True)
-        except Exception:  # noqa: BLE001
-            pass
         self.video_hint.setText(
             "Caption select ho gaya: box ko drag karo (move) • kone se "
             "pakad kar chhota/bara karo • A−/A+ / ↑↓←→ bhi chalenge • "
-            "bahar click ya ✋ se band karo")
+            "bahar click se band karo")
 
     def _exit_caption_edit(self):
         """Hide the selection box."""
@@ -1785,10 +1776,6 @@ class MainWindow(QMainWindow):
                 self.video_widget.releaseMouse()
             except Exception:  # noqa: BLE001
                 pass
-        try:
-            self.move_cap_btn.setChecked(False)
-        except Exception:  # noqa: BLE001
-            pass
         self.video_hint.setText(
             "Tip: caption par click karo — select karke move/resize karo")
 
