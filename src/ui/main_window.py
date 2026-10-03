@@ -1371,40 +1371,10 @@ class MainWindow(QMainWindow):
         # NOTE (Uzair 2026-10-03): the hand (move-mode) button is REMOVED.
         # CapCut way only: click the caption -> selection box with handles.
         # (Kept: A-/A+ resize + arrow nudge buttons below for fine-tuning.)
-        # Chhota/bara buttons: explicit resize that never depends on wheel
-        # events reaching the video widget. On Windows the QVideoWidget's
-        # native surface does not reliably deliver wheel events on the
-        # small embedded preview (same root cause as the old drag bug),
-        # so these buttons are the guaranteed resize path; the wheel in
-        # move mode remains as a shortcut where events do arrive.
-        self.cap_smaller_btn = QPushButton("A−")
-        self.cap_smaller_btn.setMaximumWidth(40)
-        self.cap_smaller_btn.setToolTip(
-            "Caption chhota karo (foran preview + burn mein)")
-        self.cap_smaller_btn.clicked.connect(
-            lambda: self._bump_cap_scale(1 / 1.1))
-        ctl.addWidget(self.cap_smaller_btn)
-        self.cap_bigger_btn = QPushButton("A+")
-        self.cap_bigger_btn.setMaximumWidth(40)
-        self.cap_bigger_btn.setToolTip(
-            "Caption bara karo (foran preview + burn mein)")
-        self.cap_bigger_btn.clicked.connect(
-            lambda: self._bump_cap_scale(1.1))
-        ctl.addWidget(self.cap_bigger_btn)
-        # Arrow nudge: caption ko button se upar/neechay/dayen/bayen karo.
-        # (Uzair 2026-10-03: hand-drag chhoti preview par na chale to yeh
-        # guaranteed path hai -- mouse events par inhisar nahi karta.)
-        for _arrow, _dx, _dy, _tip in (
-                ("↑", 0.0, -0.03, "Caption upar"),
-                ("↓", 0.0, 0.03, "Caption neechay"),
-                ("←", -0.03, 0.0, "Caption bayen"),
-                ("→", 0.03, 0.0, "Caption dayen")):
-            _b = QPushButton(_arrow)
-            _b.setMaximumWidth(36)
-            _b.setToolTip(_tip + " (preview + burn dono mein)")
-            _b.clicked.connect(
-                lambda _c=False, _x=_dx, _y=_dy: self._nudge_cap_pos(_x, _y))
-            ctl.addWidget(_b)
+        # NOTE (Uzair 2026-10-03): A-/A+ and arrow buttons REMOVED -- he
+        # wants no buttons; caption move/resize is via the CapCut box
+        # (click/right-click caption -> drag body/handles). The wheel
+        # shortcut in edit mode stays.
         self.fs_btn = QPushButton("⛶")
         self.fs_btn.setMaximumWidth(48)
         self.fs_btn.setToolTip("Full screen preview (Esc se wapas)")
@@ -1806,9 +1776,9 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             pass
         self.video_hint.setText(
-            "Caption select ho gaya: box ko drag karo (move) • kone se "
-            "pakad kar chhota/bara karo • A−/A+ / ↑↓←→ bhi chalenge • "
-            "bahar click se band karo")
+            "Caption select ho gaya: box ko drag karo (move) • kisi gol "
+            "handle se pakad kar chhota/bara karo • bahar click ya X se "
+            "band karo")
 
     def _exit_caption_edit(self):
         """Hide the selection box."""
@@ -1831,7 +1801,7 @@ class MainWindow(QMainWindow):
             "Tip: caption par click karo — select karke move/resize karo")
 
     def _refresh_edit_visual(self):
-        """Re-layout the box after A-/A+/arrows/template changes."""
+        """Re-layout the box after scale/pos/template changes."""
         if getattr(self, "_cap_move_mode", False):
             self._layout_edit_visual(keep_center=True)
 
@@ -2309,17 +2279,23 @@ class MainWindow(QMainWindow):
                     return True
             else:
                 if et == QEvent.MouseButtonPress:
-                    # CapCut: click the caption -> select it (selection box
-                    # with handles). Click elsewhere -> caption text editor.
+                    # CapCut: click/right-click the caption -> select it
+                    # (selection box with handles). Click elsewhere ->
+                    # caption text editor. (Uzair 2026-10-03: right-click
+                    # par box, koi button nahi.)
                     try:
                         _lp = self.video_widget.mapFromGlobal(
                             event.globalPosition().toPoint())
                     except Exception:  # noqa: BLE001
                         _lp = None
-                    if _lp is not None and self._caption_hit_test(_lp):
+                    _btn = event.button()
+                    _on_cap = (_lp is not None
+                               and self._caption_hit_test(_lp))
+                    if _on_cap and _btn in (Qt.LeftButton, Qt.RightButton):
                         self._enter_caption_edit()
-                    else:
+                    elif _btn == Qt.LeftButton:
                         self._on_video_clicked()
+                    # Right-click off-caption: swallow quietly (no menu).
                     return True
             if et == QEvent.KeyPress:
                 if event.key() == Qt.Key_Escape and self._fs_active:
