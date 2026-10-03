@@ -224,7 +224,7 @@ class SceneGenerator:
             try:
                 seg = _burn_keyword_popup(
                     seg, spec.keyword_insert, spec.duration,
-                    self.w, self.h, engine)
+                    self.w, self.h, self.fps, engine)
             except Exception:  # noqa: BLE001 - pop-up is optional
                 pass
         rep = validate_segment(seg, engine=engine,
@@ -360,7 +360,8 @@ Dialogue: 0,{_ts(start)},{_ts(end)},Popup,,0,0,0,,{kw}
 
 
 def _burn_keyword_popup(seg_path: str, keyword: str, duration: float,
-                        w: int, h: int, engine: FFmpegEngine) -> str:
+                        w: int, h: int, fps: int,
+                        engine: FFmpegEngine) -> str:
     """Burn a keyword pop-up into a segment. Returns the new path."""
     ass_text = _keyword_ass(keyword, duration, w, h)
     ass_path = seg_path + ".kw.ass"
@@ -369,7 +370,8 @@ def _burn_keyword_popup(seg_path: str, keyword: str, duration: float,
     out_path = seg_path + ".kw.mp4"
     # Escape for subtitles filter (Windows paths need special handling).
     ass_esc = ass_path.replace("\\", "/").replace(":", "\\:")
-    vf = f"subtitles='{ass_esc}'"
+    # Enforce fps (fix 2026-10-03: subtitles-only keeps input fps quirks).
+    vf = f"subtitles='{ass_esc}',fps={fps}"
     hw = None
     try:
         # Reuse the generator's hw detection via a temp instance check.

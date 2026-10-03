@@ -213,13 +213,18 @@ class ExportEngine:
             # Caption burn-in from the clean video: re-encode video only,
             # copy audio (fast). Uses the hardware encoder when available
             # (3-5x faster than libx264, same visual quality).
+            # FIX (2026-10-03): enforce fps=30 in the burn chain. The
+            # subtitles-only filter preserves the input's frame rate;
+            # if the clean video has VFR/timing quirks (e.g. from a
+            # stream-copy), the output fps drifts (seen: 17.8 vs 30).
+            full_chain = f"{base_chain},{vf_chain}"
             if use_hw and hw_enc:
                 v_args = ["-c:v", hw_enc, "-b:v", _HW_BITRATE.get(res, "10M")]
             else:
                 v_args = ["-c:v", "libx264", "-preset", "veryfast",
                           "-crf", "20"]
             args = ["-i", src,
-                    "-vf", vf_chain,
+                    "-vf", full_chain,
                     *v_args,
                     "-pix_fmt", "yuv420p",
                     "-c:a", "copy",
