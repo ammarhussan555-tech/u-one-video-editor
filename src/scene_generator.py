@@ -35,6 +35,7 @@ class SceneSpec:
     scene_id: int
     text: str
     duration: float     # seconds this scene occupies
+    keyword_insert: Optional[str] = None  # pop-up keyword (rule 10)
 
 
 @dataclass
@@ -217,6 +218,15 @@ class SceneGenerator:
                 pass
         self.render_segment(asset, spec.duration, seg, seed=spec.index,
                             scene=spec.scene_id + 1, engine=engine)
+        # Keyword insert pop-up (Uzair rule 10): burn a 0.8s styled
+        # keyword overlay into the segment if one was detected.
+        if getattr(spec, "keyword_insert", None):
+            try:
+                seg = _burn_keyword_popup(
+                    seg, spec.keyword_insert, spec.duration,
+                    self.w, self.h, engine)
+            except Exception:  # noqa: BLE001 - pop-up is optional
+                pass
         rep = validate_segment(seg, engine=engine,
                                expect_w=self.w, expect_h=self.h,
                                expect_fps=float(self.fps),
@@ -316,3 +326,63 @@ class SceneGenerator:
                 if progress_cb:
                     progress_cb(done, len(specs), spec.index)
         return [results[i] for i in sorted(results)]
+
+# -- Keyword insert pop-up (Uzair 2026-10-03 rule 10) --
+# A 0.8s styled pop-up for one important keyword per scene, burned via
+# libass (same mechanism as captions, no drawtext font issues).
+
+def _keyword_ass(keyword: str, duration: float, w: int, h: int) -> str:
+    """Build a minimal ASS with one pop-up event for the keyword."""
+    # Show at 30% into the scene, for 0.8s (or less if scene is short).
+    start = max(0.2, duration * 0.3)
+    end = min(duration - 0.1, start + 0.8)
+    if end <= start:
+        start, end = 0.2, min(duration - 0.1, 1.0)
+    def _ts(s):
+        cs = int(round((s - int(s)) * 100))
+        return f"0:00:{int(s):02d}.{cs:02d}"
+    # Escape ASS special chars.
+    kw = keyword.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+    return f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {w}
+PlayResY: {h}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Popup,Arial,{max(48, h // 12)},&H00FFFFFF,&H000000FF,&H80000000,&H80000000,-1,0,3,3,0,5,40,40,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,{_ts(start)},{_ts(end)},Popup,,0,0,0,,{kw}
+"""
+
+
+def _burn_keyword_popup(seg_path: str, keyword: str, duration: float,
+                        w: int, h: int, engine: FFmpegEngine) -> str:
+    """Burn a keyword pop-up into a segment. Returns the new path."""
+    ass_text = _keyword_ass(keyword, duration, w, h)
+    ass_path = seg_path + ".kw.ass"
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(ass_text)
+    out_path = seg_path + ".kw.mp4"
+    # Escape for subtitles filter (Windows paths need special handling).
+    ass_esc = ass_path.replace("\\", "/").replace(":", "\\:")
+    vf = f"subtitles='{ass_esc}'"
+    hw = None
+    try:
+        # Reuse the generator's hw detection via a temp instance check.
+        pass
+    except Exception:
+        pass
+    engine.run(
+        ["-i", seg_path, "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "20", "-pix_fmt", "yuv420p", "-an", out_path],
+        stage="keyword_popup", inputs=[seg_path], output=out_path,
+        timeout=120)
+    try:
+        os.remove(ass_path)
+    except Exception:
+        pass
+    return out_path

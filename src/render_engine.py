@@ -252,8 +252,10 @@ class RenderEngine:
             self._stage(3, "searching + rendering + validating")
             self._check()
             self._map_scene_timings()
+            from .scene_detector import detect_keyword_insert
             specs = [SceneSpec(index=i, scene_id=sc.id, text=sc.text,
-                               duration=max(0.6, t["end"] - t["start"]))
+                               duration=max(0.6, t["end"] - t["start"]),
+                               keyword_insert=detect_keyword_insert(sc.text))
                      for i, (sc, t) in enumerate(
                          zip(self.scenes, self.scene_timings))]
             # disk estimate: ~6 MB per output second covers segments,
@@ -814,7 +816,9 @@ class RenderEngine:
             cache=None)
         new_res = gen.generate_one(
             SceneSpec(index=res.spec.index, scene_id=scene_id,
-                      text=sc.text, duration=dur))
+                      text=sc.text, duration=dur,
+                      keyword_insert=getattr(res.spec, "keyword_insert",
+                                            None)))
         tspec = hw_target_spec(width=self.out_w, height=self.out_h,
                                fps=float(self.settings.fps),
                                engine=self.engine)

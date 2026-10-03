@@ -181,3 +181,60 @@ def plan_phrase_scenes(sentence_texts):
                                 last_sentence=si))
             sid += 1
     return scenes
+
+# -- Keyword insert (Uzair 2026-10-03 rule 10) --
+# While the main clip plays, show a 0.5-1s pop-up for one important
+# keyword (number, money, place, person, product). Max 1 per clip.
+
+_MONEY_WORDS = frozenset({
+    "money", "dollar", "dollars", "rupee", "rupees", "profit", "loss",
+    "price", "cost", "revenue", "salary", "wage", "income", "debt",
+    "loan", "investment", "stock", "market", "economy", "inflation",
+    "budget", "tax", "billion", "million", "thousand", "crore", "lakh",
+})
+_NUMBER_RE = re.compile(
+    r"\$?\d[\d,]*(?:\.\d+)?\s*(?:million|billion|thousand|crore|lakh|%)?",
+    re.I)
+_PRODUCT_HINTS = frozenset({
+    "iphone", "tesla", "toyota", "samsung", "google", "apple", "microsoft",
+    "amazon", "facebook", "youtube", "tiktok", "instagram",
+})
+
+
+def detect_keyword_insert(phrase):
+    """Find one important keyword in a phrase for a pop-up insert.
+
+    Priority: number/money > place/person (capitalized) > product.
+    Returns the keyword string, or None if nothing important.
+    """
+    if not phrase or not phrase.strip():
+        return None
+    words = phrase.split()
+    # 1. Numbers (with unit): "5 million", "$100", "25%".
+    m = _NUMBER_RE.search(phrase)
+    if m:
+        kw = m.group(0).strip()
+        # Include the following unit word if present.
+        if len(kw.split()) == 1:
+            after = phrase[m.end():].strip().split()
+            if after and after[0].lower() in (
+                    "million", "billion", "thousand", "crore", "lakh",
+                    "percent", "dollar", "dollars", "rupees"):
+                kw += " " + after[0]
+        if kw:
+            return kw
+    # 2. Money words.
+    for w in words:
+        if w.strip(".,!?").lower() in _MONEY_WORDS:
+            return w.strip(".,!?")
+    # 3. Capitalized proper nouns (not first word): places/persons.
+    for w in words[1:]:
+        clean = w.strip(".,!?\"'")
+        if (len(clean) >= 3 and clean[0].isupper()
+                and clean.lower() not in _MONEY_WORDS):
+            return clean
+    # 4. Known products.
+    for w in words:
+        if w.strip(".,!?").lower() in _PRODUCT_HINTS:
+            return w.strip(".,!?")
+    return None
