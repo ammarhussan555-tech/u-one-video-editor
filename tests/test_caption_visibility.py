@@ -188,14 +188,41 @@ def _visual_fn(name):
 
         def y(self): return self._y
 
-    ns = {"QPoint": _QP}
+    ns = {}
     exec(compile(mod, "<test>", "exec"), ns)
     return ns[name]
 
 
+class _QP:
+    def __init__(self, x, y):
+        self._x, self._y = x, y
+
+    def x(self): return self._x
+
+    def y(self): return self._y
+
+
+class _QR:
+    def __init__(self, x, y, w, h):
+        self._x, self._y, self._w, self._h = x, y, w, h
+
+    def x(self): return self._x
+
+    def y(self): return self._y
+
+    def width(self): return self._w
+
+    def height(self): return self._h
+
+    def contains(self, pt):
+        return (self._x <= pt.x() <= self._x + self._w
+                and self._y <= pt.y() <= self._y + self._h)
+
+
 class _VisFake:
-    PAD = 18
-    HANDLE = 14
+    PAD = 26
+    HANDLE_R = 9
+    X_R = 11
 
     def __init__(self, w, h):
         self._w, self._h = w, h
@@ -204,21 +231,60 @@ class _VisFake:
 
     def height(self): return self._h
 
+    def _box_rect(self):
+        pad = self.PAD
+        return _QR(pad, pad, self._w - pad * 2, self._h - pad * 2)
+
+    def _handle_points(self):
+        r = self._box_rect()
+        x0, y0 = r.x(), r.y()
+        x1, y1 = x0 + r.width(), y0 + r.height()
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        return {
+            "nw": _QP(x0, y0), "n": _QP(cx, y0),
+            "ne": _QP(x1, y0), "e": _QP(x1, cy),
+            "se": _QP(x1, y1), "s": _QP(cx, y1),
+            "sw": _QP(x0, y1), "w": _QP(x0, cy),
+        }
+
+    def _x_center(self):
+        r = self._box_rect()
+        return _QP(r.x() - 4, r.y() - 18)
+
+
+def _pt(x, y):
+    import types as _t
+    return _t.SimpleNamespace(x=lambda: x, y=lambda: y)
+
 
 def test_handle_hit_corners():
     fn = _visual_fn("handle_at")
-    v = _VisFake(200, 100)
-    import types as _t
-    # corners of the selection rect: (18,18), (182,18), (18,82), (182,82)
-    assert fn(v, _t.SimpleNamespace(x=lambda: 18, y=lambda: 18)) == "nw"
-    assert fn(v, _t.SimpleNamespace(x=lambda: 182, y=lambda: 18)) == "ne"
-    assert fn(v, _t.SimpleNamespace(x=lambda: 18, y=lambda: 82)) == "sw"
-    assert fn(v, _t.SimpleNamespace(x=lambda: 182, y=lambda: 82)) == "se"
+    v = _VisFake(252, 152)
+    # PAD=26: box (26,26)-(226,126); corners at those points
+    assert fn(v, _pt(26, 26)) == "nw"
+    assert fn(v, _pt(226, 26)) == "ne"
+    assert fn(v, _pt(26, 126)) == "sw"
+    assert fn(v, _pt(226, 126)) == "se"
+
+
+def test_handle_hit_midpoints():
+    fn = _visual_fn("handle_at")
+    v = _VisFake(252, 152)
+    assert fn(v, _pt(126, 26)) == "n"
+    assert fn(v, _pt(226, 76)) == "e"
+    assert fn(v, _pt(126, 126)) == "s"
+    assert fn(v, _pt(26, 76)) == "w"
+
+
+def test_handle_hit_x_button():
+    fn = _visual_fn("handle_at")
+    v = _VisFake(252, 152)
+    # X at (26-4, 26-18) = (22, 8)
+    assert fn(v, _pt(22, 8)) == "x"
 
 
 def test_handle_hit_body_and_outside():
     fn = _visual_fn("handle_at")
-    v = _VisFake(200, 100)
-    import types as _t
-    assert fn(v, _t.SimpleNamespace(x=lambda: 100, y=lambda: 50)) == "body"
-    assert fn(v, _t.SimpleNamespace(x=lambda: 2, y=lambda: 2)) is None
+    v = _VisFake(252, 152)
+    assert fn(v, _pt(126, 76)) == "body"
+    assert fn(v, _pt(2, 140)) is None

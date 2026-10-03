@@ -103,16 +103,18 @@ class _DragCaptionLabel(QLabel):
 class _CaptionEditVisual(QWidget):
     """CapCut-style selection box for the preview caption (pure visual).
 
-    Click the caption -> this box appears with corner handles, like
-    CapCut's text selection. Drag the body to move, drag a corner
-    handle to resize (scale). It is PERMANENTLY mouse-transparent --
-    all input goes through the main-window event filter on the video
-    widget (the only reliable mouse path over the native video
-    surface on Windows). The filter hit-tests against this widget's
-    geometry.
+    Matches CapCut's text selection (Uzair 2026-10-03 screenshot): a thin
+    white outline hugging the text, 8 round white handles (4 corners + 4
+    edge midpoints), and an X button at the top-left to deselect. Click
+    the caption -> this box appears. Drag the body to move, drag any
+    handle to resize (proportional). It is PERMANENTLY mouse-transparent
+    -- all input goes through the main-window event filter on the video
+    widget (the only reliable mouse path over the native video surface
+    on Windows). The filter hit-tests against this widget's geometry.
     """
-    PAD = 18       # space around the label for the handles
-    HANDLE = 14    # handle square size
+    PAD = 26       # space around the label for handles + X button
+    HANDLE_R = 9   # handle circle radius
+    X_R = 11       # X button circle radius
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -146,40 +148,70 @@ class _CaptionEditVisual(QWidget):
     def handle_at(self, pos):
         """Hit-test a point (in this widget's coords).
 
-        Returns 'nw'/'ne'/'sw'/'se' for a corner handle, 'body' if
-        inside the selection rect, else None.
+        Returns 'x' (deselect button), a handle name
+        ('nw','n','ne','e','se','s','sw','w'), 'body' if inside the
+        selection rect, else None.
         """
-        pad = self.PAD
-        x0, y0 = pad, pad
-        x1, y1 = self.width() - pad, self.height() - pad
-        hs = self.HANDLE
-        corners = {
-            "nw": QPoint(x0, y0), "ne": QPoint(x1, y0),
-            "sw": QPoint(x0, y1), "se": QPoint(x1, y1),
-        }
-        for name, pt in corners.items():
-            if abs(pos.x() - pt.x()) <= hs and abs(pos.y() - pt.y()) <= hs:
+        xc = self._x_center()
+        if ((pos.x() - xc.x()) ** 2 + (pos.y() - xc.y()) ** 2) ** 0.5 <= self.X_R + 4:
+            return "x"
+        hr = self.HANDLE_R + 5
+        for name, pt in self._handle_points().items():
+            if ((pos.x() - pt.x()) ** 2 + (pos.y() - pt.y()) ** 2) ** 0.5 <= hr:
                 return name
-        if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+        if self._box_rect().contains(pos):
             return "body"
         return None
+
+    def _box_rect(self):
+        """The selection rectangle (in widget coords)."""
+        pad = self.PAD
+        return QRect(pad, pad,
+                     self.width() - pad * 2, self.height() - pad * 2)
+
+    def _handle_points(self):
+        """8 handle centers: corners + edge midpoints (widget coords)."""
+        r = self._box_rect()
+        x0, y0 = r.x(), r.y()
+        x1, y1 = x0 + r.width(), y0 + r.height()
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        return {
+            "nw": QPoint(x0, y0), "n": QPoint(cx, y0),
+            "ne": QPoint(x1, y0), "e": QPoint(x1, cy),
+            "se": QPoint(x1, y1), "s": QPoint(cx, y1),
+            "sw": QPoint(x0, y1), "w": QPoint(x0, cy),
+        }
+
+    def _x_center(self):
+        """Deselect X button center (widget coords)."""
+        r = self._box_rect()
+        return QPoint(r.x() - 4, r.y() - 18)
 
     def paintEvent(self, ev):  # noqa: D102
         from PySide6.QtGui import QPainter, QPen, QColor
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        pad = self.PAD
-        x0, y0 = pad, pad
-        x1, y1 = self.width() - pad, self.height() - pad
-        # selection rectangle (CapCut: white, thin)
+        r = self._box_rect()
+        # Thin white outline, like CapCut.
         p.setPen(QPen(QColor(255, 255, 255), 2, Qt.SolidLine))
-        p.drawRect(x0, y0, x1 - x0, y1 - y0)
-        # corner handles: white squares with dark border
-        hs = self.HANDLE
+        p.drawRect(r)
+        # 8 round white handles with dark border.
         p.setPen(QPen(QColor(30, 30, 30), 2))
         p.setBrush(QColor(255, 255, 255))
-        for cx, cy in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]:
-            p.drawRect(int(cx - hs / 2), int(cy - hs / 2), hs, hs)
+        hr = self.HANDLE_R
+        for pt in self._handle_points().values():
+            p.drawEllipse(pt, hr, hr)
+        # X deselect button: dark circle, white X, top-left.
+        xc = self._x_center()
+        xr = self.X_R
+        p.setPen(QPen(QColor(30, 30, 30), 2))
+        p.setBrush(QColor(40, 40, 40))
+        p.drawEllipse(xc, xr, xr)
+        p.setPen(QPen(QColor(255, 255, 255), 2.5, Qt.SolidLine,
+                          Qt.RoundCap))
+        o = int(xr * 0.45)
+        p.drawLine(xc.x() - o, xc.y() - o, xc.x() + o, xc.y() + o)
+        p.drawLine(xc.x() - o, xc.y() + o, xc.x() + o, xc.y() - o)
         p.end()
 
 
@@ -1602,13 +1634,23 @@ class MainWindow(QMainWindow):
             self._exit_caption_edit()
             return True
         part = vis.handle_at(lp - vg.topLeft())
+        if part == "x":
+            # X deselect button (CapCut).
+            self._exit_caption_edit()
+            return True
         if part is None:
             part = "body"
+        # Radial distance from box center drives proportional resize for
+        # all 8 handles (CapCut scales text proportionally).
+        center_global = vw.mapToGlobal(vg.center())
         self._edit_drag = {
             "part": part,
             "start_global": gp,
             "orig_geom": QRect(vg),
             "orig_scale": float(self._cap_pos.get("scale", 1.0)),
+            "center_global": center_global,
+            "orig_dist": max(1.0, ((gp.x() - center_global.x()) ** 2
+                                   + (gp.y() - center_global.y()) ** 2) ** 0.5),
         }
         vw.setCursor(Qt.ClosedHandCursor if part == "body"
                      else Qt.SizeFDiagCursor)
@@ -1636,15 +1678,12 @@ class MainWindow(QMainWindow):
             pos["dy"] = max(-0.45, min(0.45,
                                        (bottom - (vwh - 24)) / vwh))
         else:
-            # Corner resize -> scale the caption (CapCut: proportional).
-            # Horizontal drag distance drives the scale; 'w' corners invert.
-            dw = delta.x() if "e" in d["part"] else -delta.x()
-            dh = delta.y() if "s" in d["part"] else -delta.y()
-            dw = max(dw, dh)  # use the dominant axis, keep proportion
-            if og.width() > 0:
-                new_scale = d["orig_scale"] * (og.width() + dw) / og.width()
-            else:
-                new_scale = d["orig_scale"]
+            # Any handle -> proportional scale (CapCut). Radial distance
+            # from the box center: dragging outward grows, inward shrinks.
+            cg = d["center_global"]
+            dist = max(1.0, ((gp.x() - cg.x()) ** 2
+                             + (gp.y() - cg.y()) ** 2) ** 0.5)
+            new_scale = d["orig_scale"] * dist / d["orig_dist"]
             pos["scale"] = max(0.5, min(2.5, new_scale))
             self._layout_edit_visual(keep_center=True)
         return True
@@ -1758,6 +1797,14 @@ class MainWindow(QMainWindow):
         self._layout_edit_visual()
         if self.video_widget is not None:
             self.video_widget.setCursor(Qt.OpenHandCursor)
+        # App-level filter: during a drag, the video widget may not get
+        # an implicit mouse grab (the press was consumed by the filter),
+        # so moves/releases must be caught globally. (Uzair 2026-10-03
+        # video: box selects but does not drag.)
+        try:
+            QApplication.instance().installEventFilter(self)
+        except Exception:  # noqa: BLE001
+            pass
         self.video_hint.setText(
             "Caption select ho gaya: box ko drag karo (move) • kone se "
             "pakad kar chhota/bara karo • A−/A+ / ↑↓←→ bhi chalenge • "
@@ -1767,6 +1814,10 @@ class MainWindow(QMainWindow):
         """Hide the selection box."""
         self._cap_move_mode = False
         self._edit_drag = None
+        try:
+            QApplication.instance().removeEventFilter(self)
+        except Exception:  # noqa: BLE001
+            pass
         vis = getattr(self, "_edit_visual", None)
         if vis is not None:
             vis.hide()
@@ -2202,11 +2253,28 @@ class MainWindow(QMainWindow):
         # preview (Uzair: "hand wala masla hal nahi hota" -- yet the arrow
         # buttons, which bypass mouse delivery entirely, worked fine).
         # Accept events targeting the video widget OR any of its children.
+        #
+        # ROOT CAUSE FIX (2026-10-03 video): the selection box APPEARED on
+        # click (press reaches the filter) but would NOT DRAG. When the
+        # filter consumes the press, the video widget never gets Qt's
+        # implicit mouse grab, so move/release events are not reliably
+        # delivered to it. During an active box drag, moves/releases are
+        # therefore caught GLOBALLY via the app-level filter (installed in
+        # _enter_caption_edit, removed in _exit_caption_edit).
+        from PySide6.QtCore import QEvent
+        if getattr(self, "_edit_drag", None) is not None:
+            et = event.type()
+            if et == QEvent.MouseMove:
+                self._edit_box_move(event)
+                return True
+            if et == QEvent.MouseButtonRelease:
+                self._edit_box_release(event)
+                return True
+            # Let other events through during a drag.
         _vw = self.video_widget
         _is_vw = (_vw is not None and obj is not None
                   and (obj is _vw or _vw.isAncestorOf(obj)))
         if _is_vw:
-            from PySide6.QtCore import QEvent
             et = event.type()
             if self._cap_move_mode:
                 # CapCut-style direct manipulation: the selection box is a
