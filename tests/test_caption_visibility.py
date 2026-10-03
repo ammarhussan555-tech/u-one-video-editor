@@ -165,3 +165,60 @@ def test_overlay_shown_when_no_burned_video():
 
 def test_overlay_shown_when_paths_differ():
     assert not _suppressed("/v/final.mp4", "/v/other.mp4")
+
+
+def _visual_fn(name):
+    """Bind a _CaptionEditVisual method to a fake (no Qt)."""
+    tree = ast.parse(SRC_UI.read_text(encoding="utf-8"))
+    fns = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "_CaptionEditVisual":
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef):
+                    fns[item.name] = item
+    import types as _t
+    fn = fns[name]
+    mod = ast.Module(body=[fn], type_ignores=[])
+
+    class _QP:
+        def __init__(self, x, y):
+            self._x, self._y = x, y
+
+        def x(self): return self._x
+
+        def y(self): return self._y
+
+    ns = {"QPoint": _QP}
+    exec(compile(mod, "<test>", "exec"), ns)
+    return ns[name]
+
+
+class _VisFake:
+    PAD = 18
+    HANDLE = 14
+
+    def __init__(self, w, h):
+        self._w, self._h = w, h
+
+    def width(self): return self._w
+
+    def height(self): return self._h
+
+
+def test_handle_hit_corners():
+    fn = _visual_fn("handle_at")
+    v = _VisFake(200, 100)
+    import types as _t
+    # corners of the selection rect: (18,18), (182,18), (18,82), (182,82)
+    assert fn(v, _t.SimpleNamespace(x=lambda: 18, y=lambda: 18)) == "nw"
+    assert fn(v, _t.SimpleNamespace(x=lambda: 182, y=lambda: 18)) == "ne"
+    assert fn(v, _t.SimpleNamespace(x=lambda: 18, y=lambda: 82)) == "sw"
+    assert fn(v, _t.SimpleNamespace(x=lambda: 182, y=lambda: 82)) == "se"
+
+
+def test_handle_hit_body_and_outside():
+    fn = _visual_fn("handle_at")
+    v = _VisFake(200, 100)
+    import types as _t
+    assert fn(v, _t.SimpleNamespace(x=lambda: 100, y=lambda: 50)) == "body"
+    assert fn(v, _t.SimpleNamespace(x=lambda: 2, y=lambda: 2)) is None

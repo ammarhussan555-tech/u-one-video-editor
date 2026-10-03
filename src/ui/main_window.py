@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
     QTableWidget, QTableWidgetItem, QRadioButton, QButtonGroup, QGroupBox,
     QFormLayout, QLineEdit, QSpinBox, QScrollArea, QFrame, QSlider, QDialog)
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRect, QPoint
 from PySide6.QtGui import QPixmap
 # NOTE: QtMultimedia / QtMultimediaWidgets are imported lazily inside
 # _ensure_player() — importing them at startup can hang on some systems
@@ -98,6 +98,89 @@ class _DragCaptionLabel(QLabel):
             ev.accept()
         else:
             super().mouseDoubleClickEvent(ev)
+
+
+class _CaptionEditVisual(QWidget):
+    """CapCut-style selection box for the preview caption (pure visual).
+
+    Click the caption -> this box appears with corner handles, like
+    CapCut's text selection. Drag the body to move, drag a corner
+    handle to resize (scale). It is PERMANENTLY mouse-transparent --
+    all input goes through the main-window event filter on the video
+    widget (the only reliable mouse path over the native video
+    surface on Windows). The filter hit-tests against this widget's
+    geometry.
+    """
+    PAD = 18       # space around the label for the handles
+    HANDLE = 14    # handle square size
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._label = QLabel(self)
+        self._label.setAlignment(Qt.AlignCenter)
+        self._label.setWordWrap(True)
+        self._label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def set_caption(self, text, stylesheet, content_w):
+        """Set text/style and fit the box around it.
+
+        content_w: label width in px (wrapping width). Returns nothing;
+        the caller reads self.sizeHint()/geometry after.
+        """
+        lbl = self._label
+        lbl.setText(text)
+        lbl.setStyleSheet(stylesheet)
+        lbl.setFixedWidth(max(80, int(content_w)))
+        lbl.adjustSize()
+        lw, lh = lbl.width(), lbl.height()
+        pad = self.PAD
+        lbl.setGeometry(pad, pad, lw, lh)
+        self.resize(lw + pad * 2, lh + pad * 2)
+
+    def label(self):
+        return self._label
+
+    def handle_at(self, pos):
+        """Hit-test a point (in this widget's coords).
+
+        Returns 'nw'/'ne'/'sw'/'se' for a corner handle, 'body' if
+        inside the selection rect, else None.
+        """
+        pad = self.PAD
+        x0, y0 = pad, pad
+        x1, y1 = self.width() - pad, self.height() - pad
+        hs = self.HANDLE
+        corners = {
+            "nw": QPoint(x0, y0), "ne": QPoint(x1, y0),
+            "sw": QPoint(x0, y1), "se": QPoint(x1, y1),
+        }
+        for name, pt in corners.items():
+            if abs(pos.x() - pt.x()) <= hs and abs(pos.y() - pt.y()) <= hs:
+                return name
+        if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+            return "body"
+        return None
+
+    def paintEvent(self, ev):  # noqa: D102
+        from PySide6.QtGui import QPainter, QPen, QColor
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        pad = self.PAD
+        x0, y0 = pad, pad
+        x1, y1 = self.width() - pad, self.height() - pad
+        # selection rectangle (CapCut: white, thin)
+        p.setPen(QPen(QColor(255, 255, 255), 2, Qt.SolidLine))
+        p.drawRect(x0, y0, x1 - x0, y1 - y0)
+        # corner handles: white squares with dark border
+        hs = self.HANDLE
+        p.setPen(QPen(QColor(30, 30, 30), 2))
+        p.setBrush(QColor(255, 255, 255))
+        for cx, cy in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]:
+            p.drawRect(int(cx - hs / 2), int(cy - hs / 2), hs, hs)
+        p.end()
 
 
 class _FullscreenDialog(QDialog):
@@ -1070,6 +1153,12 @@ class MainWindow(QMainWindow):
         self._cap_pos = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
         self._cap_move_mode = False
         self._cap_drag_start = None
+        # CapCut-style direct manipulation (Uzair 2026-10-03): click the
+        # caption -> selection box with corner handles; drag body = move,
+        # drag corner = resize. _edit_visual is the pure-visual box;
+        # _edit_drag holds the in-progress gesture (or None).
+        self._edit_visual = None
+        self._edit_drag = None
         # Path of the video file that currently has captions burned in.
         # While previewing it, the karaoke overlay stays hidden (otherwise
         # it ghosts on top of the burned captions -- Uzair 2026-10-03).
@@ -1453,6 +1542,8 @@ class MainWindow(QMainWindow):
         bottom = max(4, 24 - dy_px)
         ov.setContentsMargins(left, 0, right, bottom)
         ov.setStyleSheet(self._caption_overlay_style())
+        # Keep the CapCut-style selection box in sync while it is shown.
+        self._refresh_edit_visual()
 
     def _bump_cap_scale(self, factor: float):
         """Resize captions by factor (A-/A+ buttons and the move-mode
@@ -1483,53 +1574,228 @@ class MainWindow(QMainWindow):
                   % (pos["dx"], pos["dy"]))
 
     def _toggle_cap_move_mode(self, on: bool):
-        """Enable/disable caption drag mode on the preview.
+        """Enable/disable CapCut-style caption direct manipulation.
 
-        ROOT CAUSE FIX (2026-10-02): ALL move-mode input (drag / wheel /
-        double-click) is handled by the main-window event filter installed
-        on the video widget itself. The caption overlay label stays
-        PERMANENTLY mouse-transparent (pure visual) in both modes.
-
-        Why the old code broke the small preview: on Windows the
-        QVideoWidget renders through a native video surface, so mouse
-        events over it do not reliably reach the Qt child overlay label
-        on the small embedded preview. The old code flipped the overlay
-        to mouse-opaque in move mode, which (a) made the event-filter
-        drag path unreachable -- Qt delivers the press to the topmost
-        mouse-opaque child, so the filter's ``obj is self.video_widget``
-        check never fired -- and (b) left the only remaining path (the
-        overlay's own handlers) depending on child-widget event delivery
-        that the native surface breaks. Net result: drag did nothing on
-        the small preview (it happened to work in full screen). Clicks on
-        the video widget itself demonstrably DO reach the event filter on
-        the small preview (click-to-edit-caption works there), so routing
-        move-mode input through that same path fixes the small preview
-        without changing full screen.
+        Click the caption (or the hand button) -> a selection box with
+        corner handles appears over the preview, like CapCut. Drag the
+        box to move, drag a corner handle to resize. All mouse input is
+        handled by the main-window event filter on the video widget --
+        the only reliable mouse path over the native video surface on
+        Windows -- while the box itself stays mouse-transparent (pure
+        visual). Position/size flow into the burn via
+        dx_frac/dy_frac/user_scale, so Apply picks them up.
         """
-        self._cap_move_mode = on
-        self._cap_drag_start = None
-        if self.video_widget is not None:
-            self.video_widget.setCursor(
-                Qt.OpenHandCursor if on else Qt.ArrowCursor)
-            if not on:
-                # Defensive: never leave a stuck mouse grab behind when
-                # move mode is switched off mid-drag.
-                self.video_widget.releaseMouse()
-        # NOTE: the overlay deliberately stays WA_TransparentForMouseEvents
-        # in both modes (set once in _ensure_caption_overlay). Do NOT flip
-        # it here -- that was the bug: it stole hit-testing from the video
-        # widget, starving the event-filter drag path on the small preview.
-        # Also: the filter does NOT call grabMouse() -- Qt's implicit
-        # press-grab suffices, and an explicit grab misbehaves on the
-        # QVideoWidget native surface.
         if on:
-            self.video_hint.setText(
-                "Move mode: caption drag karo (move) • A−/A+ ya wheel se "
-                "chhota/bara • ↑↓←→ buttons se position • double-click "
-                "(reset) • dobara dabao to band karo")
+            self._enter_caption_edit()
         else:
-            self.video_hint.setText(
-                "Tip: video par click karo — caption edit ho jayega")
+            self._exit_caption_edit()
+
+    def _edit_box_press(self, event):
+        """Begin a move/resize gesture on the selection box.
+
+        Returns True if the event was consumed.
+        """
+        vis = getattr(self, "_edit_visual", None)
+        vw = self.video_widget
+        if vis is None or vw is None or not vis.isVisible():
+            return False
+        gp = event.globalPosition().toPoint()
+        lp = vw.mapFromGlobal(gp)          # video-widget coords
+        vg = vis.geometry()
+        if not vg.contains(lp):
+            # Click outside the box -> deselect (CapCut behavior).
+            self._exit_caption_edit()
+            return True
+        part = vis.handle_at(lp - vg.topLeft())
+        if part is None:
+            part = "body"
+        self._edit_drag = {
+            "part": part,
+            "start_global": gp,
+            "orig_geom": QRect(vg),
+            "orig_scale": float(self._cap_pos.get("scale", 1.0)),
+        }
+        vw.setCursor(Qt.ClosedHandCursor if part == "body"
+                     else Qt.SizeFDiagCursor)
+        return True
+
+    def _edit_box_move(self, event):
+        """Continue the in-progress move/resize gesture."""
+        d = getattr(self, "_edit_drag", None)
+        vis = getattr(self, "_edit_visual", None)
+        vw = self.video_widget
+        if not d or vis is None or vw is None:
+            return False
+        gp = event.globalPosition().toPoint()
+        delta = gp - d["start_global"]
+        og = d["orig_geom"]
+        vww, vwh = max(1, vw.width()), max(1, vw.height())
+        pos = self._cap_pos
+        if d["part"] == "body":
+            nx = max(0, min(vww - og.width(), og.x() + delta.x()))
+            ny = max(0, min(vwh - og.height(), og.y() + delta.y()))
+            vis.setGeometry(nx, ny, og.width(), og.height())
+            cx = nx + og.width() / 2
+            pos["dx"] = max(-0.45, min(0.45, (cx - vww / 2) / vww))
+            bottom = ny + og.height()
+            pos["dy"] = max(-0.45, min(0.45,
+                                       (bottom - (vwh - 24)) / vwh))
+        else:
+            # Corner resize -> scale the caption (CapCut: proportional).
+            # Horizontal drag distance drives the scale; 'w' corners invert.
+            dw = delta.x() if "e" in d["part"] else -delta.x()
+            dh = delta.y() if "s" in d["part"] else -delta.y()
+            dw = max(dw, dh)  # use the dominant axis, keep proportion
+            if og.width() > 0:
+                new_scale = d["orig_scale"] * (og.width() + dw) / og.width()
+            else:
+                new_scale = d["orig_scale"]
+            pos["scale"] = max(0.5, min(2.5, new_scale))
+            self._layout_edit_visual(keep_center=True)
+        return True
+
+    def _edit_box_release(self, event):  # noqa: D102
+        d = getattr(self, "_edit_drag", None)
+        self._edit_drag = None
+        vw = self.video_widget
+        if vw is not None:
+            vw.setCursor(Qt.OpenHandCursor)
+        if d is not None:
+            pos = self._cap_pos
+            self._log("Caption: dx=%+.2f dy=%+.2f size=%.0f%%"
+                      % (pos["dx"], pos["dy"], pos["scale"] * 100))
+        return True
+
+    def _caption_hit_test(self, vw_pos):
+        """Is vw_pos (video-widget coords) on the caption?
+
+        Used for click-to-select when edit mode is off: computes where
+        the caption box would be and hit-tests it.
+        """
+        vw = self.video_widget
+        if vw is None:
+            return False
+        if not (getattr(self, "_cap_sentences", None) or []):
+            return False
+        self._ensure_edit_visual()
+        vis = self._edit_visual
+        was_visible = vis.isVisible()
+        # Lay out (hidden if it was) to measure the real box.
+        self._layout_edit_visual()
+        if not was_visible:
+            vis.hide()
+        return vis.geometry().contains(vw_pos)
+
+    # -- CapCut-style caption direct manipulation (Uzair 2026-10-03) --
+    def _ensure_edit_visual(self):
+        """Create the selection-box visual on the video widget."""
+        if getattr(self, "_edit_visual", None) is not None:
+            return
+        if self.video_widget is None:
+            return
+        self._edit_visual = _CaptionEditVisual(self.video_widget)
+        self._edit_visual.hide()
+
+    def _caption_edit_text(self):
+        """Text to show in the edit box: caption at playhead, else first."""
+        sents = getattr(self, "_cap_sentences", None) or []
+        if not sents:
+            return "CAPTION TEXT"
+        try:
+            pos = self.player.position() / 1000.0
+        except Exception:  # noqa: BLE001
+            pos = 0.0
+        for s in sents:
+            try:
+                if s["start"] <= pos <= s["end"]:
+                    return s["text"]
+            except (KeyError, TypeError):
+                continue
+        try:
+            return sents[0]["text"]
+        except (KeyError, IndexError, TypeError):
+            return "CAPTION TEXT"
+
+    def _layout_edit_visual(self, keep_center=False):
+        """Size + position the edit box from _cap_pos.
+
+        Mirrors the overlay/burn placement math so the box sits where
+        the caption actually renders: centered + dx, bottom-anchored
+        (24px base margin) with dy>0 moving up. Burn picks the same
+        values up via dx_frac/dy_frac/user_scale.
+        """
+        vis = getattr(self, "_edit_visual", None)
+        vw = self.video_widget
+        if vis is None or vw is None:
+            return
+        vww, vwh = max(1, vw.width()), max(1, vw.height())
+        old_center = None
+        if keep_center and vis.isVisible():
+            g = vis.geometry()
+            old_center = g.center()
+        scale = float(self._cap_pos.get("scale", 1.0))
+        content_w = int(vww * 0.80 * min(scale, 1.6))
+        content_w = max(120, min(int(vww * 0.95), content_w))
+        vis.set_caption(self._caption_edit_text(),
+                        self._caption_overlay_style(), content_w)
+        bw, bh = vis.width(), vis.height()
+        dx = float(self._cap_pos.get("dx", 0.0))
+        dy = float(self._cap_pos.get("dy", 0.0))
+        if old_center is not None:
+            x = old_center.x() - bw / 2
+            y = old_center.y() - bh / 2
+        else:
+            x = vww / 2 + dx * vww - bw / 2
+            y = vwh - 24 + dy * vwh - bh
+        x = max(0, min(vww - bw, x))
+        y = max(0, min(vwh - bh, y))
+        vis.setGeometry(int(x), int(y), bw, bh)
+        vis.show()
+        vis.raise_()
+
+    def _enter_caption_edit(self):
+        """Show the CapCut-style selection box (click caption / hand)."""
+        if not self._ensure_player():
+            return
+        self._ensure_edit_visual()
+        self._cap_move_mode = True
+        self._edit_drag = None
+        self._layout_edit_visual()
+        if self.video_widget is not None:
+            self.video_widget.setCursor(Qt.OpenHandCursor)
+        try:
+            self.move_cap_btn.setChecked(True)
+        except Exception:  # noqa: BLE001
+            pass
+        self.video_hint.setText(
+            "Caption select ho gaya: box ko drag karo (move) • kone se "
+            "pakad kar chhota/bara karo • A−/A+ / ↑↓←→ bhi chalenge • "
+            "bahar click ya ✋ se band karo")
+
+    def _exit_caption_edit(self):
+        """Hide the selection box."""
+        self._cap_move_mode = False
+        self._edit_drag = None
+        vis = getattr(self, "_edit_visual", None)
+        if vis is not None:
+            vis.hide()
+        if self.video_widget is not None:
+            self.video_widget.setCursor(Qt.ArrowCursor)
+            try:
+                self.video_widget.releaseMouse()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self.move_cap_btn.setChecked(False)
+        except Exception:  # noqa: BLE001
+            pass
+        self.video_hint.setText(
+            "Tip: caption par click karo — select karke move/resize karo")
+
+    def _refresh_edit_visual(self):
+        """Re-layout the box after A-/A+/arrows/template changes."""
+        if getattr(self, "_cap_move_mode", False):
+            self._layout_edit_visual(keep_center=True)
 
     # -- full-screen preview (CapCut style) --
     def _toggle_fullscreen(self):
@@ -1956,36 +2222,30 @@ class MainWindow(QMainWindow):
             from PySide6.QtCore import QEvent
             et = event.type()
             if self._cap_move_mode:
+                # CapCut-style direct manipulation: the selection box is a
+                # pure-visual (mouse-transparent) child; every gesture is
+                # handled HERE in the filter -- the only mouse path that
+                # works reliably over the native video surface on Windows.
                 if (et == QEvent.MouseButtonPress
                         and event.button() == Qt.LeftButton):
-                    self._cap_drag_start = event.globalPosition().toPoint()
-                    self.video_widget.setCursor(Qt.ClosedHandCursor)
-                    # NOTE: no explicit grabMouse() here. Qt gives the
-                    # pressed widget an implicit mouse grab until release,
-                    # which is enough for the drag. An explicit grab on a
-                    # QVideoWidget's native surface misbehaves on Windows
-                    # (Uzair 2026-10-03: drag dead on the small preview).
+                    if self._edit_box_press(event):
+                        return True
+                    # NOTE: no explicit grabMouse() -- Qt's implicit
+                    # press-grab suffices; an explicit grab misbehaves on
+                    # the QVideoWidget native surface (Uzair 2026-10-03).
                     return True
-                if (et == QEvent.MouseMove
-                        and self._cap_drag_start is not None):
-                    w = max(1, self.video_widget.width())
-                    h = max(1, self.video_widget.height())
-                    gp = event.globalPosition().toPoint()
-                    dx = (gp.x() - self._cap_drag_start.x()) / w
-                    dy = (gp.y() - self._cap_drag_start.y()) / h
-                    self._cap_drag_start = gp
-                    pos = self._cap_pos
-                    pos["dx"] = max(-0.45, min(0.45, pos["dx"] + dx))
-                    pos["dy"] = max(-0.45, min(0.45, pos["dy"] + dy))
-                    self._apply_cap_pos_to_overlay()
+                if et == QEvent.MouseMove:
+                    if self._edit_box_move(event):
+                        return True
                     return True
                 if et == QEvent.MouseButtonRelease:
-                    self._cap_drag_start = None
-                    self.video_widget.setCursor(Qt.OpenHandCursor)
+                    if getattr(self, "_edit_drag", None) is not None:
+                        return self._edit_box_release(event)
                     return True
                 if et == QEvent.MouseButtonDblClick:
                     self._cap_pos.update(dx=0.0, dy=0.0, scale=1.0)
                     self._apply_cap_pos_to_overlay()
+                    self._refresh_edit_visual()
                     self._log("Caption position reset.")
                     return True
                 if et == QEvent.Wheel:
@@ -1994,9 +2254,17 @@ class MainWindow(QMainWindow):
                     return True
             else:
                 if et == QEvent.MouseButtonPress:
-                    # Click on the video -> pause and open the caption
-                    # editor for the caption visible at that moment.
-                    self._on_video_clicked()
+                    # CapCut: click the caption -> select it (selection box
+                    # with handles). Click elsewhere -> caption text editor.
+                    try:
+                        _lp = self.video_widget.mapFromGlobal(
+                            event.globalPosition().toPoint())
+                    except Exception:  # noqa: BLE001
+                        _lp = None
+                    if _lp is not None and self._caption_hit_test(_lp):
+                        self._enter_caption_edit()
+                    else:
+                        self._on_video_clicked()
                     return True
             if et == QEvent.KeyPress:
                 if event.key() == Qt.Key_Escape and self._fs_active:
@@ -2006,6 +2274,8 @@ class MainWindow(QMainWindow):
                 ov = getattr(self, "caption_overlay", None)
                 if ov is not None:
                     ov.setGeometry(self.video_widget.rect())
+                # Keep the selection box glued to the caption on resize.
+                self._refresh_edit_visual()
         return super().eventFilter(obj, event)
 
     def _on_video_clicked(self):
@@ -3499,6 +3769,11 @@ class MainWindow(QMainWindow):
         self._cap_sentences = []
         self._cap_words = []
         self._set_caption_edit_enabled(False)
+        # Dismiss the CapCut-style selection box if it was open.
+        try:
+            self._exit_caption_edit()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _save_project(self):
         p, _ = QFileDialog.getSaveFileName(self, "Save project", "",
