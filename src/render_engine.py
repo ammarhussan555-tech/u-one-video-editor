@@ -543,7 +543,12 @@ class RenderEngine:
                 t += d
         order = {sc.id: i for i, (sc, _, _) in enumerate(timed)}
         timed.sort(key=lambda x: order[x[0].id])
-        self.scene_timings = [{"scene_id": sc.id, "start": a, "end": b}
+        # Visual lead (Uzair 2026-10-03 rule 7): each visual appears
+        # 0.3s BEFORE its matching words are spoken.
+        _LEAD = 0.3
+        self.scene_timings = [{"scene_id": sc.id,
+                               "start": max(0.0, round(a - _LEAD, 3)),
+                               "end": b}
                               for sc, a, b in timed]
 
     def _restore_scene_results(self, state: dict, w: int, h: int):
