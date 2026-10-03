@@ -56,6 +56,7 @@ def _overlay_style(template_key):
     overlay_fn = _bind("_caption_overlay_style")
     tmpl_fn = _bind("_active_tmpl_dict")
     css_fn = _bind("_ass_to_css")
+    size_fn = _bind("_current_caption_size")
 
     class Fake:  # noqa: D106
         pass
@@ -65,6 +66,7 @@ def _overlay_style(template_key):
     s._caption_template_key = template_key
     s._active_tmpl_dict = tmpl_fn.__get__(s)
     s._ass_to_css = staticmethod(css_fn).__get__(s)
+    s._current_caption_size = size_fn.__get__(s)
     return overlay_fn(s)
 
 

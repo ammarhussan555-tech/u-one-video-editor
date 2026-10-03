@@ -84,6 +84,20 @@ def main():
     app.setOrganizationName("U One")
     app.setApplicationVersion(__version__)
     app.setApplicationDisplayName("U One — AI Automatic Video Editor")
+    # Bundled OFL caption fonts (Anton, Bebas Neue, ...): register with Qt
+    # so the preview overlay renders the SAME font the burn uses (ffmpeg
+    # gets them via fontsdir in the subtitles filter). Without this the
+    # preview fell back to a system font while the burn used Anton --
+    # "font sahi nahi lagta" (Uzair 2026-10-03).
+    try:
+        from PySide6.QtGui import QFontDatabase
+        from src.app_paths import fonts_dir as _fonts_dir
+        _fd = _fonts_dir()
+        if _fd:
+            for _ttf in sorted(_fd.glob("*.ttf")):
+                QFontDatabase.addApplicationFont(str(_ttf))
+    except Exception:  # noqa: BLE001
+        pass
     win = MainWindow()
     win.show()
     if not check_ffmpeg():

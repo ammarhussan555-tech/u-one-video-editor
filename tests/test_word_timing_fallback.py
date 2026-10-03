@@ -75,4 +75,7 @@ def test_no_words_still_simple():
 def test_render_engine_wires_fallback():
     src = (ROOT / "src" / "render_engine.py").read_text(encoding="utf-8")
     assert "estimate_word_timings" in src
-    assert "_est_wt(self.sentence_timings)" in src
+    # speech-aware fallback: the voice path is passed so words distribute
+    # over speech-active time (Uzair 2026-10-03 sync fix)
+    assert "_est_wt(self.sentence_timings," in src
+    assert "self.voice_path" in src

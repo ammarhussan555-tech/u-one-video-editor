@@ -469,10 +469,11 @@ class RenderEngine:
             # estimates so every caption preset still animates instead
             # of degrading to simple static captions.
             from .voiceover import estimate_word_timings as _est_wt
-            self.word_timings = _est_wt(self.sentence_timings)
+            self.word_timings = _est_wt(self.sentence_timings,
+                                       self.voice_path)
             if self.word_timings:
                 self._msg(f"Word timings estimated ({len(self.word_timings)} "
-                          f"words) -- highlight approximately synced.")
+                          f"words) -- speech-aligned highlight.")
         self._msg(f"Voice duration: {self.sentence_timings[-1]['end']:.1f}s")
 
     def _search_fn(self):

@@ -1083,6 +1083,23 @@ class MainWindow(QMainWindow):
         cap_row.addWidget(self.caption_style_lbl, 1)
         cap_row.addWidget(cap_gallery_btn)
         form.addRow("Caption style:", cap_row)
+        # Caption size for the MAIN render (Uzair 2026-10-03: "size set nahi
+        # hota" -- the render hardcoded 48; only the post-render edit had a
+        # slider). Drives the preview overlay too, so WYSIWYG holds.
+        csize_row = QHBoxLayout()
+        self.cap_size_slider = QSlider(Qt.Horizontal)
+        self.cap_size_slider.setRange(24, 96)
+        self.cap_size_slider.setValue(48)
+        self.cap_size_lbl = QLabel("48")
+        self.cap_size_slider.valueChanged.connect(
+            lambda v: self.cap_size_lbl.setText(str(v)))
+        self.cap_size_slider.valueChanged.connect(
+            lambda _v: self._refresh_caption_style())
+        self.cap_size_slider.setToolTip(
+            "Caption size (render + preview dono mein lagoo hoga)")
+        csize_row.addWidget(self.cap_size_slider, 1)
+        csize_row.addWidget(self.cap_size_lbl)
+        form.addRow("Caption size:", csize_row)
         mrow = QHBoxLayout()
         self.music_lbl = QLabel("(optional)")
         mb = QPushButton("Music folder...")
@@ -1254,6 +1271,20 @@ class MainWindow(QMainWindow):
         self.cap_bigger_btn.clicked.connect(
             lambda: self._bump_cap_scale(1.1))
         ctl.addWidget(self.cap_bigger_btn)
+        # Arrow nudge: caption ko button se upar/neechay/dayen/bayen karo.
+        # (Uzair 2026-10-03: hand-drag chhoti preview par na chale to yeh
+        # guaranteed path hai -- mouse events par inhisar nahi karta.)
+        for _arrow, _dx, _dy, _tip in (
+                ("↑", 0.0, -0.03, "Caption upar"),
+                ("↓", 0.0, 0.03, "Caption neechay"),
+                ("←", -0.03, 0.0, "Caption bayen"),
+                ("→", 0.03, 0.0, "Caption dayen")):
+            _b = QPushButton(_arrow)
+            _b.setMaximumWidth(36)
+            _b.setToolTip(_tip + " (preview + burn dono mein)")
+            _b.clicked.connect(
+                lambda _c=False, _x=_dx, _y=_dy: self._nudge_cap_pos(_x, _y))
+            ctl.addWidget(_b)
         self.fs_btn = QPushButton("⛶")
         self.fs_btn.setMaximumWidth(48)
         self.fs_btn.setToolTip("Full screen preview (Esc se wapas)")
@@ -1328,6 +1359,23 @@ class MainWindow(QMainWindow):
             return f"#{h[6:8]}{h[4:6]}{h[2:4]}"
         return "#FFFFFF"
 
+    def _current_caption_size(self) -> int:
+        """Caption size driving the preview overlay (WYSIWYG).
+
+        Post-render (edit session active): the edit panel's slider, which
+        feeds the re-burn. Otherwise: the main render's caption size
+        slider, which feeds caption_font_size of the next render.
+        """
+        try:
+            if self.edit_size_slider.isEnabled():
+                return int(self.edit_size_slider.value())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            return int(self.cap_size_slider.value())
+        except Exception:  # noqa: BLE001
+            return 48
+
     def _caption_overlay_style(self) -> str:
         """Build QLabel QSS from the selected template + size (instant).
 
@@ -1336,7 +1384,7 @@ class MainWindow(QMainWindow):
         (bold == -1, box/back_c) are still honored for legacy templates.
         """
         tmpl = self._active_tmpl_dict()
-        size = self.edit_size_slider.value()
+        size = self._current_caption_size()
         primary = self._ass_to_css(tmpl.get("primary", "&H00FFFFFF"))
         bg = ""
         _bgkind = tmpl.get("background", "none")
@@ -1414,6 +1462,22 @@ class MainWindow(QMainWindow):
         self._apply_cap_pos_to_overlay()
         self._log("Caption size: %.0f%%" % (pos["scale"] * 100))
 
+    def _nudge_cap_pos(self, dx: float, dy: float):
+        """Move the caption by (dx, dy) fractions of the preview size.
+
+        Button path for caption positioning: works even when drag events
+        don't reach the video widget (Windows native surface). Position
+        survives into the burn via dx_frac/dy_frac.
+        """
+        pos = getattr(self, "_cap_pos", None)
+        if pos is None:
+            return
+        pos["dx"] = max(-0.45, min(0.45, pos.get("dx", 0.0) + dx))
+        pos["dy"] = max(-0.45, min(0.45, pos.get("dy", 0.0) + dy))
+        self._apply_cap_pos_to_overlay()
+        self._log("Caption position: dx=%+.2f dy=%+.2f"
+                  % (pos["dx"], pos["dy"]))
+
     def _toggle_cap_move_mode(self, on: bool):
         """Enable/disable caption drag mode on the preview.
 
@@ -1451,10 +1515,14 @@ class MainWindow(QMainWindow):
         # in both modes (set once in _ensure_caption_overlay). Do NOT flip
         # it here -- that was the bug: it stole hit-testing from the video
         # widget, starving the event-filter drag path on the small preview.
+        # Also: the filter does NOT call grabMouse() -- Qt's implicit
+        # press-grab suffices, and an explicit grab misbehaves on the
+        # QVideoWidget native surface.
         if on:
             self.video_hint.setText(
                 "Move mode: caption drag karo (move) • A−/A+ ya wheel se "
-                "chhota/bara • double-click (reset) • dobara dabao to band karo")
+                "chhota/bara • ↑↓←→ buttons se position • double-click "
+                "(reset) • dobara dabao to band karo")
         else:
             self.video_hint.setText(
                 "Tip: video par click karo — caption edit ho jayega")
@@ -1864,11 +1932,11 @@ class MainWindow(QMainWindow):
                         and event.button() == Qt.LeftButton):
                     self._cap_drag_start = event.globalPosition().toPoint()
                     self.video_widget.setCursor(Qt.ClosedHandCursor)
-                    # Explicit grab: this filter consumes the press, so take
-                    # the mouse grab explicitly to guarantee the matching
-                    # move/release events keep arriving for the whole drag
-                    # (even if the cursor leaves the widget mid-drag).
-                    self.video_widget.grabMouse()
+                    # NOTE: no explicit grabMouse() here. Qt gives the
+                    # pressed widget an implicit mouse grab until release,
+                    # which is enough for the drag. An explicit grab on a
+                    # QVideoWidget's native surface misbehaves on Windows
+                    # (Uzair 2026-10-03: drag dead on the small preview).
                     return True
                 if (et == QEvent.MouseMove
                         and self._cap_drag_start is not None):
@@ -1885,7 +1953,6 @@ class MainWindow(QMainWindow):
                     return True
                 if et == QEvent.MouseButtonRelease:
                     self._cap_drag_start = None
-                    self.video_widget.releaseMouse()
                     self.video_widget.setCursor(Qt.OpenHandCursor)
                     return True
                 if et == QEvent.MouseButtonDblClick:
@@ -2434,7 +2501,8 @@ class MainWindow(QMainWindow):
             "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
             "headline_style": self.cb_headline_style.currentData(),
             "captions_enabled": self.chk_captions.isChecked(),
-            "caption_highlight": True, "caption_font_size": 48,
+            "caption_highlight": True,
+            "caption_font_size": int(self.cap_size_slider.value()),
             "caption_template": self._caption_template_for_render(),
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
