@@ -1599,7 +1599,11 @@ class MainWindow(QMainWindow):
         gp = event.globalPosition().toPoint()
         lp = vw.mapFromGlobal(gp)          # video-widget coords
         vg = vis.geometry()
-        if not vg.contains(lp):
+        # Forgiving deselect: only exit if the click is clearly outside
+        # the box (20px margin) -- a near-miss should not kill the box.
+        # (Uzair 2026-10-03: "click hi nahi ho raha".)
+        _vg_out = QRect(vg).adjusted(-20, -20, 20, 20)
+        if not _vg_out.contains(lp):
             # Click outside the box -> deselect (CapCut behavior).
             self._exit_caption_edit()
             return True
@@ -1761,6 +1765,14 @@ class MainWindow(QMainWindow):
         """Show the CapCut-style selection box (click caption / hand)."""
         if not self._ensure_player():
             return
+        # Pause the video: while it plays the karaoke caption keeps
+        # changing position, so the box can never be grabbed reliably.
+        # (Uzair 2026-10-03: "click hi nahi ho raha".)
+        try:
+            if self.player is not None:
+                self.player.pause()
+        except Exception:  # noqa: BLE001
+            pass
         self._ensure_edit_visual()
         self._cap_move_mode = True
         self._edit_drag = None
@@ -2204,6 +2216,14 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             pass
     def eventFilter(self, obj, event):
+        # Safety: NEVER let a filter exception crash/close the app.
+        # (Uzair 2026-10-03: click par tool band ho raha tha.)
+        try:
+            return self._eventFilter_inner(obj, event)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _eventFilter_inner(self, obj, event):
         # Pointer interaction on the video widget.
         #
         # ROOT CAUSE FIX (2026-10-01): caption dragging used to live on the
