@@ -182,6 +182,32 @@ class ExportEngine:
             self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
                             inputs=[video_noaudio, mixed_audio], output=dest)
 
+        def attempt_clean_fast(dest: str) -> None:
+            """SPEED (Uzair 2026-10-03): when the concat already matches
+            the target spec (the normal case -- segments are normalized),
+            the clean pass needs NO video re-encode: stream-copy the
+            video and just mux the mixed audio. ~50-100x faster than
+            the full re-encode above."""
+            args = ["-i", video_noaudio, "-i", mixed_audio,
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart", "-shortest", dest]
+            self.engine.run(args, stage="final_render_clean_fast",
+                            timeout=1200,
+                            inputs=[video_noaudio, mixed_audio], output=dest)
+
+        def _concat_compliant() -> bool:
+            """True if the concat video already matches the render spec."""
+            try:
+                from . import media_probe
+                info = media_probe.probe(video_noaudio)
+                v = info.video
+                return bool(v is not None and v.width == w
+                            and v.height == h
+                            and abs((v.fps or 0) - fps) < 0.5)
+            except Exception:  # noqa: BLE001 - fall back to re-encode
+                return False
+
         def attempt_burn(vf_chain: str, tag: str, src: str,
                          dest: str) -> None:
             # Caption burn-in from the clean video: re-encode video only,
@@ -224,9 +250,17 @@ class ExportEngine:
         # ---- Pass 1: clean render (video + audio, NO burned captions). ----
         # The clean copy is kept so captions can be re-styled after the
         # render without re-rendering the whole video.
+        # SPEED (Uzair 2026-10-03): try the stream-copy fast path first;
+        # only fall back to the full re-encode if the concat is off-spec.
         self._msg("Final render pass 1/2: clean video (no captions)...")
         self._progress("pass 1/2: clean video")
-        ok = try_call(attempt_clean, "clean", use_hw, hw_enc, clean_path)
+        ok = False
+        if _concat_compliant():
+            self._msg("Concat already at target spec: stream-copy clean "
+                      "video (no re-encode).")
+            ok = try_call(attempt_clean_fast, clean_path)
+        if not ok:
+            ok = try_call(attempt_clean, "clean", use_hw, hw_enc, clean_path)
         if not ok and use_hw:
             self._msg(f"Hardware encoder {hw_enc} failed; "
                       f"falling back to CPU.")

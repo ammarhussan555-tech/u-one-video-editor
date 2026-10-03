@@ -87,12 +87,41 @@ class SceneGenerator:
         w, h, fps = self.w, self.h, self.fps
         kind = getattr(asset, "kind", "image")
         src = getattr(asset, "local_path", "")
+        # -- SPEED: stream-copy fast path for already-compliant video. --
+        # Re-encoding every scene with libx264 is the slowest CPU stage;
+        # if the source already matches the target spec, a stream-copy
+        # trim is ~100x faster and lossless. (Uzair 2026-10-03: 2-min
+        # video must render in 2-3 min on a slow GPU.)
+        if kind == "video" and src and os.path.isfile(src):
+            try:
+                from . import media_probe
+                info = media_probe.probe(src)
+                v = info.video
+                if (v is not None and v.width == w and v.height == h
+                        and abs((v.fps or 0) - fps) < 0.5
+                        and (v.codec or "").lower() in ("h264", "avc")):
+                    engine.run(
+                        ["-ss", "0", "-i", src, "-t", f"{duration:.2f}",
+                         "-c", "copy", "-an", out_path],
+                        stage="scene_segment_fastcopy", scene=scene,
+                        inputs=[src], output=out_path, timeout=120)
+                    return out_path
+            except Exception:  # noqa: BLE001 - fall through to re-encode
+                pass
         if kind == "video":
             vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
                   f"crop={w}:{h},setsar=1,fps={fps}")
+            # SPEED: prefer the hardware encoder (3-5x faster than
+            # libx264); fall back to CPU veryfast. (Uzair 2026-10-03.)
+            hw = self._hw_encoder(engine)
+            if hw:
+                v_args = ["-c:v", hw, "-b:v", "10M"]
+            else:
+                v_args = ["-c:v", "libx264", "-preset", "veryfast",
+                          "-crf", "20"]
             args = ["-t", f"{duration:.2f}", "-i", src,
-                    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
-                    "-crf", "20", "-pix_fmt", "yuv420p", "-an", out_path]
+                    "-vf", vf, *v_args,
+                    "-pix_fmt", "yuv420p", "-an", out_path]
         else:
             zin = (seed % 2 == 0)
             if zin:
@@ -101,13 +130,31 @@ class SceneGenerator:
             else:
                 zp = (f"zoompan=z='max(1.35-0.0012*on,1.0)':d=1:"
                       f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={w}x{h}")
-            vf = f"scale={w * 2}:{h * 2},{zp},fps={fps}"
+            # SPEED: ultrafast + 1x scale (was veryfast + 2x). The 2x
+            # supersample is invisible after the final 1080p encode but
+            # doubles the zoompan cost. (Uzair 2026-10-03 speed demand.)
+            vf = f"scale={w}:{h},{zp},fps={fps}"
+            hw = self._hw_encoder(engine)
+            if hw:
+                v_args = ["-c:v", hw, "-b:v", "10M"]
+            else:
+                v_args = ["-c:v", "libx264", "-preset", "ultrafast",
+                          "-crf", "20"]
             args = ["-loop", "1", "-t", f"{duration:.2f}", "-i", src,
-                    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
-                    "-crf", "20", "-pix_fmt", "yuv420p", "-an", out_path]
+                    "-vf", vf, *v_args,
+                    "-pix_fmt", "yuv420p", "-an", out_path]
         engine.run(args, stage="scene_segment", scene=scene, inputs=[src],
                    output=out_path, timeout=600)
         return out_path
+
+    def _hw_encoder(self, engine: FFmpegEngine) -> Optional[str]:
+        """Hardware h264 encoder name, or None (cached per instance)."""
+        if not hasattr(self, "_hw_enc_cache"):
+            try:
+                self._hw_enc_cache = engine.detect_hw_encoder("h264")
+            except Exception:  # noqa: BLE001
+                self._hw_enc_cache = None
+        return self._hw_enc_cache
 
     # -- guaranteed-valid bright fallback card --
     def fallback_card(self, engine: FFmpegEngine) -> str:
