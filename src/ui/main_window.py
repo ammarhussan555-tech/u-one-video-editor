@@ -1070,6 +1070,10 @@ class MainWindow(QMainWindow):
         self._cap_pos = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
         self._cap_move_mode = False
         self._cap_drag_start = None
+        # Path of the video file that currently has captions burned in.
+        # While previewing it, the karaoke overlay stays hidden (otherwise
+        # it ghosts on top of the burned captions -- Uzair 2026-10-03).
+        self._burned_caps_video = ""
         self._fs_active = False
         self._fs_dialog = None
         cap_row = QHBoxLayout()
@@ -1643,6 +1647,19 @@ class MainWindow(QMainWindow):
         ov = getattr(self, "caption_overlay", None)
         if ov is None:
             return
+        # Never double-render: if the video being previewed already has
+        # captions burned in, the live karaoke overlay would ghost on top
+        # of them (Uzair 2026-10-03 video: "pehli line ka pehla word" --
+        # the overlay's highlighted word visible behind/offset from the
+        # burned caption). The overlay is a pre-render style/position
+        # preview; once burned in, the video speaks for itself.
+        _burned = getattr(self, "_burned_caps_video", "") or ""
+        _cur = getattr(self, "_current_video", "") or ""
+        if _burned and _cur and os.path.abspath(_cur) == os.path.abspath(
+                _burned):
+            if ov.text():
+                ov.setText("")
+            return
         timings = getattr(self, "_cap_sentences", None) or []
         if not timings:
             ov.setText("")
@@ -1924,7 +1941,18 @@ class MainWindow(QMainWindow):
         # wheel / double-click handling now lives HERE on the video widget
         # itself, so it behaves identically in both modes. The overlay label
         # stays permanently mouse-transparent (pure visual).
-        if obj is self.video_widget:
+        #
+        # ROOT CAUSE FIX (2026-10-03): `obj is self.video_widget` was too
+        # strict. On Windows the QVideoWidget's native video surface can
+        # deliver mouse events to an internal child window instead of the
+        # QVideoWidget itself, so the drag path never fired on the small
+        # preview (Uzair: "hand wala masla hal nahi hota" -- yet the arrow
+        # buttons, which bypass mouse delivery entirely, worked fine).
+        # Accept events targeting the video widget OR any of its children.
+        _vw = self.video_widget
+        _is_vw = (_vw is not None and obj is not None
+                  and (obj is _vw or _vw.isAncestorOf(obj)))
+        if _is_vw:
             from PySide6.QtCore import QEvent
             et = event.type()
             if self._cap_move_mode:
@@ -2656,6 +2684,15 @@ class MainWindow(QMainWindow):
         self.stage_lbl.setText("Done.")
         self._log(f"Saved: {out}")
         self._current_video = out  # timeline edits build on this file
+        # If this render burned captions in, the karaoke overlay must stay
+        # hidden while previewing it (no double-render ghosting).
+        try:
+            if self.chk_captions.isChecked():
+                self._burned_caps_video = out
+            else:
+                self._burned_caps_video = ""
+        except Exception:  # noqa: BLE001
+            pass
         # Enable post-render caption editing if a session was saved.
         session = getattr(self.pipeline, "edit_session_path", "") or ""
         self._use_edit_session(session)
@@ -2772,6 +2809,10 @@ class MainWindow(QMainWindow):
             pass
         QMessageBox.information(self, "Generate Captions",
                                 "Captions generate ho gaye!")
+        # Generated captions are burned in: hide the karaoke overlay while
+        # previewing (no ghosting on burned captions).
+        if out:
+            self._burned_caps_video = out
         if os.path.isfile(out):
             self._preview_play_file(out)
 
@@ -2786,6 +2827,9 @@ class MainWindow(QMainWindow):
         self.edit_apply_btn.setEnabled(True)
         self.stage_lbl.setText("Done.")
         self._log(f"Captions updated: {out}")
+        # The reburned video has captions baked in: hide the karaoke
+        # overlay while previewing it (no ghosting on burned captions).
+        self._burned_caps_video = out
         QMessageBox.information(self, "Edit Captions",
                                 "Caption style updated!")
         # Refresh the preview player with the updated video.
@@ -3081,6 +3125,8 @@ class MainWindow(QMainWindow):
         os.close(fd)
         shutil.copy2(clean, out)
         self._current_video = out
+        # Captions removed: the karaoke overlay may show again.
+        self._burned_caps_video = ""
         # Drop the captions clip from the timeline.
         tl = getattr(self.project, "timeline", None)
         if tl is not None:
@@ -3449,6 +3495,7 @@ class MainWindow(QMainWindow):
         # the 'Render a video first' dead-end.
         self._edit_session = ""
         self._current_video = ""
+        self._burned_caps_video = ""
         self._cap_sentences = []
         self._cap_words = []
         self._set_caption_edit_enabled(False)

@@ -109,3 +109,59 @@ def test_text_editor_never_uses_dict_as_key():
         "dict used directly as dict key again"
     # And the chosen-key plumbing must normalize dicts before use.
     assert 'isinstance(_tkey, dict)' in src
+
+
+
+def _update_fn():
+    return _bind("_update_caption_text")
+
+
+class _Ov:
+    """Overlay stub: records setText; raises if karaoke path is reached."""
+
+    def __init__(self):
+        self.calls = []
+
+    def text(self):
+        return "OLD"
+
+    def setText(self, t):
+        self.calls.append(t)
+        if t != "":
+            raise AssertionError("should not reach karaoke rendering")
+
+
+def _suppressed(burned, current):
+    """True iff _update_caption_text suppresses the overlay (returns
+    early after clearing), without needing the karaoke fakes."""
+    import os as _os
+    fn = _update_fn()
+    fn.__globals__["os"] = _os
+
+    class Fake:  # noqa: D106
+        pass
+    s = Fake()
+    s.caption_overlay = _Ov()
+    s._burned_caps_video = burned
+    s._current_video = current
+    s._cap_sentences = [{"text": "hello", "start": 0, "end": 5}]
+    try:
+        fn(s, 1000)
+    except (AssertionError, AttributeError):
+        return False  # reached karaoke -> not suppressed
+    return s.caption_overlay.calls == [""]
+
+
+def test_overlay_hidden_on_burned_video():
+    # Uzair 2026-10-03 video: the karaoke overlay ghosted on top of the
+    # burned-in captions ("pehli line ka pehla word"). While previewing
+    # the burned video, the overlay must stay empty.
+    assert _suppressed("/v/final.mp4", "/v/final.mp4")
+
+
+def test_overlay_shown_when_no_burned_video():
+    assert not _suppressed("", "/v/other.mp4")
+
+
+def test_overlay_shown_when_paths_differ():
+    assert not _suppressed("/v/final.mp4", "/v/other.mp4")
