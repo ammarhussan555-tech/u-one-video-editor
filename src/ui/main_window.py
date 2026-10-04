@@ -1171,11 +1171,6 @@ class MainWindow(QMainWindow):
             self.voice_combo.blockSignals(False)
         self._toggle_gemini_rows()
 
-    def _toggle_gemini_rows(self):
-        show = self.cb_voice_provider.currentData() == "gemini"
-        for w in getattr(self, "_gemini_wraps", ()):
-            w.setVisible(show)
-
         s = QGroupBox("3. Settings")
         form = QFormLayout(s)
         self.cb_visual = QComboBox()
@@ -1396,6 +1391,11 @@ class MainWindow(QMainWindow):
         self.log_edit.setMaximumHeight(110)
         outer_lay.addWidget(self.log_edit)
         return outer
+
+    def _toggle_gemini_rows(self):
+        show = self.cb_voice_provider.currentData() == "gemini"
+        for w in getattr(self, "_gemini_wraps", ()):
+            w.setVisible(show)
 
     def _center_panel(self):
         w = QWidget()
