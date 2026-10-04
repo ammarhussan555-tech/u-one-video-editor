@@ -1106,11 +1106,69 @@ class MainWindow(QMainWindow):
         vl = QHBoxLayout()
         vl.addWidget(QLabel("AI voice:"))
         self.voice_combo = QComboBox()
-        self.voice_combo.addItems(["en-US-AriaNeural", "en-US-GuyNeural",
-                                   "en-GB-SoniaNeural", "en-AU-NatashaNeural"])
         vl.addWidget(self.voice_combo, 1)
         gl.addLayout(vl)
+        # Voice engine: Edge TTS (default) or Google AI Studio (Gemini).
+        # (Uzair 2026-10-04: all 30 Gemini prebuilt voices, free AI Studio key.)
+        pe = QHBoxLayout()
+        pe.addWidget(QLabel("Voice engine:"))
+        self.cb_voice_provider = QComboBox()
+        self.cb_voice_provider.addItem("Edge TTS (default)", "edge")
+        self.cb_voice_provider.addItem("Google AI Studio (Gemini)", "gemini")
+        self.cb_voice_provider.currentIndexChanged.connect(
+            self._refresh_voice_list)
+        pe.addWidget(self.cb_voice_provider, 1)
+        gl.addLayout(pe)
+        self._edge_voices = ["en-US-AriaNeural", "en-US-GuyNeural",
+                             "en-GB-SoniaNeural", "en-AU-NatashaNeural"]
+        self._refresh_voice_list()
+        # Gemini settings: free key + model (hidden unless Gemini chosen).
+        gem_key_wrap = QWidget()
+        gr = QHBoxLayout(gem_key_wrap)
+        gr.setContentsMargins(0, 0, 0, 0)
+        gr.addWidget(QLabel("Gemini API key:"))
+        self.gemini_key_edit = QLineEdit()
+        self.gemini_key_edit.setEchoMode(QLineEdit.Password)
+        self.gemini_key_edit.setPlaceholderText("Free key from aistudio.google.com")
+        self.gemini_key_edit.setToolTip(
+            "Free API key from Google AI Studio (aistudio.google.com). "
+            "Quota khatam ho to default TTS engine auto use hoga.")
+        gr.addWidget(self.gemini_key_edit, 1)
+        gl.addWidget(gem_key_wrap)
+        gem_model_wrap = QWidget()
+        mr = QHBoxLayout(gem_model_wrap)
+        mr.setContentsMargins(0, 0, 0, 0)
+        mr.addWidget(QLabel("Gemini model:"))
+        self.cb_gemini_model = QComboBox()
+        self.cb_gemini_model.addItems([
+            "gemini-2.5-flash-preview-tts",
+            "gemini-2.5-pro-preview-tts",
+            "gemini-3.1-flash-tts-preview"])
+        mr.addWidget(self.cb_gemini_model, 1)
+        gl.addWidget(gem_model_wrap)
+        self._gemini_wraps = (gem_key_wrap, gem_model_wrap)
+        self._toggle_gemini_rows()
         lay.addWidget(g)
+
+    def _refresh_voice_list(self):
+        """Voice dropdown follows the chosen engine (Edge 4 voices / all 30
+        Gemini voices with style labels)."""
+        provider = self.cb_voice_provider.currentData()
+        self.voice_combo.clear()
+        if provider == "gemini":
+            from src.tts_gemini import list_voices
+            for name, style in list_voices():
+                self.voice_combo.addItem(f"{name} ({style})", name)
+            self.voice_combo.setCurrentIndex(3)  # Kore (Firm) default
+        else:
+            for v in self._edge_voices:
+                self.voice_combo.addItem(v, v)
+        self._toggle_gemini_rows()
+
+    def _toggle_gemini_rows(self):
+        show = self.cb_voice_provider.currentData() == "gemini"
+        for w in getattr(self, "_gemini_wraps", ()):
+            w.setVisible(show)
 
         s = QGroupBox("3. Settings")
         form = QFormLayout(s)
@@ -1175,6 +1233,14 @@ class MainWindow(QMainWindow):
         self.chk_captions = QCheckBox("Captions")
         self.chk_captions.setChecked(True)
         form.addRow(self.chk_captions)
+        # Documentary 1-click mode (Uzair 2026-10-04): default OFF.
+        self.chk_documentary = QCheckBox("Documentary mode (1-click)")
+        self.chk_documentary.setChecked(False)
+        self.chk_documentary.setToolTip(
+            "1-click documentary style: auto chapter markers, red-accent "
+            "quote captions, location map with pin, news lower thirds -- "
+            "sab script se auto, har niche aur har country ke liye.")
+        form.addRow(self.chk_documentary)
         # Caption template gallery (CapCut-style visual picker)
         from src.text_captions import CAPTION_TEMPLATES, DEFAULT_CAPTION_TEMPLATE
         self._caption_template_key = DEFAULT_CAPTION_TEMPLATE
@@ -2850,12 +2916,17 @@ class MainWindow(QMainWindow):
             "text_overlays": "auto" if self.chk_text_overlays.isChecked() else "off",
             "headline_style": self.cb_headline_style.currentData(),
             "captions_enabled": self.chk_captions.isChecked(),
+            "documentary_mode": self.chk_documentary.isChecked(),
             "caption_highlight": True,
             "caption_font_size": int(self.cap_size_slider.value()),
             "caption_template": self._caption_template_for_render(),
             "voice_upload": "" if self.rb_gen.isChecked() else self.voice_path_lbl.text(),
             "voice_generate_text": self.script_edit.toPlainText(),
-            "voice_name": self.voice_combo.currentText(),
+            "voice_provider": self.cb_voice_provider.currentData(),
+            "voice_name": self.voice_combo.currentData(),
+            "gemini_voice": self.voice_combo.currentData(),
+            "gemini_key": self.gemini_key_edit.text().strip(),
+            "gemini_model": self.cb_gemini_model.currentText(),
             "music_dir": self.music_lbl.text() if self.music_lbl.text() not in ("(optional)", "no file") else "",
         }
 

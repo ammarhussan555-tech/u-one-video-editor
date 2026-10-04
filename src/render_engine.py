@@ -69,7 +69,7 @@ STAGES = [
 def _api_key(settings: Settings, service: str) -> str:
     env = {"pexels": "PEXELS_API_KEY", "pixabay": "PIXABAY_API_KEY",
            "google_key": "GOOGLE_API_KEY", "google_cx": "GOOGLE_CX",
-           "serper": "SERPER_API_KEY",
+           "serper": "SERPER_API_KEY", "gemini": "GEMINI_API_KEY",
            "reddit_id": "REDDIT_CLIENT_ID",
            "reddit_secret": "REDDIT_CLIENT_SECRET"}[service]
     if os.environ.get(env):
@@ -360,6 +360,16 @@ class RenderEngine:
         self._msg(f"Final render OK: {result.width}x{result.height}, "
                   f"{result.duration:.1f}s, hwaccel={result.used_hwaccel}, "
                   f"captions={result.captions_burned}")
+        # -- Documentary 1-click mode (Uzair 2026-10-04): optional post
+        # stage AFTER the caption burn, before the final MP4 validation.
+        # Default OFF -- the OFF path is untouched.
+        if bool(S.get("documentary_mode", False)):
+            try:
+                doc_out = self._documentary_pass(out, result)
+                if doc_out:
+                    out = doc_out
+            except Exception as e:  # noqa: BLE001 - never fail a good render
+                self._msg(f"Note: documentary overlays skipped ({e}).")
         done.add("s9")
         self._stage(9, "final MP4 validated")
         done.add("s10")
@@ -395,6 +405,34 @@ class RenderEngine:
         self._persist()
         self.rlog.finish(True, out)
         done.add("s11")
+
+    def _documentary_pass(self, final_path: str, result) -> str:
+        """Documentary 1-click overlays on the finished video.
+
+        Returns the documentary video path, or "" to keep final_path.
+        Never raises -- a skipped pass must not fail a good render.
+        """
+        from .documentary import apply_documentary_overlays, plan_documentary
+        S = self.settings
+        self._msg("Documentary mode: analyzing script "
+                  "(chapters/quotes/map/lower thirds)...")
+        cache_dir = os.path.join(self.work_dir, "documentary_assets")
+        plan = plan_documentary(
+            getattr(self.pm.project, "script", "") or "",
+            self.sentence_timings, result.duration, cache_dir,
+            log=self._msg)
+        if not plan.has_any():
+            self._msg("Documentary mode: no overlays to apply.")
+            return ""
+        doc_out = os.path.join(self.work_dir, "documentary.mp4")
+        ok = apply_documentary_overlays(
+            plan, final_path, doc_out, w=result.width, h=result.height,
+            fps=getattr(S, "fps", 30), cache_dir=cache_dir,
+            engine=self.engine, log=self._msg)
+        if ok:
+            self._msg(f"Documentary overlays applied -> {doc_out}")
+            return doc_out
+        return ""
 
     # -- failure path --
     def _on_failure(self, e: Exception, preview: bool):
@@ -453,9 +491,12 @@ class RenderEngine:
         else:
             text = S.get("voice_generate_text") or self.pm.project.script
             self.voice_path = os.path.join(self.audio_dir, "voice.wav")
-            _, self.word_timings = synthesize_speech(
-                text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
-            self._msg("AI voice generated.")
+            if S.get("voice_provider", "edge") == "gemini":
+                self._synthesize_gemini_voice(text)
+            else:
+                _, self.word_timings = synthesize_speech(
+                    text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
+                self._msg("AI voice generated.")
         sents = [s.text for s in self.analysis.sentences]
         self.sentence_timings = get_sentence_timings(
             self.voice_path, sents, self.word_timings)
@@ -477,6 +518,37 @@ class RenderEngine:
                 self._msg(f"Word timings estimated ({len(self.word_timings)} "
                           f"words) -- speech-aligned highlight.")
         self._msg(f"Voice duration: {self.sentence_timings[-1]['end']:.1f}s")
+
+    def _synthesize_gemini_voice(self, text):
+        """Google AI Studio TTS voiceover (Uzair 2026-10-04).
+
+        On missing key OR quota exhaustion -> fall back to the default TTS
+        engine with a logged warning. Never raises past the render.
+        """
+        S = self.settings
+        key = _api_key(S, "gemini")
+        voice = S.get("gemini_voice", "Kore") or "Kore"
+        model = S.get("gemini_model") or "gemini-2.5-flash-preview-tts"
+        if not key:
+            self._msg("WARNING: Google AI Studio selected but no API key "
+                      "set -- falling back to the default TTS engine.")
+        else:
+            try:
+                from .tts_gemini import synthesize as _gemini_synth, \
+                    TTSQuotaError
+                _gemini_synth(text, voice=voice, api_key=key, model=model,
+                              out_wav=self.voice_path)
+                self.word_timings = None
+                self._msg(f"AI voice generated (Google AI Studio, {voice}).")
+                return
+            except TTSQuotaError as e:
+                self._msg(f"WARNING: {e}")
+            except Exception as e:  # noqa: BLE001 - any failure -> fallback
+                self._msg(f"WARNING: Gemini TTS failed ({e}) -- falling "
+                          "back to the default TTS engine.")
+        _, self.word_timings = synthesize_speech(
+            text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
+        self._msg("AI voice generated (fallback engine).")
 
     def _search_fn(self):
         S = self.settings
