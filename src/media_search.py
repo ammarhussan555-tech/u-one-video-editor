@@ -25,6 +25,7 @@ import re
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -1505,18 +1506,41 @@ class YouTubeProvider:
     license = "YouTube (check per-video license/copyright)"
     first_query_only = True
 
-    def _search_ids(self, query: str, num: int = 6) -> List[tuple]:
+    def _search_ids(self, query: str, num: int = 6,
+                    timeout_s: int = 60) -> List[tuple]:
         try:
             import yt_dlp
         except ImportError:  # noqa: BLE001
             return []
+        # Hard wall-clock bound: extract_info can stall forever on
+        # YouTube bot-check pages (no progress events, socket_timeout
+        # does not cover it). A hung search must return [] instead of
+        # freezing the scene worker (Uzair 2026-10-04: stuck at 59%).
+        import threading as _th
+        box: Dict[str, object] = {}
+
+        def _target():
+            try:
+                opts = {"quiet": True, "no_warnings": True,
+                        "skip_download": True, "extract_flat": True,
+                        "socket_timeout": 15, "extractor_retries": 1}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    box["info"] = ydl.extract_info(
+                        f"ytsearch{num}:{query}", download=False)
+            except Exception as e:  # noqa: BLE001
+                box["error"] = e
+
         try:
-            opts = {"quiet": True, "no_warnings": True,
-                    "skip_download": True, "extract_flat": True,
-                    "socket_timeout": 15, "extractor_retries": 1}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"ytsearch{num}:{query}",
-                                        download=False)
+            t = _th.Thread(target=_target, daemon=True,
+                           name="ytdlp-ytsearch")
+            t.start()
+            t.join(timeout=timeout_s)
+            if t.is_alive() or "error" in box:
+                return []
+            info = box.get("info")
+        except Exception:  # noqa: BLE001
+            return []
+        try:
             out = []
             for e in ((info or {}).get("entries") or []):
                 vid = e.get("id") or ""
@@ -1611,14 +1635,24 @@ class MediaFinder:
         results: List[Dict] = []
         provs = [p for p in self.providers
                  if not (first_only and getattr(p, "first_query_only", False))]
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        # Manual executor lifecycle (not a `with` block): __exit__ would
+        # wait for hung provider workers (wait=True). A provider that
+        # stalls past the as_completed deadline must never freeze the
+        # scene (Uzair 2026-10-04: stuck at 59%).
+        ex = ThreadPoolExecutor(max_workers=8)
+        try:
             futs = {ex.submit(p.search, query, kind): p.name
                     for p in provs}
-            for fut in as_completed(futs, timeout=45):
-                try:
-                    results.extend(fut.result(timeout=5) or [])
-                except Exception:  # noqa: BLE001
-                    pass
+            try:
+                for fut in as_completed(futs, timeout=45):
+                    try:
+                        results.extend(fut.result(timeout=5) or [])
+                    except Exception:  # noqa: BLE001
+                        pass
+            except FuturesTimeoutError:
+                pass  # stalled providers: fall through, shut down hard
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
         return results
 
     def find_for_scene(self, scene, queries: List[str], analysis,

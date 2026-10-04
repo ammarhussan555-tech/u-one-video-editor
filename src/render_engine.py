@@ -221,7 +221,11 @@ class RenderEngine:
                     stage=STAGES[0],
                     recovery_hint="reinstall U One or put ffmpeg on PATH")
             ensure_free_space(self.work_dir, needed_mb=128)
-            self._msg("Project validation OK.")
+            try:
+                from .version import __version__ as _v
+            except Exception:  # noqa: BLE001
+                _v = "?"
+            self._msg(f"Project validation OK. (U One v{_v})")
             done.add("s1")
 
         # -- 2. script processing --

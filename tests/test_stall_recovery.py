@@ -112,3 +112,66 @@ def test_generate_all_watchdog_force_finishes_stalled_scene(tmp_path,
 
 def test_watchdog_default_is_sane():
     assert SCENE_WATCHDOG_S >= 1800  # never cut a legit slow scene short
+
+
+# -- 3. YouTube search hang -----------------------------------------------
+
+class _HungSearchYDL:
+    """YoutubeDL whose extract_info() blocks forever (bot-check stall)."""
+
+    def __init__(self, opts):
+        self.opts = opts
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def extract_info(self, query, download=False):
+        threading.Event().wait()  # hang forever
+
+
+class _FakeSearchYtDlp:
+    YoutubeDL = _HungSearchYDL
+
+
+def test_youtube_search_hang_returns_empty(tmp_path, monkeypatch):
+    from src.media_search import YouTubeProvider
+    monkeypatch.setitem(sys.modules, "yt_dlp", _FakeSearchYtDlp)
+    prov = YouTubeProvider()
+    start = time.time()
+    res = prov._search_ids("geopolitics news", num=2, timeout_s=2)
+    elapsed = time.time() - start
+    assert res == []
+    assert elapsed < 20, f"took {elapsed:.1f}s - search hang not bounded"
+
+
+def test_search_all_survives_hung_provider(tmp_path, monkeypatch):
+    from src.media_search import MediaFinder
+    finder = MediaFinder(str(tmp_path / "assets"))
+
+    class HungProvider:
+        name = "Hung"
+        first_query_only = False
+
+        def search(self, query, kind="video", per_page=4):
+            threading.Event().wait()  # hang forever
+            return []
+
+    class QuickProvider:
+        name = "Quick"
+        first_query_only = False
+
+        def search(self, query, kind="video", per_page=4):
+            return [{"url": "https://example.com/a.mp4", "source": "Quick",
+                     "license": "x", "w": 640, "h": 360, "dur": 5.0,
+                     "tags": "news", "query": query}]
+
+    monkeypatch.setattr(finder, "providers", [HungProvider(), QuickProvider()])
+    start = time.time()
+    out = finder._search_all("news", "video")
+    elapsed = time.time() - start
+    # quick provider's results come back; the hung one is abandoned
+    assert any(c.get("source") == "Quick" for c in out)
+    assert elapsed < 70, f"took {elapsed:.1f}s - executor waited on hang"
