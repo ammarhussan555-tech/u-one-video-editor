@@ -290,12 +290,20 @@ class GraphicGenerator:
         return self._save(fig, plt, f"card_{scene_id}.png")
 
 
-def _ytdlp_download(webpage_url: str, kind: str) -> Optional[Path]:
+def _ytdlp_download(webpage_url: str, kind: str,
+                   timeout_s: int = 240) -> Optional[Path]:
     """Download a YouTube video via the bundled yt-dlp (<=720p single file).
 
     Used for candidates whose url is "ytdlp:<watch-url>". Returns the cached
     local path or None. yt-dlp is imported lazily so media_search still
     imports on systems without it (then every such candidate just fails).
+
+    Hard wall-clock bound: the progress-hook deadline only fires while bytes
+    flow; extraction stalls (e.g. YouTube bot-check pages) fire no progress
+    events and would hang the scene worker forever (Uzair 2026-10-04: render
+    froze at 59% on the last scene). The download runs in a thread and is
+    abandoned after timeout_s; the scene then falls back to the next
+    candidate / generated graphic instead of freezing the UI.
     """
     try:
         import yt_dlp
@@ -312,13 +320,13 @@ def _ytdlp_download(webpage_url: str, kind: str) -> Optional[Path]:
         ff = find_ffmpeg()
     except Exception:  # noqa: BLE001
         ff = None
-    deadline = time.time() + 240  # max 4 min per YouTube download
+    deadline = time.time() + timeout_s  # max 4 min per YouTube download
 
     def _hook(d):
         if time.time() > deadline:
             raise RuntimeError("yt-dlp download timed out")
 
-    try:
+    def _run():
         opts = {
             "quiet": True, "no_warnings": True, "noprogress": True,
             # DASH video+audio merged (news uploads are rarely progressive);
@@ -334,6 +342,31 @@ def _ytdlp_download(webpage_url: str, kind: str) -> Optional[Path]:
             opts["ffmpeg_location"] = ff
         with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([webpage_url])
+
+    try:
+        # Manual daemon thread (not ThreadPoolExecutor): an abandoned hung
+        # worker must not block process exit, and executor __exit__ would
+        # wait for it (wait=True), reintroducing the hang.
+        import threading as _th
+        _box = {}
+
+        def _target():
+            try:
+                _run()
+            except Exception as e:  # noqa: BLE001
+                _box["error"] = e
+
+        _t = _th.Thread(target=_target, daemon=True,
+                        name="ytdlp-download")
+        _t.start()
+        _t.join(timeout=timeout_s)
+        if _t.is_alive():
+            return None  # hung in extraction: abandon, fall back
+        if "error" in _box:
+            return None
+    except Exception:  # noqa: BLE001 - timeout or download error -> None
+        return None
+    try:
         got = None
         for cand in dest.parent.glob(stem + ".*"):
             if cand.suffix.lower() in (".mp4", ".webm", ".mov", ".mkv") \

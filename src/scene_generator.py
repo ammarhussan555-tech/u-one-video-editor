@@ -16,6 +16,7 @@ import os
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -23,6 +24,12 @@ from typing import Any, Callable, Dict, List, Optional
 from .error_recovery import RenderCancelled, RetryPolicy, SceneFailedError
 from .ffmpeg_engine import FFmpegEngine
 from .scene_validator import SegmentReport, validate_segment
+
+# Watchdog: no single scene may stall the whole render longer than this.
+# Every operation inside generate_one() is time-bounded (search/download/
+# ffmpeg/validate timeouts); this is the last-resort guarantee that the
+# progress bar can never freeze forever (Uzair 2026-10-04: stuck at 59%).
+SCENE_WATCHDOG_S = 3600
 
 # Bright branded fallback: luma ~0.30, far above the black threshold,
 # subtly animated (slow zoom) so freeze detection never fires.
@@ -71,6 +78,9 @@ class SceneGenerator:
         self.cache = cache
         self._fallback_card: Optional[str] = None
         self._lock = threading.Lock()
+        # Last-resort per-scene watchdog for generate_all(). Tests may
+        # lower it; production keeps the module default (1h).
+        self.scene_watchdog_s = SCENE_WATCHDOG_S
 
     # -- logging helper --
     def _msg(self, idx: int, text: str) -> None:
@@ -280,51 +290,98 @@ class SceneGenerator:
             raise
         except Exception as e:  # noqa: BLE001 - fallback is the recovery
             reason = e.describe() if isinstance(e, SceneFailedError) else str(e)
-            self._msg(spec.index,
-                      f"Scene {spec.scene_id + 1}: recovery exhausted "
-                      f"({reason}); using guaranteed fallback card.")
-            card = self.fallback_card(engine)
-            seg = os.path.join(self.seg_dir, f"seg_{spec.index:03d}.mp4")
-            # trim (or loop) the card to this scene's exact duration so the
-            # timeline stays in sync - a raw copy would skew every timing
-            # downstream (concat duration, caption sync, voiceover sync).
-            engine.run(
-                ["-stream_loop", "2", "-i", card,
-                 "-t", f"{spec.duration:.3f}",
-                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-                 "-pix_fmt", "yuv420p", "-an", seg],
-                stage="scene_fallback_trim", scene=spec.scene_id + 1,
-                inputs=[card], output=seg, timeout=300)
-            rep = validate_segment(seg, engine=engine,
-                                   expect_w=self.w, expect_h=self.h,
-                                   min_duration=0.4)
-            if not rep.valid:  # practically impossible; card is pre-validated
-                raise SceneFailedError(
-                    "Fallback card copy failed validation: " + rep.describe(),
-                    stage="scene_recovery", scene=spec.scene_id + 1)
-            return SceneResult(spec=spec, segment_path=seg, asset_id="fallback",
-                               attempts=3, recovered=True, report=rep,
-                               warnings=[f"scene used fallback card: {reason}"])
+            return self._fallback_result(
+                spec, engine,
+                f"recovery exhausted ({reason})")
+
+    def _fallback_result(self, spec: SceneSpec, engine: FFmpegEngine,
+                         reason: str) -> SceneResult:
+        """Build the guaranteed-valid fallback card segment for a scene.
+
+        Used when all attempts fail AND by the generate_all() watchdog when
+        a scene stalls past its time budget. Never hangs: the trim has a
+        hard timeout.
+        """
+        self._msg(spec.index,
+                  f"Scene {spec.scene_id + 1}: {reason}; "
+                  f"using guaranteed fallback card.")
+        card = self.fallback_card(engine)
+        seg = os.path.join(self.seg_dir, f"seg_{spec.index:03d}.mp4")
+        # trim (or loop) the card to this scene's exact duration so the
+        # timeline stays in sync - a raw copy would skew every timing
+        # downstream (concat duration, caption sync, voiceover sync).
+        engine.run(
+            ["-stream_loop", "2", "-i", card,
+             "-t", f"{spec.duration:.3f}",
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+             "-pix_fmt", "yuv420p", "-an", seg],
+            stage="scene_fallback_trim", scene=spec.scene_id + 1,
+            inputs=[card], output=seg, timeout=300)
+        rep = validate_segment(seg, engine=engine,
+                               expect_w=self.w, expect_h=self.h,
+                               min_duration=0.4)
+        if not rep.valid:  # practically impossible; card is pre-validated
+            raise SceneFailedError(
+                "Fallback card copy failed validation: " + rep.describe(),
+                stage="scene_recovery", scene=spec.scene_id + 1)
+        return SceneResult(spec=spec, segment_path=seg, asset_id="fallback",
+                           attempts=3, recovered=True, report=rep,
+                           warnings=[f"scene used fallback card: {reason}"])
 
     def generate_all(self, specs: List[SceneSpec],
                      progress_cb=None) -> List[SceneResult]:
         """Generate+validate all scenes in parallel (bounded workers).
 
         Returns results in scene order. Every result is a VALID segment.
+
+        Watchdog: if one or more scenes make no progress for
+        self.scene_watchdog_s seconds, they are force-finished with the
+        guaranteed fallback card so the render can NEVER freeze forever
+        (Uzair 2026-10-04: stuck at 59% on the last scene).
         """
         os.makedirs(self.seg_dir, exist_ok=True)
         results: Dict[int, SceneResult] = {}
-        with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
-            futs = {ex.submit(self.generate_one, s): s for s in specs}
+        # Manual executor lifecycle (not a `with` block): __exit__ would
+        # wait for hung workers (wait=True), reintroducing the very freeze
+        # the watchdog exists to prevent.
+        ex = ThreadPoolExecutor(max_workers=self.max_workers)
+        try:
+            not_done = {ex.submit(self.generate_one, s): s for s in specs}
             done = 0
-            for fut in as_completed(futs):
-                if self.cancel_event.is_set():
-                    raise RenderCancelled("cancelled during scene generation")
-                spec = futs[fut]
-                results[spec.index] = fut.result()  # raises on fatal
-                done += 1
+
+            def _report(dn, idx):
                 if progress_cb:
-                    progress_cb(done, len(specs), spec.index)
+                    progress_cb(dn, len(specs), idx)
+
+            while not_done:
+                try:
+                    for fut in as_completed(
+                            not_done, timeout=self.scene_watchdog_s):
+                        if self.cancel_event.is_set():
+                            raise RenderCancelled(
+                                "cancelled during scene generation")
+                        spec = not_done.pop(fut)
+                        # already complete: returns immediately, raises on
+                        # fatal (same contract as before the watchdog)
+                        results[spec.index] = fut.result()
+                        done += 1
+                        _report(done, spec.index)
+                except FuturesTimeoutError:
+                    pass  # fall through: watchdog the stalled remainder
+                stalled = list(not_done.items())
+                if stalled:
+                    engine = FFmpegEngine(cancel_event=self.cancel_event,
+                                          log=self.log)
+                    for fut, spec in stalled:
+                        fut.cancel()  # no-op if already running
+                        results[spec.index] = self._fallback_result(
+                            spec, engine,
+                            f"stalled past {self.scene_watchdog_s}s watchdog")
+                        not_done.pop(fut)
+                        done += 1
+                        _report(done, spec.index)
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
         return [results[i] for i in sorted(results)]
 
 # -- Keyword insert pop-up (Uzair 2026-10-03 rule 10) --
