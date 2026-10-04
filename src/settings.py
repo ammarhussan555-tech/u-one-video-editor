@@ -26,7 +26,7 @@ DEFAULTS: Dict[str, Any] = {
     "caption_template": "karaoke_pop",
     "text_overlays": "auto",              # auto | off
     # media
-    "media_preference": "ai_auto",        # ai_auto | video_only | image_only
+    "media_preference": "ai_auto",        # ai_auto | video_first | image_first | video_only | image_only
     "repetition_limit": "never",          # never | allow_once
     "music_dir": "",
     "safe_mode": False,                   # only copyright-safe providers

@@ -1155,7 +1155,8 @@ class MainWindow(QMainWindow):
         self.cb_visual.addItems(["every_sentence", "every_2", "every_3", "ai_auto"])
         form.addRow("Visual mode:", self.cb_visual)
         self.cb_media = QComboBox()
-        self.cb_media.addItems(["ai_auto", "video_first", "image_first"])
+        self.cb_media.addItems(["ai_auto", "video_first", "image_first",
+                                "video_only", "image_only"])
         form.addRow("Video/image:", self.cb_media)
         self.cb_repeat = QComboBox()
         self.cb_repeat.addItems(["never", "max2", "ai"])

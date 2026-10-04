@@ -1623,6 +1623,10 @@ class MediaFinder:
             return ["video", "image"]
         if self.preference == "image_first":
             return ["image", "video"]
+        if self.preference == "video_only":
+            return ["video"]
+        if self.preference == "image_only":
+            return ["image"]
         return ["video", "image"]
 
     def _search_all(self, query: str, kind: str,

@@ -175,3 +175,17 @@ def test_search_all_survives_hung_provider(tmp_path, monkeypatch):
     # quick provider's results come back; the hung one is abandoned
     assert any(c.get("source") == "Quick" for c in out)
     assert elapsed < 70, f"took {elapsed:.1f}s - executor waited on hang"
+
+
+# -- 4. media preference: video_only / image_only --------------------------
+
+def test_kind_order_only_modes(tmp_path):
+    from src.media_search import MediaFinder
+    for pref, expected in [("video_only", ["video"]),
+                           ("image_only", ["image"]),
+                           ("video_first", ["video", "image"]),
+                           ("image_first", ["image", "video"]),
+                           ("ai_auto", ["video", "image"]),
+                           ("whatever", ["video", "image"])]:
+        f = MediaFinder(str(tmp_path / "a"), preference=pref)
+        assert f._kind_order() == expected, pref
