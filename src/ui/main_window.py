@@ -1152,17 +1152,23 @@ class MainWindow(QMainWindow):
 
     def _refresh_voice_list(self):
         """Voice dropdown follows the chosen engine (Edge 4 voices / all 30
-        Gemini voices with style labels)."""
+        Gemini voices with style labels). Signals are blocked while
+        repopulating: clear()/addItem() re-emit currentIndexChanged, which
+        would recurse forever (the slot is connected to that signal)."""
         provider = self.cb_voice_provider.currentData()
-        self.voice_combo.clear()
-        if provider == "gemini":
-            from src.tts_gemini import list_voices
-            for name, style in list_voices():
-                self.voice_combo.addItem(f"{name} ({style})", name)
-            self.voice_combo.setCurrentIndex(3)  # Kore (Firm) default
-        else:
-            for v in self._edge_voices:
-                self.voice_combo.addItem(v, v)
+        self.voice_combo.blockSignals(True)
+        try:
+            self.voice_combo.clear()
+            if provider == "gemini":
+                from src.tts_gemini import list_voices
+                for name, style in list_voices():
+                    self.voice_combo.addItem(f"{name} ({style})", name)
+                self.voice_combo.setCurrentIndex(3)  # Kore (Firm) default
+            else:
+                for v in self._edge_voices:
+                    self.voice_combo.addItem(v, v)
+        finally:
+            self.voice_combo.blockSignals(False)
         self._toggle_gemini_rows()
 
     def _toggle_gemini_rows(self):
