@@ -640,65 +640,96 @@ def map_png(path, name, lat, lon, cache_dir, size=768, zoom=11):
 # --------------------------------------------------------------------------
 # ffmpeg burn pass
 # --------------------------------------------------------------------------
-def apply_documentary_overlays(plan, video_in, video_out, w, h, fps,
-                               cache_dir, engine, log=None, timeout=7200):
-    """Burn all planned overlays in ONE extra encode. Audio stream-copied.
-    Never raises: returns False on failure (caller keeps the clean video)."""
+def prepare_merged_assets(plan, cache_dir, w, h):
+    """Generate overlay PNGs for the merged single-pass burn.
+
+    Returns a list of (png_path, start, end, is_map). Empty list = nothing
+    to overlay. Never raises (returns whatever succeeded).
+    """
+    assets = []
     try:
         os.makedirs(cache_dir, exist_ok=True)
-        events = []  # (kind, png_path, start, end)
         for c in plan.chapters:
             p = os.path.join(cache_dir, f"chapter_{c.index}.png")
             chapter_png(p, c.index, c.title, w, h)
-            events.append(("static", p, c.start, c.start + c.dur))
+            assets.append((p, c.start, c.start + c.dur, False))
         for i, q in enumerate(plan.quotes):
             p = os.path.join(cache_dir, f"quote_{i}.png")
             quote_png(p, q.text, q.hero_words, w, h)
-            events.append(("static", p, q.start, q.end))
+            assets.append((p, q.start, q.end, False))
         for i, lt in enumerate(plan.lower_thirds):
             p = os.path.join(cache_dir, f"lt_{i}.png")
             lowerthird_png(p, lt.kicker, lt.headline, lt.date, w, h)
-            events.append(("static", p, lt.start, lt.start + lt.dur))
-        maps = []
-        for i, loc in enumerate(plan.locations):
-            p = os.path.join(cache_dir,
-                             f"map_{re.sub(r'[^a-z0-9]+', '_', loc.name.lower())}.png")
+            assets.append((p, lt.start, lt.start + lt.dur, False))
+        for loc in plan.locations:
+            p = os.path.join(
+                cache_dir,
+                f"map_{re.sub(r'[^a-z0-9]+', '_', loc.name.lower())}.png")
             if map_png(p, loc.name, loc.lat, loc.lon, cache_dir):
-                maps.append((p, loc.start, loc.start + loc.dur))
-        if not events and not maps:
-            return False
+                assets.append((p, loc.start, loc.start + loc.dur, True))
+    except Exception:  # noqa: BLE001 - overlays are optional
+        pass
+    return assets
 
-        inputs = ["-i", video_in]
-        for kind, p, s, e in events:
-            # -loop 1: a still PNG emits one frame otherwise, so the
-            # overlay would only appear at t=0.
-            inputs += ["-loop", "1", "-i", p]
-        for p, s, e in maps:
-            inputs += ["-loop", "1", "-i", p]
 
-        fc, out_lbl, idx = [], "[0:v]", 1
-        for kind, p, s, e in events:
-            ov, nl = f"[ov{idx}]", f"[v{idx}]"
-            fc.append(
-                f"[{idx}:v]format=rgba,"
-                f"fade=in:st={s:.2f}:d=0.4:alpha=1,"
-                f"fade=out:st={max(s, e - 0.4):.2f}:d=0.4:alpha=1{ov}")
-            fc.append(f"{out_lbl}{ov}overlay=0:0:"
-                      f"enable='between(t,{s:.2f},{e:.2f})'{nl}")
-            out_lbl, idx = nl, idx + 1
-        for p, s, e in maps:
+def merged_overlay_inputs(assets):
+    """ffmpeg input argv for the overlay PNGs (looped stills)."""
+    inputs = []
+    for p, s, e, is_map in assets:
+        # -loop 1: a still PNG emits one frame otherwise, so the
+        # overlay would only appear at t=0.
+        inputs += ["-loop", "1", "-i", p]
+    return inputs
+
+
+def merged_overlay_chain(assets, w, h, fps, first_idx=1):
+    """filter_complex parts for the overlay chain.
+
+    The caller's base video chain must end at label [bv]; returns
+    (parts, out_label). Same filters as the old separate documentary
+    pass (fade in/out on statics, zoompan on maps).
+    """
+    fc, out_lbl, idx = [], "[bv]", first_idx
+    for p, s, e, is_map in assets:
+        nl = f"[v{idx}]"
+        if is_map:
             frames = max(30, int((e - s) * fps))
-            zm, nl = f"[zm{idx}]", f"[v{idx}]"
             fc.append(
                 f"[{idx}:v]scale={w}:{h},"
                 f"zoompan=z='min(zoom+0.0012,1.18)':d={frames}:"
                 f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"s={w}x{h}:fps={fps}{zm}")
-            fc.append(f"{out_lbl}{zm}overlay=0:0:"
+                f"s={w}x{h}:fps={fps}[zm{idx}]")
+            fc.append(f"{out_lbl}[zm{idx}]overlay=0:0:"
                       f"enable='between(t,{s:.2f},{e:.2f})'{nl}")
-            out_lbl, idx = nl, idx + 1
+        else:
+            fc.append(
+                f"[{idx}:v]format=rgba,"
+                f"fade=in:st={s:.2f}:d=0.4:alpha=1,"
+                f"fade=out:st={max(s, e - 0.4):.2f}:d=0.4:alpha=1[ov{idx}]")
+            fc.append(f"{out_lbl}[ov{idx}]overlay=0:0:"
+                      f"enable='between(t,{s:.2f},{e:.2f})'{nl}")
+        out_lbl, idx = nl, idx + 1
+    return fc, out_lbl
 
-        vf = ";".join(fc) + f";{out_lbl}fps={fps},format=yuv420p[docv]"
+
+def apply_documentary_overlays(plan, video_in, video_out, w, h, fps,
+                               cache_dir, engine, log=None, timeout=7200):
+    """Burn all planned overlays in ONE extra encode. Audio stream-copied.
+    Never raises: returns False on failure (caller keeps the clean video).
+
+    NOTE (Uzair 2026-10-04): the render pipeline now merges overlays into
+    the caption burn pass (single full encode) instead of calling this;
+    kept for compatibility.
+    """
+    try:
+        assets = prepare_merged_assets(plan, cache_dir, w, h)
+        if not assets:
+            return False
+
+        inputs = ["-i", video_in] + merged_overlay_inputs(assets)
+        parts, out_lbl = merged_overlay_chain(assets, w, h, fps)
+        fc = ";".join([f"[0:v]null[bv]", *parts,
+                       f"{out_lbl}fps={fps},format=yuv420p[docv]"])
         # Hardware encoder when available (same policy as the burn pass).
         try:
             hw = engine.detect_hw_encoder("h264")
@@ -706,15 +737,14 @@ def apply_documentary_overlays(plan, video_in, video_out, w, h, fps,
             hw = None
         v_args = (["-c:v", hw, "-b:v", "10M"] if hw
                   else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"])
-        args = [*inputs, "-filter_complex", vf,
+        args = [*inputs, "-filter_complex", fc,
                 "-map", "[docv]", "-map", "0:a:0?",
                 *v_args, "-c:a", "copy",
                 "-movflags", "+faststart", "-shortest", video_out]
         engine.run(args, stage="documentary_overlays", timeout=timeout,
                    inputs=[video_in], output=video_out)
         if log:
-            log(f"Documentary overlays burned: {len(events)} static + "
-                f"{len(maps)} maps.")
+            log(f"Documentary overlays burned: {len(assets)} overlays.")
         return True
     except Exception as e:  # noqa: BLE001 - never fail a good render
         if log:

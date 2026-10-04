@@ -148,7 +148,9 @@ class ExportEngine:
                      fmt: str = "16:9", res: str = "1080p", fps: int = 30,
                      codec: str = "h264", preview: bool = False,
                      work_dir: str = ".",
-                     prefer_hw: bool = True) -> ExportResult:
+                     prefer_hw: bool = True,
+                     doc_script: str = "", doc_timings=None,
+                     doc_cache_dir: str = "") -> ExportResult:
         self.preflight(video_noaudio, mixed_audio, expect_audio=True)
 
         w, h = RESOLUTIONS[fmt][res]
@@ -232,6 +234,36 @@ class ExportEngine:
             self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
                             inputs=[src], output=dest)
 
+        def attempt_burn_merged(vf_chain: str, assets, tag: str, src: str,
+                                dest: str) -> None:
+            """Burn captions + documentary overlays in ONE encode.
+
+            Same encoder settings as attempt_burn; the overlays ride in
+            the same filter_complex so no extra full-video pass is needed
+            (Uzair 2026-10-04: single full encode, faster, no quality
+            loss -- one fewer generation is strictly better).
+            """
+            from .documentary import (merged_overlay_chain,
+                                      merged_overlay_inputs)
+            fc = [f"[0:v]{base_chain},{vf_chain}[bv]"]
+            parts, out_lbl = merged_overlay_chain(assets, w, h, fps)
+            fc += parts
+            fc.append(f"{out_lbl}fps={fps},format=yuv420p[docv]")
+            if use_hw and hw_enc:
+                v_args = ["-c:v", hw_enc, "-b:v",
+                          _HW_BITRATE.get(res, "10M")]
+            else:
+                v_args = ["-c:v", "libx264", "-preset", "veryfast",
+                          "-crf", "20"]
+            inputs = ["-i", src, *merged_overlay_inputs(assets)]
+            args = [*inputs, "-filter_complex", ";".join(fc),
+                    "-map", "[docv]", "-map", "0:a",
+                    *v_args, "-pix_fmt", "yuv420p",
+                    "-c:a", "copy",
+                    "-movflags", "+faststart", "-shortest", dest]
+            self.engine.run(args, stage=f"final_render_{tag}", timeout=7200,
+                            inputs=[src], output=dest)
+
         def try_call(fn, *a, **k) -> bool:
             """One render attempt. Returns True on success; logs failures."""
             try:
@@ -284,13 +316,68 @@ class ExportEngine:
                               "generation if an input was bad",
                 stderr_tail=last.stderr_tail if last else "")
 
+        # ---- Documentary overlays merged into the burn pass ----
+        # (Uzair 2026-10-04): instead of a separate full-video encode
+        # AFTER the final render, the chapter/quote/map/lower-third
+        # overlays ride inside the caption burn's filter_complex --
+        # one full encode total, faster, no quality loss.
+        doc_assets = []
+        if doc_script and doc_cache_dir:
+            try:
+                from .documentary import (plan_documentary,
+                                          prepare_merged_assets)
+                _dur = 0.0
+                try:
+                    _info = media_probe.probe(video_noaudio,
+                                              self.engine.ffprobe)
+                    _dur = float(_info.duration or 0)
+                except Exception:  # noqa: BLE001 - probe failed
+                    _dur = 0.0
+                if _dur > 0:
+                    _plan = plan_documentary(doc_script, doc_timings or [],
+                                             _dur, doc_cache_dir,
+                                             log=self._msg)
+                    if _plan.has_any():
+                        doc_assets = prepare_merged_assets(
+                            _plan, doc_cache_dir, w, h)
+                    if doc_assets:
+                        self._msg(f"Documentary overlays: {len(doc_assets)} "
+                                  f"will burn with captions (one pass).")
+            except Exception as e:  # noqa: BLE001 - overlays optional
+                self._msg(f"Documentary overlays skipped ({e}).")
+                doc_assets = []
+
         # ---- Pass 2: burn captions onto the clean video. ----
         if captions:
-            self._msg("Final render pass 2/2: burning captions...")
+            self._msg("Final render pass 2/2: burning captions"
+                      + (" + documentary overlays" if doc_assets else "")
+                      + "...")
             self._progress("pass 2/2: burning captions")
             burn_chain = _burn_captions_filter(str(ass))
-            ok = try_call(attempt_burn, burn_chain, "burn", clean_path,
-                          out_path)
+            merged_ok = False
+            if doc_assets:
+                merged_ok = try_call(attempt_burn_merged, burn_chain,
+                                     doc_assets, "burn_doc", clean_path,
+                                     out_path)
+                if not merged_ok and use_hw:
+                    self._msg("Hardware merged burn failed; retrying "
+                              "on CPU.")
+                    _use_hw = use_hw
+                    use_hw = False
+                    merged_ok = try_call(attempt_burn_merged, burn_chain,
+                                         doc_assets, "burn_doc_cpu",
+                                         clean_path, out_path)
+                    use_hw = _use_hw
+                if merged_ok:
+                    self._msg("Captions + documentary overlays burned in "
+                              "one pass.")
+                else:
+                    self._msg("Merged burn failed; falling back to "
+                              "captions-only burn (overlays dropped).")
+            ok = merged_ok
+            if not ok:
+                ok = try_call(attempt_burn, burn_chain, "burn", clean_path,
+                              out_path)
             # Fallback: hardware encoder failed on burn -> retry on CPU.
             if not ok and use_hw:
                 self._msg("Hardware burn-in failed; retrying on CPU.")

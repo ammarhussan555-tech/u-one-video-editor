@@ -351,25 +351,25 @@ class RenderEngine:
         exporter = ExportEngine(engine=self.engine, render_log=self.rlog,
                                 cancel_event=self.cancel_event,
                                 progress_cb=self.progress_cb)
+        # Documentary 1-click mode (Uzair 2026-10-04): overlays are merged
+        # into the caption burn pass inside render_final (single full
+        # encode) instead of a separate post pass. Default OFF -- the OFF
+        # path is untouched.
+        doc_mode = bool(S.get("documentary_mode", False))
         result = exporter.render_final(
             concat, self.mixed_path, ass if os.path.isfile(ass) else "",
             out, fmt=fmt, res=res, fps=S.fps,
             codec=S.get("output_codec", "h264"), preview=preview,
             work_dir=self.work_dir,
-            prefer_hw=bool(S.get("prefer_hwaccel", True)))
+            prefer_hw=bool(S.get("prefer_hwaccel", True)),
+            doc_script=(getattr(self.pm.project, "script", "") or "")
+            if doc_mode else "",
+            doc_timings=self.sentence_timings if doc_mode else None,
+            doc_cache_dir=os.path.join(self.work_dir, "documentary_assets")
+            if doc_mode else "")
         self._msg(f"Final render OK: {result.width}x{result.height}, "
                   f"{result.duration:.1f}s, hwaccel={result.used_hwaccel}, "
                   f"captions={result.captions_burned}")
-        # -- Documentary 1-click mode (Uzair 2026-10-04): optional post
-        # stage AFTER the caption burn, before the final MP4 validation.
-        # Default OFF -- the OFF path is untouched.
-        if bool(S.get("documentary_mode", False)):
-            try:
-                doc_out = self._documentary_pass(out, result)
-                if doc_out:
-                    out = doc_out
-            except Exception as e:  # noqa: BLE001 - never fail a good render
-                self._msg(f"Note: documentary overlays skipped ({e}).")
         done.add("s9")
         self._stage(9, "final MP4 validated")
         done.add("s10")
@@ -405,34 +405,6 @@ class RenderEngine:
         self._persist()
         self.rlog.finish(True, out)
         done.add("s11")
-
-    def _documentary_pass(self, final_path: str, result) -> str:
-        """Documentary 1-click overlays on the finished video.
-
-        Returns the documentary video path, or "" to keep final_path.
-        Never raises -- a skipped pass must not fail a good render.
-        """
-        from .documentary import apply_documentary_overlays, plan_documentary
-        S = self.settings
-        self._msg("Documentary mode: analyzing script "
-                  "(chapters/quotes/map/lower thirds)...")
-        cache_dir = os.path.join(self.work_dir, "documentary_assets")
-        plan = plan_documentary(
-            getattr(self.pm.project, "script", "") or "",
-            self.sentence_timings, result.duration, cache_dir,
-            log=self._msg)
-        if not plan.has_any():
-            self._msg("Documentary mode: no overlays to apply.")
-            return ""
-        doc_out = os.path.join(self.work_dir, "documentary.mp4")
-        ok = apply_documentary_overlays(
-            plan, final_path, doc_out, w=result.width, h=result.height,
-            fps=getattr(S, "fps", 30), cache_dir=cache_dir,
-            engine=self.engine, log=self._msg)
-        if ok:
-            self._msg(f"Documentary overlays applied -> {doc_out}")
-            return doc_out
-        return ""
 
     # -- failure path --
     def _on_failure(self, e: Exception, preview: bool):
