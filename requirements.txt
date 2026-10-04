@@ -16,7 +16,10 @@ yt-dlp>=2024.1
 # Secure OS credential storage for API keys (Windows Credential Manager)
 keyring; sys_platform == "win32"
 pywin32; sys_platform == "win32"
-# Optional: better voice transcription with word timestamps
-# faster-whisper>=1.0
+# Speech-timing measurement (Whisper): BUNDLED into the Windows installer
+# (Uzair 2026-10-04 -- estimated timings made visuals/main-text drift
+# ahead/behind the voice). The tiny model (~75MB) downloads once on first
+# use and is cached; every failure falls back to estimates, never blocks.
+faster-whisper>=1.0
 # Optional: build a Windows .exe (developers only)
 # pyinstaller>=6.0

@@ -171,8 +171,19 @@ def audio_duration(path):
     return 0.0
 
 
-def synthesize_speech(text, out_wav, voice="en-US-AriaNeural"):
-    """Returns (audio_path, word_timings|None). edge-tts first, pyttsx3 (Windows SAPI) fallback."""
+def synthesize_speech(text, out_wav, voice="en-US-AriaNeural", log=None):
+    """Returns (audio_path, word_timings|None). edge-tts first, pyttsx3 (Windows SAPI) fallback.
+
+    log: optional callable(str) for render-log messages (e.g. WHY edge-tts
+    was skipped -- Uzair 2026-10-04: the fallback reason was invisible).
+    """
+    def _log(m):
+        if log:
+            try:
+                log(m)
+            except Exception:  # noqa: BLE001 - logging must never break TTS
+                pass
+
     err1 = None
     try:
         import edge_tts
@@ -196,6 +207,8 @@ def synthesize_speech(text, out_wav, voice="en-US-AriaNeural"):
         return out_wav, bounds
     except Exception as e:  # noqa: BLE001
         err1 = e
+        _log(f"edge-tts unavailable ({e}); using the Windows system voice "
+             f"(no word timings -- they will be measured afterwards).")
     try:
         import pyttsx3
         eng = pyttsx3.init()
@@ -224,7 +237,23 @@ def _align_words_to_sentences(sentences, words):
     return out
 
 
-def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
+def get_sentence_timings(audio_path, sentences, tts_word_timings=None, log=None):
+    """Sentence timings, measured when possible.
+
+    Priority: TTS word boundaries (exact) -> Whisper measurement (exact,
+    needs the faster-whisper package + a one-time ~75MB model download) ->
+    speech-activity estimate (approximate). Uzair 2026-10-04: estimated
+    timings made visuals/main-text drift ahead/behind the voice, so the
+    Whisper path is now bundled and its failures are logged LOUDLY instead
+    of silently falling back.
+    """
+    def _log(m):
+        if log:
+            try:
+                log(m)
+            except Exception:  # noqa: BLE001
+                pass
+
     if tts_word_timings:
         try:
             return _align_words_to_sentences(sentences, tts_word_timings)
@@ -232,6 +261,8 @@ def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
             pass
     try:
         from faster_whisper import WhisperModel
+        _log("Measuring speech timings (Whisper; one-time ~75MB model "
+             "download on first use)...")
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(audio_path, word_timestamps=True)
         words = []
@@ -239,9 +270,13 @@ def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
             for w in (seg.words or []):
                 words.append({"word": w.word, "start": w.start, "end": w.end})
         if words:
+            _log(f"Speech timings measured ({len(words)} words).")
             return _align_words_to_sentences(sentences, words)
-    except Exception:  # noqa: BLE001
-        pass
+        _log("WARNING: Whisper returned no words; using estimated timings "
+             "(visuals/main text may drift from the voice).")
+    except Exception as e:  # noqa: BLE001
+        _log(f"WARNING: Whisper measurement failed ({e}); using estimated "
+             f"timings (visuals/main text may drift from the voice).")
     dur = audio_duration(audio_path) or max(1.0, sum(len(s) for s in sentences) * 0.06)
     # Speech-aware fallback: distribute over SPEECH-active time so leading
     # silence and inter-sentence pauses don't push captions ahead/behind
@@ -256,10 +291,10 @@ def get_sentence_timings(audio_path, sentences, tts_word_timings=None):
 def estimate_word_timings(sentence_timings, audio_path=None):
     """Deterministic fallback word timings when Whisper is unavailable.
 
-    faster-whisper is an optional (unbundled) dependency, so uploaded
-    voiceovers often have no measured word boundaries. Without word
-    timings, build_ass() silently renders every preset as SIMPLE static
-    captions -- whichever style the user picked.
+    faster-whisper is bundled with U One, so this fallback only runs when
+    the Whisper measurement itself fails (e.g. the one-time model download
+    was blocked). Without word timings, build_ass() silently renders every
+    preset as SIMPLE static captions -- whichever style the user picked.
 
     When audio_path is given, words are distributed over the SPEECH-active
     time inside each sentence (energy VAD), so the active-word highlight
@@ -291,36 +326,29 @@ def estimate_word_timings(sentence_timings, audio_path=None):
         for w, (ws, we) in zip(parts, spans):
             words.append({"word": w, "start": ws, "end": we})
     return words or None
-    words = []
-    for s in sentence_timings or []:
-        text = (s.get("text") or "").strip()
-        if not text:
-            continue
-        parts = text.split()
-        if not parts:
-            continue
-        start = float(s.get("start", 0.0))
-        end = float(s.get("end", start))
-        if end <= start:
-            end = start + max(0.4 * len(parts), 0.5)
-        weights = [len(w) + 1 for w in parts]  # +1 for the trailing space
-        spans = _distribute_over_speech(parts, weights, start, end,
-                                        intervals)
-        for w, (ws, we) in zip(parts, spans):
-            words.append({"word": w, "start": ws, "end": we})
-    return words or None
 
 
-def whisper_word_timings(audio_path):
+def whisper_word_timings(audio_path, log=None):
     """Best-effort word-level timings via faster-whisper.
 
     Used when the TTS engine did not provide word boundaries (uploaded
     voiceover, or pyttsx3 fallback) so captions still get CapCut-style
     word-by-word animation instead of static lines.
     Returns a list of {word, start, end} or None on any failure.
+    Failures are logged via `log` (Uzair 2026-10-04: silent fallback hid
+    why timings were estimated).
     """
+    def _log(m):
+        if log:
+            try:
+                log(m)
+            except Exception:  # noqa: BLE001
+                pass
+
     try:
         from faster_whisper import WhisperModel
+        _log("Measuring word timings (Whisper; one-time ~75MB model "
+             "download on first use)...")
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
         segments, _ = model.transcribe(audio_path, word_timestamps=True)
         words = []
@@ -329,6 +357,12 @@ def whisper_word_timings(audio_path):
                 words.append({"word": w.word.strip(),
                               "start": round(w.start, 3),
                               "end": round(w.end, 3)})
-        return words or None
-    except Exception:  # noqa: BLE001
+        if words:
+            _log(f"Word timings measured ({len(words)} words).")
+            return words
+        _log("WARNING: Whisper returned no words; using estimated timings.")
+        return None
+    except Exception as e:  # noqa: BLE001
+        _log(f"WARNING: Whisper word measurement failed ({e}); using "
+             f"estimated timings.")
         return None

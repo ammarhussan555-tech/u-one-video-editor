@@ -41,6 +41,9 @@ a = Analysis(
         "matplotlib", "matplotlib.pyplot",
         "PIL", "PIL.Image", "PIL.ImageDraw",
         "edge_tts", "pyttsx3",
+        # Speech-timing measurement (Uzair 2026-10-04): bundled so the
+        # frozen app measures real word timings instead of estimating
+        "faster_whisper", "ctranslate2",
         "keyring", "keyring.backends.Windows",
         # U One v2 engine (some are imported lazily inside functions;
         # listing them keeps the frozen build honest)

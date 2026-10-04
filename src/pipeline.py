@@ -390,11 +390,13 @@ class Pipeline:
             text = S.get("voice_generate_text") or self.project.script
             self.voice_path = os.path.join(self.audio_dir, "voice.wav")
             _, self.word_timings = synthesize_speech(
-                text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
+                text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"),
+                log=lambda m: self._log(m, log_cb))
             self._log("AI voice generated.", log_cb)
         sents = [s.text for s in self.analysis.sentences]
         self.sentence_timings = get_sentence_timings(
-            self.voice_path, sents, self.word_timings)
+            self.voice_path, sents, self.word_timings,
+            log=lambda m: self._log(m, log_cb))
         self._log(f"Voice duration: {self.sentence_timings[-1]['end']:.1f}s", log_cb)
 
     def _find_visuals(self, progress_cb, log_cb):

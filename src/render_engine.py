@@ -471,20 +471,21 @@ class RenderEngine:
                 self._synthesize_gemini_voice(text)
             else:
                 _, self.word_timings = synthesize_speech(
-                    text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
+                    text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"),
+                    log=self._msg)
                 self._msg("AI voice generated.")
         sents = [s.text for s in self.analysis.sentences]
         self.sentence_timings = get_sentence_timings(
-            self.voice_path, sents, self.word_timings)
+            self.voice_path, sents, self.word_timings, log=self._msg)
         # Word animation needs word timings: if the TTS engine did not
-        # provide them (uploaded voiceover / pyttsx3 fallback), recover
+        # provide them (uploaded voiceover / pyttsx3 fallback), measure
         # them with Whisper so captions still animate word-by-word
         # instead of rendering as static lines.
         if not self.word_timings:
-            self._msg("Recovering word timings for animated captions...")
-            self.word_timings = whisper_word_timings(self.voice_path)
+            self.word_timings = whisper_word_timings(self.voice_path,
+                                                     log=self._msg)
         if not self.word_timings:
-            # Whisper is optional/unbundled: fall back to proportional
+            # Whisper measurement failed: fall back to proportional
             # estimates so every caption preset still animates instead
             # of degrading to simple static captions.
             from .voiceover import estimate_word_timings as _est_wt
@@ -523,7 +524,8 @@ class RenderEngine:
                 self._msg(f"WARNING: Gemini TTS failed ({e}) -- falling "
                           "back to the default TTS engine.")
         _, self.word_timings = synthesize_speech(
-            text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"))
+            text, self.voice_path, S.get("voice_name", "en-US-AriaNeural"),
+            log=self._msg)
         self._msg("AI voice generated (fallback engine).")
 
     def _search_fn(self):
@@ -625,7 +627,8 @@ class RenderEngine:
 
     def _scene_word_timings(self, scene_start, scene_end):
         """Word timings converted to scene-relative seconds for the
-        Genspark main-text engine (appear 100-300ms BEFORE the hero word).
+        main-text engine (Uzair 2026-10-04: the card appears EXACTLY when
+        its hero word is spoken).
 
         voice-absolute == video-absolute everywhere in this engine, so
         subtracting the scene start is exact. Returns [] when no timings

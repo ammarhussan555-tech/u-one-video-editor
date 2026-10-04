@@ -541,10 +541,11 @@ MAIN_TEXT_STYLE = {
                     entrance="fade", case="upper"),
 }
 
-# Narration lead per type: entrance begins this many seconds BEFORE the
-# spoken hero word (§4 sync). Stats get the longest lead (heaviest load).
-_MT_LEAD = {"STAT": 0.30, "NAME": 0.12, "DATE": 0.20, "KEYWORD": 0.20,
-            "QUOTE": 0.25, "CHAPTER": 0.20, "OUTCOME": 0.20}
+# Narration lead per type (Uzair 2026-10-04: "na aaga na peeche" -- the
+# main text must appear EXACTLY when its hero word is spoken, neither
+# ahead nor behind, so every lead is 0.0).
+_MT_LEAD = {"STAT": 0.0, "NAME": 0.0, "DATE": 0.0, "KEYWORD": 0.0,
+            "QUOTE": 0.0, "CHAPTER": 0.0, "OUTCOME": 0.0}
 
 # ---------------------------------------------------------------------------
 # Negative filters (§5).
@@ -1219,13 +1220,14 @@ def select_main_text(scene_text, duration=6.0, word_timings=None,
         wc = len(display.split())
         hold = min(4.0, max(1.5, 0.3 * wc + 0.5))
 
-        # Appearance: 100-300ms BEFORE the spoken hero word; on scene cuts
-        # (no timings) align with the cut plus a small offset.
+        # Appearance: EXACTLY at the spoken hero word (Uzair 2026-10-04:
+        # "na aaga na peeche"). On scene cuts (no timings) align with the
+        # cut plus a small offset.
         hero = c["hero"] or (words[0] if words else "")
         hero_t = _hero_word_time(hero, word_timings)
         if hero_t is None and words:
             hero_t = _hero_word_time(words[0], word_timings)
-        lead = _MT_LEAD.get(c["type"], 0.20)
+        lead = _MT_LEAD.get(c["type"], 0.0)
         appear = max(0.0, hero_t - lead) if hero_t is not None else 0.15
 
         # Sequencing: 2nd/3rd cards start 0.5-1s after the previous card
